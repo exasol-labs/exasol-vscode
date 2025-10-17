@@ -1,0 +1,47 @@
+# Compiled output
+out/
+dist/
+
+# Node modules
+node_modules/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# VS Code test directory
+.vscode-test/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Temp files
+*.tmp
+.cache/
+
+# Keep .vscode for workspace settings
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json

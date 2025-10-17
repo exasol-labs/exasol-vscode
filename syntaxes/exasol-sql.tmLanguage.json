@@ -1,0 +1,86 @@
+{
+    "name": "Exasol SQL",
+    "scopeName": "source.exasol.sql",
+    "fileTypes": ["exasql", "exs", "sql"],
+    "patterns": [
+        {"include": "#comments"},
+        {"include": "#strings"},
+        {"include": "#keywords"},
+        {"include": "#functions"},
+        {"include": "#operators"},
+        {"include": "#numbers"}
+    ],
+    "repository": {
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.line.double-dash.sql",
+                    "match": "--.*$"
+                },
+                {
+                    "name": "comment.block.sql",
+                    "begin": "/\\*",
+                    "end": "\\*/"
+                }
+            ]
+        },
+        "strings": {
+            "patterns": [
+                {
+                    "name": "string.quoted.single.sql",
+                    "begin": "'",
+                    "end": "'",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.sql",
+                            "match": "\\\\."
+                        }
+                    ]
+                },
+                {
+                    "name": "string.quoted.double.sql",
+                    "begin": "\"",
+                    "end": "\"",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.sql",
+                            "match": "\\\\."
+                        }
+                    ]
+                }
+            ]
+        },
+        "keywords": {
+            "patterns": [
+                {
+                    "name": "keyword.control.sql",
+                    "match": "(?i)\\b(SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TABLE|VIEW|INDEX|SCHEMA|DATABASE|JOIN|LEFT|RIGHT|INNER|OUTER|FULL|ON|AS|AND|OR|NOT|NULL|IS|IN|EXISTS|BETWEEN|LIKE|CASE|WHEN|THEN|ELSE|END|GROUP BY|ORDER BY|HAVING|LIMIT|OFFSET|UNION|INTERSECT|EXCEPT|WITH|DISTINCT|ALL|ANY|SOME|TRUE|FALSE|PRIMARY KEY|FOREIGN KEY|REFERENCES|CONSTRAINT|DEFAULT|CHECK|UNIQUE|NOT NULL|AUTO_INCREMENT|IDENTITY|CAST|CONVERT|CURRENT_DATE|CURRENT_TIME|CURRENT_TIMESTAMP|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|GRANT|REVOKE|EXECUTE|PROCEDURE|FUNCTION|TRIGGER|IF|FOR|WHILE|LOOP|RETURN|DECLARE|SET|OPEN|CLOSE|FETCH|CURSOR|MERGE|TRUNCATE|EXPLAIN|ANALYZE|IMPORT|EXPORT|LOCAL|GLOBAL|SESSION|CONNECTION|FORCE|PARALLEL|EMITS|RETURNS)\\b"
+                }
+            ]
+        },
+        "functions": {
+            "patterns": [
+                {
+                    "name": "support.function.sql",
+                    "match": "(?i)\\b(ABS|ACOS|ADD_DAYS|ADD_HOURS|ADD_MINUTES|ADD_MONTHS|ADD_SECONDS|ADD_WEEKS|ADD_YEARS|ASCII|ASIN|ATAN|ATAN2|AVG|BIT_AND|BIT_CHECK|BIT_LENGTH|BIT_NOT|BIT_OR|BIT_SET|BIT_TO_NUM|BIT_XOR|CAST|CEIL|CEILING|CHAR|CHAR_LENGTH|CHARACTER_LENGTH|CHARSET|COALESCE|CONCAT|CONTAINS|COS|COSH|COT|COUNT|CURRENT_DATE|CURRENT_SCHEMA|CURRENT_SESSION|CURRENT_STATEMENT|CURRENT_TIMESTAMP|CURRENT_USER|DATE_TRUNC|DATEADD|DATEDIFF|DAY|DAYS_BETWEEN|DECODE|DEGREES|DENSE_RANK|DIV|DUMP|EDIT_DISTANCE|EXP|EXTRACT|FIRST_VALUE|FLOOR|FROM_POSIX_TIME|GREATEST|GROUPING|GROUPING_ID|HASH_MD5|HASH_SHA|HASH_SHA1|HASH_TIGER|HOUR|HOURS_BETWEEN|INITCAP|INSERT|INSTR|INTERVAL|IS_BOOLEAN|IS_DATE|IS_DSINTERVAL|IS_NUMBER|IS_TIMESTAMP|IS_YMINTERVAL|JSON_VALUE|LAG|LAST_VALUE|LEAD|LEAST|LENGTH|LN|LOCATE|LOG|LOG10|LOG2|LOWER|LPAD|LTRIM|MAX|MEDIAN|MID|MIN|MINUTE|MINUTES_BETWEEN|MOD|MONTH|MONTHS_BETWEEN|NULLIF|NULLIFZERO|NVL|NVL2|OCTET_LENGTH|PERCENTILE_CONT|PERCENTILE_DISC|PI|POSITION|POSIX_TIME|POWER|RADIANS|RAND|RANK|RATIO_TO_REPORT|REGEXP_INSTR|REGEXP_REPLACE|REGEXP_SUBSTR|REPEAT|REPLACE|REVERSE|ROUND|ROW_NUMBER|ROWID|RPAD|RTRIM|SECOND|SECONDS_BETWEEN|SESSION_PARAMETER|SIGN|SIN|SINH|SOUNDEX|SQRT|STDDEV|STDDEV_POP|STDDEV_SAMP|SUBSTR|SUBSTRING|SUM|SYS_GUID|SYSDATE|SYSTIMESTAMP|TAN|TANH|TO_CHAR|TO_DATE|TO_DSINTERVAL|TO_NUMBER|TO_TIMESTAMP|TO_YMINTERVAL|TRANSLATE|TRIM|TRUNC|TRUNCATE|UNICODE|UNICODECHR|UPPER|USER|VAR_POP|VAR_SAMP|VARIANCE|WEEK|YEAR|YEARS_BETWEEN|ZEROIFNULL)\\b"
+                }
+            ]
+        },
+        "operators": {
+            "patterns": [
+                {
+                    "name": "keyword.operator.sql",
+                    "match": "(=|!=|<>|<|>|<=|>=|\\+|-|\\*|/|%|\\|\\||::|\\bAND\\b|\\bOR\\b|\\bNOT\\b)"
+                }
+            ]
+        },
+        "numbers": {
+            "patterns": [
+                {
+                    "name": "constant.numeric.sql",
+                    "match": "\\b\\d+(\\.\\d+)?\\b"
+                }
+            ]
+        }
+    }
+}
