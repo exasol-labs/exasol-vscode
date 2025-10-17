@@ -1,0 +1,389 @@
+{
+  "name": "exasol-vscode",
+  "displayName": "Exasol",
+  "icon": "resources/exasol-icon.png",
+  "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
+  "version": "0.1.1",
+  "publisher": "exasol",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Data Science",
+    "Other"
+  ],
+  "keywords": [
+    "exasol",
+    "sql",
+    "database",
+    "query"
+  ],
+  "activationEvents": [
+    "onLanguage:sql"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "exasol-sql",
+        "aliases": [
+          "Exasol SQL",
+          "exasol-sql",
+          "Exasol"
+        ],
+        "extensions": [
+          ".exasql",
+          ".exs",
+          ".sql"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./resources/exasol-icon.svg",
+          "dark": "./resources/exasol-icon.svg"
+        }
+      }
+    ],
+    "fileExtensions": {
+      "sql": "exasol-sql"
+    },
+    "grammars": [
+      {
+        "language": "exasol-sql",
+        "scopeName": "source.exasol.sql",
+        "path": "./syntaxes/exasol-sql.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "exasol.addConnection",
+        "title": "Exasol: Add Connection",
+        "icon": "$(add)"
+      },
+      {
+        "command": "exasol.refreshConnections",
+        "title": "Exasol: Refresh Connections",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "exasol.executeQuery",
+        "title": "Exasol: Execute Query",
+        "icon": "$(play)"
+      },
+      {
+        "command": "exasol.executeSelectedQuery",
+        "title": "Exasol: Execute Selected Query"
+      },
+      {
+        "command": "exasol.showQueryHistory",
+        "title": "Exasol: Show Query History",
+        "icon": "$(history)"
+      },
+      {
+        "command": "exasol.exportResults",
+        "title": "Exasol: Export Results to CSV"
+      },
+      {
+        "command": "exasol.previewTable",
+        "title": "Preview Table Data"
+      },
+      {
+        "command": "exasol.showTableDDL",
+        "title": "Show Table DDL"
+      },
+      {
+        "command": "exasol.showViewDDL",
+        "title": "Show View DDL"
+      },
+      {
+        "command": "exasol.generateSelect",
+        "title": "Generate SELECT Statement"
+      },
+      {
+        "command": "exasol.describeTable",
+        "title": "Describe Table"
+      },
+      {
+        "command": "exasol.setSchema",
+        "title": "Set as Active Schema"
+      },
+      {
+        "command": "exasol.clearCache",
+        "title": "Exasol: Clear Autocomplete Cache"
+      },
+      {
+        "command": "exasol.editConnection",
+        "title": "Edit Connection"
+      },
+      {
+        "command": "exasol.deleteConnection",
+        "title": "Delete Connection"
+      },
+      {
+        "command": "exasol.renameConnection",
+        "title": "Rename Connection"
+      },
+      {
+        "command": "exasol.setActiveConnection",
+        "title": "Exasol: Set Active Connection"
+      },
+      {
+        "command": "exasol.openObject",
+        "title": "Open Object"
+      },
+      {
+        "command": "exasol.copyQualifiedName",
+        "title": "Copy Name",
+        "icon": "$(copy)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "exasol-explorer",
+          "title": "Exasol",
+          "icon": "resources/exasol-activity-icon.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "exasol-panel",
+          "title": "Exasol",
+          "icon": "resources/exasol-activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "exasol-explorer": [
+        {
+          "id": "exasol.connections",
+          "name": "Connections",
+          "visibility": "visible",
+          "initialSize": 10
+        },
+        {
+          "id": "exasol.objects",
+          "name": "Database Objects",
+          "visibility": "visible",
+          "initialSize": 60
+        },
+        {
+          "id": "exasol.queryHistory",
+          "name": "Query History",
+          "visibility": "visible",
+          "initialSize": 3
+        }
+      ],
+      "exasol-panel": [
+        {
+          "id": "exasol.results",
+          "name": "Query Results",
+          "type": "webview"
+        },
+        {
+          "id": "exasol.queryStats",
+          "name": "Query Stats",
+          "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "exasol.addConnection",
+          "when": "view == exasol.connections",
+          "group": "navigation"
+        },
+        {
+          "command": "exasol.refreshConnections",
+          "when": "view == exasol.connections",
+          "group": "navigation"
+        },
+        {
+          "command": "exasol.refreshConnections",
+          "when": "view == exasol.objects",
+          "group": "navigation"
+        },
+        {
+          "command": "exasol.showQueryHistory",
+          "when": "view == exasol.queryHistory",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "exasol.showTableDDL",
+          "when": "view == exasol.objects && viewItem == table",
+          "group": "exasol@1"
+        },
+        {
+          "command": "exasol.describeTable",
+          "when": "view == exasol.objects && viewItem == table",
+          "group": "exasol@3"
+        },
+        {
+          "command": "exasol.generateSelect",
+          "when": "view == exasol.objects && viewItem == table",
+          "group": "exasol@4"
+        },
+        {
+          "command": "exasol.showViewDDL",
+          "when": "view == exasol.objects && viewItem == view",
+          "group": "exasol@2"
+        },
+        {
+          "command": "exasol.generateSelect",
+          "when": "view == exasol.objects && viewItem == view",
+          "group": "exasol@3"
+        },
+        {
+          "command": "exasol.copyQualifiedName",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == schema)",
+          "group": "inline@1"
+        },
+        {
+          "command": "exasol.setSchema",
+          "when": "view == exasol.objects && viewItem == schema",
+          "group": "exasol@1"
+        },
+        {
+          "command": "exasol.setActiveConnection",
+          "when": "view == exasol.connections && viewItem == connection",
+          "group": "connection@0"
+        },
+        {
+          "command": "exasol.editConnection",
+          "when": "view == exasol.connections && viewItem == connection",
+          "group": "connection@1"
+        },
+        {
+          "command": "exasol.deleteConnection",
+          "when": "view == exasol.connections && viewItem == connection",
+          "group": "connection@2"
+        },
+        {
+          "command": "exasol.renameConnection",
+          "when": "view == exasol.connections && viewItem == connection",
+          "group": "connection@3"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "exasol.executeSelectedQuery",
+          "when": "editorLangId == exasol-sql",
+          "group": "exasol"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "exasol.executeQuery"
+        },
+        {
+          "command": "exasol.executeSelectedQuery"
+        },
+        {
+          "command": "exasol.clearCache"
+        },
+        {
+          "command": "exasol.previewTable",
+          "when": "false"
+        },
+        {
+          "command": "exasol.showTableDDL",
+          "when": "false"
+        },
+        {
+          "command": "exasol.showViewDDL",
+          "when": "false"
+        },
+        {
+          "command": "exasol.generateSelect",
+          "when": "false"
+        },
+        {
+          "command": "exasol.describeTable",
+          "when": "false"
+        },
+        {
+          "command": "exasol.setSchema",
+          "when": "false"
+        },
+        {
+          "command": "exasol.editConnection",
+          "when": "false"
+        },
+        {
+          "command": "exasol.deleteConnection",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Exasol",
+      "properties": {
+        "exasol.maxQueryHistorySize": {
+          "type": "number",
+          "default": 1000,
+          "description": "Maximum number of queries to keep in history"
+        },
+        "exasol.queryTimeout": {
+          "type": "number",
+          "default": 300,
+          "description": "Query execution timeout in seconds"
+        },
+        "exasol.maxResultRows": {
+          "type": "number",
+          "default": 10000,
+          "description": "Maximum number of rows to fetch from query results"
+        },
+        "exasol.autoComplete": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable SQL auto-completion"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "exasol.executeQuery",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorLangId == exasol-sql"
+      },
+      {
+        "command": "exasol.executeSelectedQuery",
+        "key": "ctrl+shift+enter",
+        "mac": "cmd+shift+enter",
+        "when": "editorTextFocus && editorLangId == exasol-sql"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "echo 'Linting skipped'",
+    "test": "node ./out/test/runTest.js",
+    "test:unit": "npm run compile && mocha --require ts-node/register 'src/test/**/*.test.ts'",
+    "test:watch": "npm run compile && mocha --require ts-node/register --watch 'src/test/**/*.test.ts'"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^24.7.2",
+    "@types/vscode": "^1.105.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.6.2",
+    "glob": "^10.4.5",
+    "mocha": "^10.8.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "vscode-test": "^1.6.1"
+  },
+  "dependencies": {
+    "@exasol/exasol-driver-ts": "^0.3.1",
+    "@types/ws": "^8.18.1",
+    "ws": "^8.18.3"
+  }
+}

@@ -1,0 +1,299 @@
+import * as vscode from 'vscode';
+import { ExasolDriver, ExaWebsocket } from '@exasol/exasol-driver-ts';
+import { WebSocket } from 'ws';
+import { getOutputChannel } from './extension';
+
+export interface ExasolConnection {
+    name: string;
+    host: string;
+    user: string;
+    password: string;
+    database?: string;
+    schema?: string;
+}
+
+export interface StoredConnection extends ExasolConnection {
+    id: string;
+}
+
+export class ConnectionManager {
+    private connections: Map<string, StoredConnection> = new Map();
+    private activeConnection: string | null = null;
+    private drivers: Map<string, ExasolDriver> = new Map();
+    private readonly connectionsChangedEmitter = new vscode.EventEmitter<void>();
+    readonly onDidChangeConnections = this.connectionsChangedEmitter.event;
+    private readonly activeConnectionChangedEmitter = new vscode.EventEmitter<StoredConnection | undefined>();
+    readonly onDidChangeActiveConnection = this.activeConnectionChangedEmitter.event;
+
+    constructor(private context: vscode.ExtensionContext) {
+        void this.loadConnections().then(() => {
+            this.notifyConnectionsChanged();
+            this.notifyActiveConnectionChanged();
+        });
+    }
+
+    private async loadConnections() {
+        let firstConnectionId: string | undefined;
+        const stored = this.context.globalState.get<Array<Omit<StoredConnection, 'password'>>>('exasol.connections', []);
+        for (const conn of stored) {
+            // Load password from secure storage
+            const password = await this.context.secrets.get(`exasol.password.${conn.id}`);
+            if (password) {
+                this.connections.set(conn.id, {
+                    ...conn,
+                    password
+                });
+                if (!firstConnectionId) {
+                    firstConnectionId = conn.id;
+                }
+            }
+        }
+        if (!this.activeConnection && firstConnectionId) {
+            this.activeConnection = firstConnectionId;
+        }
+    }
+
+    private notifyConnectionsChanged(): void {
+        this.connectionsChangedEmitter.fire();
+    }
+
+    private notifyActiveConnectionChanged(): void {
+        this.activeConnectionChangedEmitter.fire(this.getActiveConnection());
+    }
+
+    private async saveConnections() {
+        // Save connection info without passwords to globalState
+        const connectionsWithoutPasswords = Array.from(this.connections.values()).map(conn => {
+            const { password, ...rest } = conn;
+            return rest;
+        });
+        await this.context.globalState.update('exasol.connections', connectionsWithoutPasswords);
+    }
+
+    async addConnection(connection: ExasolConnection): Promise<string> {
+        const id = `${connection.name}-${Date.now()}`;
+        const stored: StoredConnection = {
+            ...connection,
+            id
+        };
+
+        // Test connection
+        await this.testConnection(stored);
+
+        this.connections.set(id, stored);
+
+        // Store password securely
+        await this.context.secrets.store(`exasol.password.${id}`, connection.password);
+
+        // Save connection metadata (without password)
+        await this.saveConnections();
+
+        if (!this.activeConnection) {
+            this.activeConnection = id;
+        }
+
+        this.notifyConnectionsChanged();
+        if (this.activeConnection === id) {
+            this.notifyActiveConnectionChanged();
+        }
+
+        return id;
+    }
+
+    async updateConnection(id: string, connection: ExasolConnection): Promise<string> {
+        const existing = this.connections.get(id);
+        if (!existing) {
+            throw new Error(`Connection ${id} not found`);
+        }
+
+        // Use existing password if new one not provided
+        const password = connection.password || existing.password;
+
+        const updated: StoredConnection = {
+            ...connection,
+            password,
+            id
+        };
+
+        // Test connection
+        await this.testConnection(updated);
+
+        // Close existing driver if any
+        const driver = this.drivers.get(id);
+        if (driver) {
+            await driver.close();
+            this.drivers.delete(id);
+        }
+
+        // Update connection
+        this.connections.set(id, updated);
+
+        // Update password in secure storage
+        await this.context.secrets.store(`exasol.password.${id}`, password);
+
+        // Save connection metadata
+        await this.saveConnections();
+
+        this.notifyConnectionsChanged();
+        if (this.activeConnection === id) {
+            this.notifyActiveConnectionChanged();
+        }
+
+        return id;
+    }
+
+    async renameConnection(id: string, newName: string): Promise<void> {
+        const existing = this.connections.get(id);
+        if (!existing) {
+            throw new Error(`Connection ${id} not found`);
+        }
+
+        this.connections.set(id, {
+            ...existing,
+            name: newName
+        });
+
+        await this.saveConnections();
+        this.notifyConnectionsChanged();
+        if (this.activeConnection === id) {
+            this.notifyActiveConnectionChanged();
+        }
+    }
+
+    async removeConnection(id: string): Promise<void> {
+        this.connections.delete(id);
+
+        // Remove password from secure storage
+        await this.context.secrets.delete(`exasol.password.${id}`);
+
+        // Close driver if exists
+        const driver = this.drivers.get(id);
+        if (driver) {
+            await driver.close();
+            this.drivers.delete(id);
+        }
+
+        const wasActive = this.activeConnection === id;
+
+        if (this.activeConnection === id) {
+            this.activeConnection = null;
+            const firstConnection = this.connections.values().next().value;
+            if (firstConnection) {
+                this.activeConnection = firstConnection.id;
+            }
+        }
+
+        await this.saveConnections();
+        this.notifyConnectionsChanged();
+        if (wasActive) {
+            this.notifyActiveConnectionChanged();
+        }
+    }
+
+    getConnections(): StoredConnection[] {
+        return Array.from(this.connections.values());
+    }
+
+    getConnection(id: string): StoredConnection | undefined {
+        return this.connections.get(id);
+    }
+
+    async setActiveConnection(id: string): Promise<void> {
+        if (!this.connections.has(id)) {
+            throw new Error(`Connection ${id} not found`);
+        }
+        this.activeConnection = id;
+        this.notifyActiveConnectionChanged();
+    }
+
+    getActiveConnection(): StoredConnection | undefined {
+        if (!this.activeConnection) {
+            return undefined;
+        }
+        return this.connections.get(this.activeConnection);
+    }
+
+    async getDriver(connectionId?: string): Promise<ExasolDriver> {
+        const id = connectionId || this.activeConnection;
+
+        if (!id) {
+            throw new Error('No active connection');
+        }
+
+        const connection = this.connections.get(id);
+        if (!connection) {
+            throw new Error(`Connection ${id} not found`);
+        }
+
+        // Return existing driver if available
+        if (this.drivers.has(id)) {
+            return this.drivers.get(id)!;
+        }
+
+        // Create new driver
+        const driver = await this.createDriver(connection);
+        this.drivers.set(id, driver);
+        return driver;
+    }
+
+    private async createDriver(connection: StoredConnection): Promise<ExasolDriver> {
+        const [host, portStr] = connection.host.split(':');
+        const port = portStr ? parseInt(portStr) : 8563;
+
+        const driver = new ExasolDriver((url: string) => {
+            // For self-signed certificates (common in local/dev environments)
+            return new WebSocket(url, {
+                rejectUnauthorized: false
+            }) as ExaWebsocket;
+        }, {
+            host,
+            port,
+            user: connection.user,
+            password: connection.password,
+            encryption: true  // Enable TLS encryption
+        });
+
+        await driver.connect();
+        return driver;
+    }
+
+    private async testConnection(connection: StoredConnection): Promise<void> {
+        const [host, portStr] = connection.host.split(':');
+        const port = portStr ? parseInt(portStr) : 8563;
+
+        const outputChannel = getOutputChannel();
+        outputChannel.appendLine(`   Creating driver for ${host}:${port}`);
+        outputChannel.appendLine(`   User: ${connection.user}`);
+
+        const driver = new ExasolDriver((url: string) => {
+            outputChannel.appendLine(`   WebSocket URL: ${url}`);
+            // For self-signed certificates (common in local/dev environments)
+            return new WebSocket(url, {
+                rejectUnauthorized: false
+            }) as ExaWebsocket;
+        }, {
+            host,
+            port,
+            user: connection.user,
+            password: connection.password,
+            encryption: true  // Enable TLS encryption
+        });
+
+        try {
+            outputChannel.appendLine(`   Attempting to connect...`);
+            await driver.connect();
+            outputChannel.appendLine(`   Connection successful, closing test connection`);
+            await driver.close();
+        } catch (error) {
+            outputChannel.appendLine(`   Connection failed: ${error}`);
+            throw new Error(`Connection test failed: ${error}`);
+        }
+    }
+
+    async closeAll(): Promise<void> {
+        for (const driver of this.drivers.values()) {
+            await driver.close();
+        }
+        this.drivers.clear();
+    }
+}
