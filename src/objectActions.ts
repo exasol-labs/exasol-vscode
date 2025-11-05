@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from './connectionManager';
-import { QueryExecutor, QueryResult } from './queryExecutor';
+import { QueryExecutor, QueryResult, ColumnMetadata } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
 import { getColumnsFromResult, getRowsFromResult } from './utils';
 
@@ -10,6 +10,29 @@ export class ObjectActions {
         private queryExecutor: QueryExecutor,
         private extensionUri: vscode.Uri
     ) {}
+
+    private extractColumnMetadata(columnsMeta: any[]): ColumnMetadata[] {
+        return columnsMeta.map((col: any) => {
+            const name = col.name ?? col.COLUMN_NAME ?? col;
+            const dataType = col.dataType;
+
+            if (dataType && typeof dataType === 'object') {
+                return {
+                    name,
+                    type: dataType.type || 'VARCHAR',
+                    precision: dataType.precision,
+                    scale: dataType.scale,
+                    size: dataType.size
+                };
+            }
+
+            // Fallback for columns without dataType info
+            return {
+                name,
+                type: 'VARCHAR'
+            };
+        });
+    }
 
     async previewTableData(
         connection: StoredConnection,
@@ -36,8 +59,10 @@ export class ObjectActions {
                     const columnsMeta = getColumnsFromResult(result);
                     const rows = getRowsFromResult(result);
                     const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
+                    const columnMetadata = this.extractColumnMetadata(columnsMeta);
                     const queryResult: QueryResult = {
                         columns,
+                        columnMetadata,
                         rows,
                         rowCount: rows.length,
                         executionTime
@@ -191,8 +216,10 @@ export class ObjectActions {
             const columnsMeta = getColumnsFromResult(result);
             const rows = getRowsFromResult(result);
             const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
+            const columnMetadata = this.extractColumnMetadata(columnsMeta);
             const queryResult: QueryResult = {
                 columns,
+                columnMetadata,
                 rows,
                 rowCount: rows.length,
                 executionTime

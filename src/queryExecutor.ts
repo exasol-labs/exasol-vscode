@@ -2,8 +2,17 @@ import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
 import { executeWithoutResult, getColumnsFromResult, getRowsFromResult } from './utils';
 
+export interface ColumnMetadata {
+    name: string;
+    type: string;
+    precision?: number;
+    scale?: number;
+    size?: number;
+}
+
 export interface QueryResult {
     columns: string[];
+    columnMetadata: ColumnMetadata[];
     rows: any[];
     rowCount: number;
     executionTime: number;
@@ -13,6 +22,29 @@ export class QueryExecutor {
     private currentCancellationToken: vscode.CancellationTokenSource | undefined;
 
     constructor(private connectionManager: ConnectionManager) {}
+
+    private extractColumnMetadata(columnsMeta: any[]): ColumnMetadata[] {
+        return columnsMeta.map((col: any) => {
+            const name = col.name ?? col.COLUMN_NAME ?? col;
+            const dataType = col.dataType;
+
+            if (dataType && typeof dataType === 'object') {
+                return {
+                    name,
+                    type: dataType.type || 'VARCHAR',
+                    precision: dataType.precision,
+                    scale: dataType.scale,
+                    size: dataType.size
+                };
+            }
+
+            // Fallback for columns without dataType info
+            return {
+                name,
+                type: 'VARCHAR'
+            };
+        });
+    }
 
     async execute(query: string, cancellationToken?: vscode.CancellationToken): Promise<QueryResult> {
         const activeConnection = this.connectionManager.getActiveConnection();
@@ -26,16 +58,16 @@ export class QueryExecutor {
 
         const startTime = Date.now();
 
+        // Clean the query - remove trailing semicolons and trim
+        let finalQuery = query.trim().replace(/;+\s*$/, '').trim();
+        const isResultSet = this.isResultSetQuery(finalQuery);
+
+        if (isResultSet && finalQuery.toUpperCase().startsWith('SELECT') && !finalQuery.toUpperCase().includes('LIMIT')) {
+            finalQuery += ` LIMIT ${maxRows}`;
+        }
+
         try {
             const driver = await this.connectionManager.getDriver();
-
-            // Clean the query - remove trailing semicolons and trim
-            let finalQuery = query.trim().replace(/;+\s*$/, '').trim();
-            const isResultSet = this.isResultSetQuery(finalQuery);
-
-            if (isResultSet && finalQuery.toUpperCase().startsWith('SELECT') && !finalQuery.toUpperCase().includes('LIMIT')) {
-                finalQuery += ` LIMIT ${maxRows}`;
-            }
 
             if (cancellationToken?.isCancellationRequested) {
                 throw new Error('Query execution was cancelled');
@@ -54,9 +86,11 @@ export class QueryExecutor {
                     const columnsMeta = getColumnsFromResult(result);
                     const rows = getRowsFromResult(result);
                     const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
+                    const columnMetadata = this.extractColumnMetadata(columnsMeta);
 
                     return {
                         columns,
+                        columnMetadata,
                         rows,
                         rowCount: rows.length,
                         executionTime
@@ -84,6 +118,7 @@ export class QueryExecutor {
             const columnsMeta = getColumnsFromResult(rawExecuteResult);
             const rows = getRowsFromResult(rawExecuteResult);
             const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
+            const columnMetadata = this.extractColumnMetadata(columnsMeta);
             const affectedRows =
                 rows.length > 0
                     ? rows.length
@@ -91,6 +126,7 @@ export class QueryExecutor {
 
             return {
                 columns,
+                columnMetadata,
                 rows,
                 rowCount: affectedRows,
                 executionTime
@@ -99,6 +135,34 @@ export class QueryExecutor {
             if (cancellationToken?.isCancellationRequested) {
                 throw new Error('Query execution was cancelled by user');
             }
+
+            // Check if it's a pool exhaustion error
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            if (errorMsg.includes('E-EDJS-8') || errorMsg.includes('pool reached its limit')) {
+                // Reset the driver and retry once
+                await this.connectionManager.resetDriver();
+                try {
+                    const driver = await this.connectionManager.getDriver();
+                    const result = await driver.query(finalQuery);
+                    const executionTime = Date.now() - startTime;
+
+                    const columnsMeta = getColumnsFromResult(result);
+                    const rows = getRowsFromResult(result);
+                    const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
+                    const columnMetadata = this.extractColumnMetadata(columnsMeta);
+
+                    return {
+                        columns,
+                        columnMetadata,
+                        rows,
+                        rowCount: rows.length,
+                        executionTime
+                    };
+                } catch (retryError) {
+                    throw new Error(`Query execution failed after retry: ${retryError}`);
+                }
+            }
+
             throw new Error(`Query execution failed: ${error}`);
         }
     }
@@ -127,14 +191,42 @@ export class QueryExecutor {
 
             const columnsMeta = getColumnsFromResult(result);
             const rows = getRowsFromResult(result).slice(0, maxRows);
+            const columnMetadata = this.extractColumnMetadata(columnsMeta);
 
             return {
                 columns: columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col),
+                columnMetadata,
                 rows,
                 rowCount: rows.length,
                 executionTime
             };
         } catch (error) {
+            // Check if it's a pool exhaustion error
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            if (errorMsg.includes('E-EDJS-8') || errorMsg.includes('pool reached its limit')) {
+                // Reset the driver and retry once
+                await this.connectionManager.resetDriver();
+                try {
+                    const driver = await this.connectionManager.getDriver();
+                    const result = await driver.query(query);
+                    const executionTime = Date.now() - startTime;
+
+                    const columnsMeta = getColumnsFromResult(result);
+                    const rows = getRowsFromResult(result).slice(0, maxRows);
+                    const columnMetadata = this.extractColumnMetadata(columnsMeta);
+
+                    return {
+                        columns: columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col),
+                        columnMetadata,
+                        rows,
+                        rowCount: rows.length,
+                        executionTime
+                    };
+                } catch (retryError) {
+                    throw new Error(`Query execution failed after retry: ${retryError}`);
+                }
+            }
+
             throw new Error(`Query execution failed: ${error}`);
         }
     }

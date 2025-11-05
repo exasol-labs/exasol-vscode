@@ -33,7 +33,6 @@ export class ConnectionManager {
     }
 
     private async loadConnections() {
-        let firstConnectionId: string | undefined;
         const stored = this.context.globalState.get<Array<Omit<StoredConnection, 'password'>>>('exasol.connections', []);
         for (const conn of stored) {
             // Load password from secure storage
@@ -43,14 +42,9 @@ export class ConnectionManager {
                     ...conn,
                     password
                 });
-                if (!firstConnectionId) {
-                    firstConnectionId = conn.id;
-                }
             }
         }
-        if (!this.activeConnection && firstConnectionId) {
-            this.activeConnection = firstConnectionId;
-        }
+        // Do not auto-activate any connection - user must manually select
     }
 
     private notifyConnectionsChanged(): void {
@@ -88,14 +82,8 @@ export class ConnectionManager {
         // Save connection metadata (without password)
         await this.saveConnections();
 
-        if (!this.activeConnection) {
-            this.activeConnection = id;
-        }
-
+        // Do not auto-activate - user must manually select the connection
         this.notifyConnectionsChanged();
-        if (this.activeConnection === id) {
-            this.notifyActiveConnectionChanged();
-        }
 
         return id;
     }
@@ -234,6 +222,23 @@ export class ConnectionManager {
         const driver = await this.createDriver(connection);
         this.drivers.set(id, driver);
         return driver;
+    }
+
+    async resetDriver(connectionId?: string): Promise<void> {
+        const id = connectionId || this.activeConnection;
+        if (!id) {
+            return;
+        }
+
+        const driver = this.drivers.get(id);
+        if (driver) {
+            try {
+                await driver.close();
+            } catch (error) {
+                // Ignore errors when closing
+            }
+            this.drivers.delete(id);
+        }
     }
 
     private async createDriver(connection: StoredConnection): Promise<ExasolDriver> {

@@ -97,7 +97,11 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                         vscode.TreeItemCollapsibleState.Collapsed,
                         'schema',
                         activeConnection,
-                        schema.name
+                        schema.name,
+                        undefined,
+                        undefined,
+                        schema.tableCount,
+                        schema.viewCount
                     );
                 });
             } catch (error) {
@@ -120,7 +124,10 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     vscode.TreeItemCollapsibleState.Collapsed,
                     'tables-folder',
                     element.connection,
-                    element.schemaName
+                    element.schemaName,
+                    undefined,
+                    undefined,
+                    element.tableCount
                 ),
                 new ObjectTreeItem(
                     'Views',
@@ -128,7 +135,11 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     vscode.TreeItemCollapsibleState.Collapsed,
                     'views-folder',
                     element.connection,
-                    element.schemaName
+                    element.schemaName,
+                    undefined,
+                    undefined,
+                    undefined,
+                    element.viewCount
                 )
             ];
         }
@@ -218,21 +229,56 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         return [];
     }
 
-    private async fetchSchemas(connection: StoredConnection): Promise<Array<{ name: string }>> {
+    private async fetchSchemas(connection: StoredConnection): Promise<Array<{ name: string; tableCount?: number; viewCount?: number }>> {
         const outputChannel = getOutputChannel();
         try {
             outputChannel?.appendLine(`   Getting driver for connection ID: ${connection.id}`);
             const driver = await this.connectionManager.getDriver(connection.id);
-            outputChannel?.appendLine(`   Driver obtained, running schema query...`);
-            const result = await driver.query(`
-                SELECT SCHEMA_NAME
-                FROM SYS.EXA_SCHEMAS
-                WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
-                ORDER BY SCHEMA_NAME
-            `);
-            const rows = getRowsFromResult(result);
-            outputChannel?.appendLine(`   Schema query returned ${rows.length} rows`);
-            return rows.map((row: any) => ({ name: row.SCHEMA_NAME }));
+            outputChannel?.appendLine(`   Driver obtained, running schema query with object counts...`);
+
+            // Try to get schema counts in a single query
+            try {
+                const result = await driver.query(`
+                    SELECT
+                        s.SCHEMA_NAME,
+                        COALESCE(t.TABLE_COUNT, 0) AS TABLE_COUNT,
+                        COALESCE(v.VIEW_COUNT, 0) AS VIEW_COUNT
+                    FROM SYS.EXA_SCHEMAS s
+                    LEFT JOIN (
+                        SELECT TABLE_SCHEMA, COUNT(*) AS TABLE_COUNT
+                        FROM SYS.EXA_ALL_TABLES
+                        GROUP BY TABLE_SCHEMA
+                    ) t ON s.SCHEMA_NAME = t.TABLE_SCHEMA
+                    LEFT JOIN (
+                        SELECT VIEW_SCHEMA, COUNT(*) AS VIEW_COUNT
+                        FROM SYS.EXA_ALL_VIEWS
+                        GROUP BY VIEW_SCHEMA
+                    ) v ON s.SCHEMA_NAME = v.VIEW_SCHEMA
+                    WHERE s.SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
+                    ORDER BY s.SCHEMA_NAME
+                `, undefined, undefined, 'raw');
+                const rows = getRowsFromResult(result);
+                outputChannel?.appendLine(`   Schema query with counts returned ${rows.length} rows`);
+                return rows.map((row: any) => ({
+                    name: row.SCHEMA_NAME,
+                    tableCount: this.parseRowCount(row.TABLE_COUNT),
+                    viewCount: this.parseRowCount(row.VIEW_COUNT)
+                }));
+            } catch (error) {
+                outputChannel?.appendLine(`   Failed to fetch counts with optimized query: ${error}`);
+                outputChannel?.appendLine(`   Falling back to simple schema query without counts...`);
+
+                // Fallback to simple query without counts
+                const result = await driver.query(`
+                    SELECT SCHEMA_NAME
+                    FROM SYS.EXA_SCHEMAS
+                    WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
+                    ORDER BY SCHEMA_NAME
+                `);
+                const rows = getRowsFromResult(result);
+                outputChannel?.appendLine(`   Schema query returned ${rows.length} rows`);
+                return rows.map((row: any) => ({ name: row.SCHEMA_NAME }));
+            }
         } catch (error) {
             outputChannel?.appendLine(`   Error fetching schemas: ${error}`);
             throw new Error(`Failed to fetch schemas: ${error}`);
@@ -519,7 +565,9 @@ class ObjectTreeItem extends vscode.TreeItem {
         public readonly connection?: StoredConnection,
         public readonly schemaName?: string,
         public readonly tableInfo?: { name: string; rowCount?: number },
-        public readonly columnInfo?: { name: string; type: string; nullable: boolean }
+        public readonly columnInfo?: { name: string; type: string; nullable: boolean },
+        public readonly tableCount?: number,
+        public readonly viewCount?: number
     ) {
         super(label, collapsibleState);
         this.id = id;
@@ -528,10 +576,28 @@ class ObjectTreeItem extends vscode.TreeItem {
             case 'schema':
                 this.iconPath = new vscode.ThemeIcon('symbol-namespace');
                 this.contextValue = 'schema';
+                // Display table and view counts
+                if (tableCount !== undefined || viewCount !== undefined) {
+                    const parts: string[] = [];
+                    if (tableCount !== undefined && tableCount > 0) {
+                        parts.push(`${tableCount} ${tableCount === 1 ? 'table' : 'tables'}`);
+                    }
+                    if (viewCount !== undefined && viewCount > 0) {
+                        parts.push(`${viewCount} ${viewCount === 1 ? 'view' : 'views'}`);
+                    }
+                    if (parts.length > 0) {
+                        this.description = parts.join(', ');
+                    } else if (tableCount === 0 && viewCount === 0) {
+                        this.description = 'empty';
+                    }
+                }
                 break;
             case 'tables-folder':
                 this.iconPath = new vscode.ThemeIcon('folder');
                 this.contextValue = 'tables-folder';
+                if (tableCount !== undefined) {
+                    this.description = `${tableCount}`;
+                }
                 break;
             case 'table':
                 this.iconPath = new vscode.ThemeIcon('table');
@@ -548,6 +614,9 @@ class ObjectTreeItem extends vscode.TreeItem {
             case 'views-folder':
                 this.iconPath = new vscode.ThemeIcon('folder');
                 this.contextValue = 'views-folder';
+                if (viewCount !== undefined) {
+                    this.description = `${viewCount}`;
+                }
                 break;
             case 'view':
                 this.iconPath = new vscode.ThemeIcon('eye');

@@ -12,6 +12,9 @@ interface DatabaseObject {
 export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
     private cache: Map<string, DatabaseObject[]> = new Map();
     private cacheExpiry: Map<string, number> = new Map();
+    private schemasCache: Map<string, string[]> = new Map();
+    private reservedKeywords: Set<string> = new Set();
+    private reservedKeywordsLoaded = false;
     private readonly CACHE_TTL = 300000; // 5 minutes
 
     constructor(private connectionManager: ConnectionManager) {}
@@ -39,34 +42,73 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         const wordRange = document.getWordRangeAtPosition(position);
         const word = wordRange ? document.getText(wordRange) : '';
 
+        // Get the entire query text for alias detection
+        const queryText = document.getText();
+
         try {
+            // Load reserved keywords if not already loaded
+            if (!this.reservedKeywordsLoaded) {
+                await this.loadReservedKeywords(activeConnection.id);
+            }
+
+            // Add database objects (tables, views) - needed for alias resolution
+            const objects = await this.getDatabaseObjects(activeConnection.id);
+
+            // Parse aliases from the query
+            const aliases = this.parseAliases(queryText);
+
+            // Check for schema.table. pattern first (highest priority)
+            const schemaTableMatch = linePrefix.match(/(\w+)\.(\w+)\.\s*$/);
+            if (schemaTableMatch) {
+                const schemaName = schemaTableMatch[1].toUpperCase();
+                const tableName = schemaTableMatch[2].toUpperCase();
+                const obj = objects.find(o => o.schema === schemaName && o.name === tableName);
+                if (obj && obj.columns) {
+                    return this.getColumnCompletions(obj.columns);
+                }
+            }
+
+            // Check if we're completing after an alias or table name (e.g., "u." or "users.")
+            const aliasMatch = linePrefix.match(/(\w+)\.\s*$/);
+            if (aliasMatch) {
+                const prefix = aliasMatch[1];
+                const prefixUpper = prefix.toUpperCase();
+
+                // Check if it's an alias - return ONLY columns for that table
+                if (aliases.has(prefixUpper)) {
+                    const tableName = aliases.get(prefixUpper)!;
+                    const obj = objects.find(o => o.name === tableName.toUpperCase());
+                    if (obj && obj.columns) {
+                        return this.getColumnCompletions(obj.columns);
+                    }
+                }
+
+                // Check if it's a schema prefix (e.g., "schema.")
+                const schemaObjects = objects.filter(obj => obj.schema === prefixUpper);
+                if (schemaObjects.length > 0) {
+                    return this.getObjectCompletions(schemaObjects, true);
+                }
+
+                // Check if it's a table/view prefix (e.g., "table.")
+                const obj = objects.find(o => o.name === prefixUpper);
+                if (obj && obj.columns) {
+                    return this.getColumnCompletions(obj.columns);
+                }
+            }
+
+            // No specific context - provide all completions
             // Add SQL keywords
             items.push(...this.getKeywordCompletions());
 
             // Add SQL functions
             items.push(...this.getFunctionCompletions());
 
+            // Add schemas
+            const schemas = await this.getSchemas(activeConnection.id);
+            items.push(...this.getSchemaCompletions(schemas));
+
             // Add database objects (tables, views)
-            const objects = await this.getDatabaseObjects(activeConnection.id);
             items.push(...this.getObjectCompletions(objects));
-
-            // If we have a schema prefix (e.g., "schema."), suggest objects from that schema
-            const schemaMatch = linePrefix.match(/(\w+)\.\s*$/);
-            if (schemaMatch) {
-                const schemaName = schemaMatch[1].toUpperCase();
-                const schemaObjects = objects.filter(obj => obj.schema === schemaName);
-                items.push(...this.getObjectCompletions(schemaObjects));
-            }
-
-            // If we have a table/view prefix (e.g., "table."), suggest columns
-            const tableMatch = linePrefix.match(/(\w+)\.(\w+)\.\s*$/) || linePrefix.match(/(\w+)\.\s*$/);
-            if (tableMatch && objects.length > 0) {
-                const tableName = tableMatch[tableMatch.length - 1].toUpperCase();
-                const obj = objects.find(o => o.name === tableName);
-                if (obj && obj.columns) {
-                    items.push(...this.getColumnCompletions(obj.columns));
-                }
-            }
 
             return items;
         } catch (error) {
@@ -75,22 +117,85 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         }
     }
 
+    private parseAliases(queryText: string): Map<string, string> {
+        const aliases = new Map<string, string>();
+
+        // Pattern to match: FROM/JOIN table_name [AS] alias
+        // Handles: FROM, INNER JOIN, LEFT JOIN, RIGHT JOIN, FULL JOIN, CROSS JOIN, etc.
+        // Examples:
+        //   "FROM users u"
+        //   "FROM users AS u"
+        //   "INNER JOIN orders o"
+        //   "LEFT OUTER JOIN products p"
+        //   "FROM schema.table t"
+        //   "JOIN \"Table\" AS t"
+
+        // Match FROM/JOIN patterns with optional schema and optional AS keyword
+        const tableAliasPattern = /(?:from|(?:(?:inner|left|right|full|cross)\s+)?(?:outer\s+)?join)\s+(?:(\w+)\.)?(?:")?(\w+)(?:")?\s+(?:as\s+)?(\w+)(?=\s|,|$|where|join|order|group|limit|;)/gi;
+
+        let match;
+        while ((match = tableAliasPattern.exec(queryText)) !== null) {
+            const schema = match[1]; // Optional schema
+            const table = match[2];  // Table name
+            const alias = match[3];  // Alias
+
+            // Store alias -> table mapping (uppercase for case-insensitive lookup)
+            // Only if alias is different from table name
+            if (alias && table && alias.toUpperCase() !== table.toUpperCase()) {
+                // Don't add if alias is a SQL keyword (to avoid false matches)
+                const aliasUpper = alias.toUpperCase();
+                if (!['ON', 'WHERE', 'ORDER', 'GROUP', 'HAVING', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT'].includes(aliasUpper)) {
+                    aliases.set(aliasUpper, table);
+                }
+            }
+        }
+
+        return aliases;
+    }
+
+    private async loadReservedKeywords(connectionId: string): Promise<void> {
+        try {
+            const driver = await this.connectionManager.getDriver(connectionId);
+            const result = await this.safeQuery(driver, 'SELECT keyword FROM sys.exa_sql_keywords WHERE reserved');
+            const rows = getRowsFromResult(result);
+            this.reservedKeywords = new Set(rows.map((r: any) => r.KEYWORD.toUpperCase()));
+            this.reservedKeywordsLoaded = true;
+        } catch (error) {
+            console.error('Failed to load reserved keywords:', error);
+            // Fallback to common reserved keywords
+            this.reservedKeywords = new Set([
+                'SELECT', 'FROM', 'WHERE', 'JOIN', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP', 'ALTER',
+                'TABLE', 'VIEW', 'INDEX', 'SCHEMA', 'DATABASE', 'AS', 'ON', 'AND', 'OR', 'NOT', 'IN', 'EXISTS'
+            ]);
+            this.reservedKeywordsLoaded = true;
+        }
+    }
+
+    private quoteIdentifier(identifier: string): string {
+        const upperIdent = identifier.toUpperCase();
+        // Only quote if it's a reserved keyword
+        if (this.reservedKeywords.has(upperIdent)) {
+            return `"${identifier.toLowerCase()}"`;
+        }
+        return identifier.toLowerCase();
+    }
+
     private getKeywordCompletions(): vscode.CompletionItem[] {
         const keywords = [
-            'SELECT', 'FROM', 'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'OUTER',
-            'ON', 'AND', 'OR', 'NOT', 'IN', 'EXISTS', 'BETWEEN', 'LIKE', 'IS', 'NULL',
-            'ORDER', 'BY', 'GROUP', 'HAVING', 'LIMIT', 'OFFSET',
-            'INSERT', 'INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE',
-            'CREATE', 'ALTER', 'DROP', 'TABLE', 'VIEW', 'INDEX', 'SCHEMA', 'DATABASE',
-            'AS', 'DISTINCT', 'ALL', 'UNION', 'INTERSECT', 'EXCEPT',
-            'CASE', 'WHEN', 'THEN', 'ELSE', 'END',
-            'CAST', 'CONVERT', 'COALESCE', 'NULLIF',
-            'WITH', 'RECURSIVE', 'CTE',
-            'PRIMARY', 'KEY', 'FOREIGN', 'REFERENCES', 'UNIQUE', 'CHECK', 'DEFAULT',
-            'CONSTRAINT', 'CASCADE', 'RESTRICT',
-            'GRANT', 'REVOKE', 'TO', 'FROM',
-            'COMMIT', 'ROLLBACK', 'SAVEPOINT',
-            'TRUNCATE', 'ANALYZE', 'VACUUM'
+            'select', 'from', 'where', 'join', 'inner', 'left', 'right', 'full', 'outer',
+            'on', 'and', 'or', 'not', 'in', 'exists', 'between', 'like', 'is', 'null',
+            'order', 'by', 'group', 'having', 'limit', 'offset',
+            'insert', 'into', 'values', 'update', 'set', 'delete',
+            'create', 'alter', 'drop', 'table', 'view', 'index', 'schema', 'database',
+            'as', 'distinct', 'all', 'union', 'intersect', 'except',
+            'case', 'when', 'then', 'else', 'end',
+            'cast', 'convert', 'coalesce', 'nullif',
+            'with', 'recursive', 'cte',
+            'primary', 'key', 'foreign', 'references', 'unique', 'check', 'default',
+            'constraint', 'cascade', 'restrict',
+            'grant', 'revoke', 'to',
+            'commit', 'rollback', 'savepoint',
+            'truncate', 'analyze', 'vacuum'
         ];
 
         return keywords.map(keyword => {
@@ -104,54 +209,54 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
     private getFunctionCompletions(): vscode.CompletionItem[] {
         const functions = [
             // Aggregate functions
-            { name: 'COUNT', snippet: 'COUNT(${1:column})' },
-            { name: 'SUM', snippet: 'SUM(${1:column})' },
-            { name: 'AVG', snippet: 'AVG(${1:column})' },
-            { name: 'MIN', snippet: 'MIN(${1:column})' },
-            { name: 'MAX', snippet: 'MAX(${1:column})' },
-            { name: 'STDDEV', snippet: 'STDDEV(${1:column})' },
-            { name: 'VARIANCE', snippet: 'VARIANCE(${1:column})' },
+            { name: 'count', snippet: 'count(${1:column})' },
+            { name: 'sum', snippet: 'sum(${1:column})' },
+            { name: 'avg', snippet: 'avg(${1:column})' },
+            { name: 'min', snippet: 'min(${1:column})' },
+            { name: 'max', snippet: 'max(${1:column})' },
+            { name: 'stddev', snippet: 'stddev(${1:column})' },
+            { name: 'variance', snippet: 'variance(${1:column})' },
 
             // String functions
-            { name: 'CONCAT', snippet: 'CONCAT(${1:str1}, ${2:str2})' },
-            { name: 'SUBSTRING', snippet: 'SUBSTRING(${1:str}, ${2:start}, ${3:length})' },
-            { name: 'SUBSTR', snippet: 'SUBSTR(${1:str}, ${2:start}, ${3:length})' },
-            { name: 'UPPER', snippet: 'UPPER(${1:str})' },
-            { name: 'LOWER', snippet: 'LOWER(${1:str})' },
-            { name: 'TRIM', snippet: 'TRIM(${1:str})' },
-            { name: 'LTRIM', snippet: 'LTRIM(${1:str})' },
-            { name: 'RTRIM', snippet: 'RTRIM(${1:str})' },
-            { name: 'LENGTH', snippet: 'LENGTH(${1:str})' },
-            { name: 'REPLACE', snippet: 'REPLACE(${1:str}, ${2:old}, ${3:new})' },
+            { name: 'concat', snippet: 'concat(${1:str1}, ${2:str2})' },
+            { name: 'substring', snippet: 'substring(${1:str}, ${2:start}, ${3:length})' },
+            { name: 'substr', snippet: 'substr(${1:str}, ${2:start}, ${3:length})' },
+            { name: 'upper', snippet: 'upper(${1:str})' },
+            { name: 'lower', snippet: 'lower(${1:str})' },
+            { name: 'trim', snippet: 'trim(${1:str})' },
+            { name: 'ltrim', snippet: 'ltrim(${1:str})' },
+            { name: 'rtrim', snippet: 'rtrim(${1:str})' },
+            { name: 'length', snippet: 'length(${1:str})' },
+            { name: 'replace', snippet: 'replace(${1:str}, ${2:old}, ${3:new})' },
 
             // Date/Time functions
-            { name: 'CURRENT_DATE', snippet: 'CURRENT_DATE' },
-            { name: 'CURRENT_TIMESTAMP', snippet: 'CURRENT_TIMESTAMP' },
-            { name: 'ADD_DAYS', snippet: 'ADD_DAYS(${1:date}, ${2:days})' },
-            { name: 'ADD_MONTHS', snippet: 'ADD_MONTHS(${1:date}, ${2:months})' },
-            { name: 'ADD_YEARS', snippet: 'ADD_YEARS(${1:date}, ${2:years})' },
-            { name: 'EXTRACT', snippet: 'EXTRACT(${1:YEAR} FROM ${2:date})' },
-            { name: 'DATE_TRUNC', snippet: 'DATE_TRUNC(${1:\'DAY\'}, ${2:timestamp})' },
+            { name: 'current_date', snippet: 'current_date' },
+            { name: 'current_timestamp', snippet: 'current_timestamp' },
+            { name: 'add_days', snippet: 'add_days(${1:date}, ${2:days})' },
+            { name: 'add_months', snippet: 'add_months(${1:date}, ${2:months})' },
+            { name: 'add_years', snippet: 'add_years(${1:date}, ${2:years})' },
+            { name: 'extract', snippet: 'extract(${1:year} from ${2:date})' },
+            { name: 'date_trunc', snippet: 'date_trunc(${1:\'day\'}, ${2:timestamp})' },
 
             // Math functions
-            { name: 'ABS', snippet: 'ABS(${1:number})' },
-            { name: 'ROUND', snippet: 'ROUND(${1:number}, ${2:decimals})' },
-            { name: 'FLOOR', snippet: 'FLOOR(${1:number})' },
-            { name: 'CEIL', snippet: 'CEIL(${1:number})' },
-            { name: 'SQRT', snippet: 'SQRT(${1:number})' },
-            { name: 'POWER', snippet: 'POWER(${1:base}, ${2:exponent})' },
+            { name: 'abs', snippet: 'abs(${1:number})' },
+            { name: 'round', snippet: 'round(${1:number}, ${2:decimals})' },
+            { name: 'floor', snippet: 'floor(${1:number})' },
+            { name: 'ceil', snippet: 'ceil(${1:number})' },
+            { name: 'sqrt', snippet: 'sqrt(${1:number})' },
+            { name: 'power', snippet: 'power(${1:base}, ${2:exponent})' },
 
             // Window functions
-            { name: 'ROW_NUMBER', snippet: 'ROW_NUMBER() OVER (${1:ORDER BY column})' },
-            { name: 'RANK', snippet: 'RANK() OVER (${1:ORDER BY column})' },
-            { name: 'DENSE_RANK', snippet: 'DENSE_RANK() OVER (${1:ORDER BY column})' },
-            { name: 'LAG', snippet: 'LAG(${1:column}, ${2:offset}) OVER (${3:ORDER BY column})' },
-            { name: 'LEAD', snippet: 'LEAD(${1:column}, ${2:offset}) OVER (${3:ORDER BY column})' },
+            { name: 'row_number', snippet: 'row_number() over (${1:order by column})' },
+            { name: 'rank', snippet: 'rank() over (${1:order by column})' },
+            { name: 'dense_rank', snippet: 'dense_rank() over (${1:order by column})' },
+            { name: 'lag', snippet: 'lag(${1:column}, ${2:offset}) over (${3:order by column})' },
+            { name: 'lead', snippet: 'lead(${1:column}, ${2:offset}) over (${3:order by column})' },
 
             // Null handling
-            { name: 'COALESCE', snippet: 'COALESCE(${1:value1}, ${2:value2})' },
-            { name: 'NULLIF', snippet: 'NULLIF(${1:value1}, ${2:value2})' },
-            { name: 'NVL', snippet: 'NVL(${1:value}, ${2:default})' }
+            { name: 'coalesce', snippet: 'coalesce(${1:value1}, ${2:value2})' },
+            { name: 'nullif', snippet: 'nullif(${1:value1}, ${2:value2})' },
+            { name: 'nvl', snippet: 'nvl(${1:value}, ${2:default})' }
         ];
 
         return functions.map(func => {
@@ -163,21 +268,32 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         });
     }
 
-    private getObjectCompletions(objects: DatabaseObject[]): vscode.CompletionItem[] {
+    private getSchemaCompletions(schemas: string[]): vscode.CompletionItem[] {
+        return schemas.map(schema => {
+            const item = new vscode.CompletionItem(schema.toLowerCase(), vscode.CompletionItemKind.Module);
+            item.detail = 'Schema';
+            item.insertText = this.quoteIdentifier(schema);
+            item.sortText = `0_${schema.toLowerCase()}`;
+            return item;
+        });
+    }
+
+    private getObjectCompletions(objects: DatabaseObject[], skipQuoting = false): vscode.CompletionItem[] {
         return objects.map(obj => {
             const kind = obj.type === 'table'
                 ? vscode.CompletionItemKind.Class
                 : vscode.CompletionItemKind.Interface;
 
-            const item = new vscode.CompletionItem(obj.name, kind);
-            item.detail = `${obj.type} in ${obj.schema}`;
-            item.insertText = obj.name;
-            item.sortText = `1_${obj.name}`;
+            const displayName = obj.name.toLowerCase();
+            const item = new vscode.CompletionItem(displayName, kind);
+            item.detail = `${obj.type} in ${obj.schema.toLowerCase()}`;
+            item.insertText = skipQuoting ? displayName : this.quoteIdentifier(obj.name);
+            item.sortText = `1_${displayName}`;
 
             // Add documentation with column list if available
             if (obj.columns && obj.columns.length > 0) {
                 item.documentation = new vscode.MarkdownString(
-                    `**Columns:**\n${obj.columns.map(col => `- ${col}`).join('\n')}`
+                    `**Columns:**\n${obj.columns.map(col => `- ${col.toLowerCase()}`).join('\n')}`
                 );
             }
 
@@ -187,11 +303,40 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
     private getColumnCompletions(columns: string[]): vscode.CompletionItem[] {
         return columns.map(col => {
-            const item = new vscode.CompletionItem(col, vscode.CompletionItemKind.Field);
-            item.insertText = col;
-            item.sortText = `0_${col}`;
+            const displayName = col.toLowerCase();
+            const item = new vscode.CompletionItem(displayName, vscode.CompletionItemKind.Field);
+            item.insertText = this.quoteIdentifier(col);
+            item.sortText = `0_${displayName}`;
             return item;
         });
+    }
+
+    private async getSchemas(connectionId: string): Promise<string[]> {
+        // Check cache
+        const cached = this.schemasCache.get(connectionId);
+        if (cached) {
+            return cached;
+        }
+
+        try {
+            const driver = await this.connectionManager.getDriver(connectionId);
+            const schemasQuery = `
+                SELECT SCHEMA_NAME
+                FROM SYS.EXA_SCHEMAS
+                WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
+                ORDER BY SCHEMA_NAME
+            `;
+            const result = await this.safeQuery(driver, schemasQuery);
+            const rows = getRowsFromResult(result);
+            const schemas = rows.map((r: any) => r.SCHEMA_NAME);
+
+            // Cache schemas
+            this.schemasCache.set(connectionId, schemas);
+            return schemas;
+        } catch (error) {
+            console.error('Failed to fetch schemas:', error);
+            return [];
+        }
     }
 
     private async getDatabaseObjects(connectionId: string): Promise<DatabaseObject[]> {
@@ -235,12 +380,12 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                     type: row.OBJECT_TYPE === 'view' ? 'view' : 'table'
                 };
 
-                // Fetch columns for this object (with limit to avoid performance issues)
+                // Fetch columns for this object
                 try {
                     const columnsQuery = `
                         SELECT COLUMN_NAME
                         FROM SYS.EXA_ALL_COLUMNS
-                        WHERE COLUMN_SCHEMA = '${row.SCHEMA_NAME}'
+                        WHERE COLUMN_SCHEMA = '${row.TABLE_SCHEMA}'
                         AND COLUMN_TABLE = '${row.TABLE_NAME}'
                         ORDER BY COLUMN_ORDINAL_POSITION
                     `;
@@ -269,9 +414,13 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         if (connectionId) {
             this.cache.delete(connectionId);
             this.cacheExpiry.delete(connectionId);
+            this.schemasCache.delete(connectionId);
         } else {
             this.cache.clear();
             this.cacheExpiry.clear();
+            this.schemasCache.clear();
+            this.reservedKeywords.clear();
+            this.reservedKeywordsLoaded = false;
         }
     }
 
