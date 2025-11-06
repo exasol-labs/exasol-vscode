@@ -16,6 +16,22 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
 
     constructor(private readonly connectionManager: ConnectionManager) {}
 
+    private async executeWithRetry<T>(fn: () => Promise<T>, connectionId: string): Promise<T> {
+        try {
+            return await fn();
+        } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            if (errorMsg.includes('E-EDJS-8') || errorMsg.includes('pool reached its limit')) {
+                // Reset driver and retry once
+                await this.connectionManager.resetDriver(connectionId);
+                // Wait a bit for the pool to stabilize
+                await new Promise(resolve => setTimeout(resolve, 100));
+                return await fn();
+            }
+            throw error;
+        }
+    }
+
     // Handle drag operation
     async handleDrag(source: readonly ObjectNode[], dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken): Promise<void> {
         const items = source.filter((item): item is ObjectTreeItem => item instanceof ObjectTreeItem);
@@ -232,9 +248,10 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
     private async fetchSchemas(connection: StoredConnection): Promise<Array<{ name: string; tableCount?: number; viewCount?: number }>> {
         const outputChannel = getOutputChannel();
         try {
-            outputChannel?.appendLine(`   Getting driver for connection ID: ${connection.id}`);
-            const driver = await this.connectionManager.getDriver(connection.id);
-            outputChannel?.appendLine(`   Driver obtained, running schema query with object counts...`);
+            return await this.executeWithRetry(async () => {
+                outputChannel?.appendLine(`   Getting driver for connection ID: ${connection.id}`);
+                const driver = await this.connectionManager.getDriver(connection.id);
+                outputChannel?.appendLine(`   Driver obtained, running schema query with object counts...`);
 
             // Try to get schema counts in a single query
             try {
@@ -279,6 +296,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 outputChannel?.appendLine(`   Schema query returned ${rows.length} rows`);
                 return rows.map((row: any) => ({ name: row.SCHEMA_NAME }));
             }
+            }, connection.id);
         } catch (error) {
             outputChannel?.appendLine(`   Error fetching schemas: ${error}`);
             throw new Error(`Failed to fetch schemas: ${error}`);
@@ -291,8 +309,9 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
     ): Promise<Array<{ name: string; rowCount?: number }>> {
         const outputChannel = getOutputChannel();
         try {
-            const driver = await this.connectionManager.getDriver(connection.id);
-            const attempts: Array<{
+            return await this.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connection.id);
+                const attempts: Array<{
                 description: string;
                 sql: string;
                 map: (rows: any[]) => Array<{ name: string; rowCount?: number }>;
@@ -385,7 +404,8 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 }
             }
 
-            throw lastError ?? new Error('Unknown error fetching tables');
+                throw lastError ?? new Error('Unknown error fetching tables');
+            }, connection.id);
         } catch (error) {
             outputChannel?.appendLine(`   Error in fetchTables: ${error}`);
             throw new Error(`Failed to fetch tables: ${error}`);
@@ -395,10 +415,11 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
     private async fetchViews(connection: StoredConnection, schemaName: string): Promise<Array<{ name: string }>> {
         const outputChannel = getOutputChannel();
         try {
-            outputChannel?.appendLine(`   Running views query for schema '${schemaName}'`);
-            const driver = await this.connectionManager.getDriver(connection.id);
+            return await this.executeWithRetry(async () => {
+                outputChannel?.appendLine(`   Running views query for schema '${schemaName}'`);
+                const driver = await this.connectionManager.getDriver(connection.id);
 
-            const attempts: Array<{
+                const attempts: Array<{
                 description: string;
                 sql: string;
                 map: (rows: any[]) => Array<{ name: string }>;
@@ -477,7 +498,8 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 }
             }
 
-            throw lastError ?? new Error('Unknown error fetching views');
+                throw lastError ?? new Error('Unknown error fetching views');
+            }, connection.id);
         } catch (error) {
             outputChannel?.appendLine(`   Error in fetchViews: ${error}`);
             outputChannel?.appendLine(`   Error stack: ${(error as Error).stack}`);
@@ -491,23 +513,25 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         tableName: string
     ): Promise<Array<{ name: string; type: string; nullable: boolean }>> {
         try {
-            const driver = await this.connectionManager.getDriver(connection.id);
-            const result = await driver.query(`
-                SELECT
-                    COLUMN_NAME,
-                    COLUMN_TYPE,
-                    COLUMN_IS_NULLABLE
-                FROM SYS.EXA_ALL_COLUMNS
-                WHERE COLUMN_SCHEMA = '${schemaName}'
-                AND COLUMN_TABLE = '${tableName}'
-                ORDER BY COLUMN_ORDINAL_POSITION
-            `);
-            const rows = getRowsFromResult(result);
-            return rows.map((row: any) => ({
-                name: row.COLUMN_NAME,
-                type: row.COLUMN_TYPE,
-                nullable: row.COLUMN_IS_NULLABLE
-            }));
+            return await this.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connection.id);
+                const result = await driver.query(`
+                    SELECT
+                        COLUMN_NAME,
+                        COLUMN_TYPE,
+                        COLUMN_IS_NULLABLE
+                    FROM SYS.EXA_ALL_COLUMNS
+                    WHERE COLUMN_SCHEMA = '${schemaName}'
+                    AND COLUMN_TABLE = '${tableName}'
+                    ORDER BY COLUMN_ORDINAL_POSITION
+                `);
+                const rows = getRowsFromResult(result);
+                return rows.map((row: any) => ({
+                    name: row.COLUMN_NAME,
+                    type: row.COLUMN_TYPE,
+                    nullable: row.COLUMN_IS_NULLABLE
+                }));
+            }, connection.id);
         } catch (error) {
             throw new Error(`Failed to fetch columns: ${error}`);
         }

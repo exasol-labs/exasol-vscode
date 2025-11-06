@@ -11,6 +11,22 @@ export class ObjectActions {
         private extensionUri: vscode.Uri
     ) {}
 
+    private async executeWithRetry<T>(fn: () => Promise<T>, connectionId: string): Promise<T> {
+        try {
+            return await fn();
+        } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            if (errorMsg.includes('E-EDJS-8') || errorMsg.includes('pool reached its limit')) {
+                // Reset driver and retry once
+                await this.connectionManager.resetDriver(connectionId);
+                // Wait a bit for the pool to stabilize
+                await new Promise(resolve => setTimeout(resolve, 100));
+                return await fn();
+            }
+            throw error;
+        }
+    }
+
     private extractColumnMetadata(columnsMeta: any[]): ColumnMetadata[] {
         return columnsMeta.map((col: any) => {
             const name = col.name ?? col.COLUMN_NAME ?? col;
@@ -49,24 +65,27 @@ export class ObjectActions {
                     cancellable: false
                 },
                 async () => {
-                    const query = `SELECT * FROM "${schemaName}"."${tableName}" LIMIT ${limit}`;
-                    const driver = await this.connectionManager.getDriver(connection.id);
+                    const queryResult = await this.executeWithRetry(async () => {
+                        const query = `SELECT * FROM "${schemaName}"."${tableName}" LIMIT ${limit}`;
+                        const driver = await this.connectionManager.getDriver(connection.id);
 
-                    const startTime = Date.now();
-                    const result = await driver.query(query);
-                    const executionTime = Date.now() - startTime;
+                        const startTime = Date.now();
+                        const result = await driver.query(query);
+                        const executionTime = Date.now() - startTime;
 
-                    const columnsMeta = getColumnsFromResult(result);
-                    const rows = getRowsFromResult(result);
-                    const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
-                    const columnMetadata = this.extractColumnMetadata(columnsMeta);
-                    const queryResult: QueryResult = {
-                        columns,
-                        columnMetadata,
-                        rows,
-                        rowCount: rows.length,
-                        executionTime
-                    };
+                        const columnsMeta = getColumnsFromResult(result);
+                        const rows = getRowsFromResult(result);
+                        const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
+                        const columnMetadata = this.extractColumnMetadata(columnsMeta);
+
+                        return {
+                            columns,
+                            columnMetadata,
+                            rows,
+                            rowCount: rows.length,
+                            executionTime
+                        };
+                    }, connection.id);
 
                     ResultsPanel.show(queryResult);
                     if (showNotification) {
@@ -194,36 +213,39 @@ export class ObjectActions {
 
     async describeTable(connection: StoredConnection, schemaName: string, tableName: string) {
         try {
-            const driver = await this.connectionManager.getDriver(connection.id);
+            const queryResult = await this.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connection.id);
 
-            const query = `
-                SELECT
-                    COLUMN_NAME,
-                    COLUMN_TYPE,
-                    COLUMN_IS_NULLABLE,
-                    COLUMN_DEFAULT,
-                    COLUMN_COMMENT
-                FROM SYS.EXA_ALL_COLUMNS
-                WHERE COLUMN_SCHEMA = '${schemaName}'
-                AND COLUMN_TABLE = '${tableName}'
-                ORDER BY COLUMN_ORDINAL_POSITION
-            `;
+                const query = `
+                    SELECT
+                        COLUMN_NAME,
+                        COLUMN_TYPE,
+                        COLUMN_IS_NULLABLE,
+                        COLUMN_DEFAULT,
+                        COLUMN_COMMENT
+                    FROM SYS.EXA_ALL_COLUMNS
+                    WHERE COLUMN_SCHEMA = '${schemaName}'
+                    AND COLUMN_TABLE = '${tableName}'
+                    ORDER BY COLUMN_ORDINAL_POSITION
+                `;
 
-            const startTime = Date.now();
-            const result = await driver.query(query);
-            const executionTime = Date.now() - startTime;
+                const startTime = Date.now();
+                const result = await driver.query(query);
+                const executionTime = Date.now() - startTime;
 
-            const columnsMeta = getColumnsFromResult(result);
-            const rows = getRowsFromResult(result);
-            const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
-            const columnMetadata = this.extractColumnMetadata(columnsMeta);
-            const queryResult: QueryResult = {
-                columns,
-                columnMetadata,
-                rows,
-                rowCount: rows.length,
-                executionTime
-            };
+                const columnsMeta = getColumnsFromResult(result);
+                const rows = getRowsFromResult(result);
+                const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
+                const columnMetadata = this.extractColumnMetadata(columnsMeta);
+
+                return {
+                    columns,
+                    columnMetadata,
+                    rows,
+                    rowCount: rows.length,
+                    executionTime
+                };
+            }, connection.id);
 
             ResultsPanel.show(queryResult);
             vscode.window.showInformationMessage(`Table structure: ${schemaName}.${tableName}`);

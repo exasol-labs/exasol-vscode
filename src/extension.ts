@@ -11,6 +11,7 @@ import { QueryStatsPanel } from './panels/queryStatsPanel';
 import { ConnectionPanel } from './panels/connectionPanel';
 import { SessionManager } from './sessionManager';
 import { ObjectActions } from './objectActions';
+import { findStatementAtCursor } from './utils';
 
 // Create output channel for logging
 let outputChannel: vscode.OutputChannel;
@@ -75,10 +76,17 @@ export function activate(context: vscode.ExtensionContext) {
     // Create status bar item for session info
     const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     statusBarItem.text = sessionManager.getStatusBarText();
+    statusBarItem.command = 'exasol.selectConnection';
+    statusBarItem.tooltip = 'Click to select active connection';
     statusBarItem.show();
 
     // Update status bar when session changes
     sessionManager.onDidChangeSession(() => {
+        statusBarItem.text = sessionManager.getStatusBarText();
+    });
+
+    // Update status bar when active connection changes
+    connectionManager.onDidChangeActiveConnection(() => {
         statusBarItem.text = sessionManager.getStatusBarText();
     });
 
@@ -129,7 +137,7 @@ export function activate(context: vscode.ExtensionContext) {
     // New commands for object actions
     const previewTableCmd = vscode.commands.registerCommand('exasol.previewTable', async (item: any) => {
         if (item && item.connection && item.schemaName && item.tableInfo) {
-            await objectActions.previewTableData(item.connection, item.schemaName, item.tableInfo.name);
+            await objectActions.previewTableData(item.connection, item.schemaName, item.tableInfo.name, 100);
         }
     });
 
@@ -157,10 +165,26 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    // Prevent rapid duplicate executions (e.g., double-click)
+    const openObjectExecuting = new Map<string, boolean>();
+
     const openObjectCmd = vscode.commands.registerCommand('exasol.openObject', async (item: any) => {
         if (item && item.connection && item.schemaName && item.tableInfo) {
-            await objectActions.previewTableData(item.connection, item.schemaName, item.tableInfo.name, 100, false);
-            await objectActions.describeTable(item.connection, item.schemaName, item.tableInfo.name);
+            const key = `${item.connection.id}:${item.schemaName}:${item.tableInfo.name}`;
+
+            // If already executing for this object, skip
+            if (openObjectExecuting.get(key)) {
+                return;
+            }
+
+            try {
+                openObjectExecuting.set(key, true);
+                // Double-click shows table structure only (not preview)
+                await objectActions.describeTable(item.connection, item.schemaName, item.tableInfo.name);
+            } finally {
+                // Clear after a short delay to allow UI to settle
+                setTimeout(() => openObjectExecuting.delete(key), 500);
+            }
         }
     });
 
@@ -235,6 +259,38 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    const selectConnectionCmd = vscode.commands.registerCommand('exasol.selectConnection', async () => {
+        const connections = connectionManager.getConnections();
+
+        if (connections.length === 0) {
+            const answer = await vscode.window.showInformationMessage(
+                'No connections available. Would you like to add one?',
+                'Add Connection',
+                'Cancel'
+            );
+            if (answer === 'Add Connection') {
+                await vscode.commands.executeCommand('exasol.addConnection');
+            }
+            return;
+        }
+
+        const items = connections.map((conn: StoredConnection) => ({
+            label: conn.name,
+            description: conn.host,
+            detail: connectionManager.getActiveConnection()?.id === conn.id ? '✓ Active' : '',
+            connection: conn
+        }));
+
+        const selected = await vscode.window.showQuickPick(items, {
+            placeHolder: 'Select a connection to activate',
+            matchOnDescription: true
+        });
+
+        if (selected) {
+            await vscode.commands.executeCommand('exasol.setActiveConnection', selected);
+        }
+    });
+
     const connectionsChanged = connectionManager.onDidChangeConnections(() => {
         connectionTreeProvider.refresh();
         objectTreeProvider.refresh();
@@ -268,6 +324,7 @@ export function activate(context: vscode.ExtensionContext) {
         renameConnectionCmd,
         setActiveConnectionCmd,
         copyQualifiedNameCmd,
+        selectConnectionCmd,
         completionDisposable,
         codeLensDisposable,
         connectionTreeView,
@@ -340,11 +397,30 @@ async function executeQuery(
     }
 
     let query: string;
-    if (selectedOnly) {
-        const selection = editor.selection;
+    const selection = editor.selection;
+    const hasSelection = !selection.isEmpty;
+
+    if (selectedOnly || hasSelection) {
+        // Execute selected text if explicitly requested OR if there's a selection
         query = editor.document.getText(selection);
+        if (hasSelection) {
+            output.appendLine(`📝 Executing selected text (lines ${selection.start.line + 1}-${selection.end.line + 1})`);
+        }
     } else {
-        query = editor.document.getText();
+        // No selection - try to find the statement at the cursor position
+        const cursorLine = editor.selection.active.line;
+        const documentText = editor.document.getText();
+        const statement = findStatementAtCursor(documentText, cursorLine);
+
+        if (statement) {
+            // Found a statement at the cursor - execute only that statement
+            query = statement.text;
+            output.appendLine(`🎯 Executing statement at cursor (lines ${statement.range.start + 1}-${statement.range.end + 1})`);
+        } else {
+            // No statement found at cursor - execute entire file
+            query = documentText;
+            output.appendLine('📄 Executing entire file');
+        }
     }
 
     if (!query.trim()) {

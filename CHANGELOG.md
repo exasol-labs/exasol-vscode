@@ -2,6 +2,45 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [0.1.2] - 2025-11-05
+
+### Added
+- Context menu in Query Results with 4 copy options: Copy, Copy with Headers, Copy as CSV, Copy as CSV with Headers
+- Object counts displayed in Database Objects explorer
+  - Schema level: Shows table and view counts (e.g., "5 tables, 3 views")
+  - Folder level: Shows counts on Tables and Views folders
+  - Empty schemas marked as "empty"
+- Column type metadata extraction from query results (type, precision, scale, size)
+
+### Changed
+- Cell type inspector now shows actual column type from database metadata instead of inferred types
+  - Displays proper types like `VARCHAR(100)`, `DECIMAL(18,2)`, `INTEGER`
+  - Shows precision, scale, and size information where available
+- Autocomplete filtering improved to show only relevant columns after table aliases
+  - When typing after alias (e.g., `u.`), shows only columns from that table
+  - Removed keyword/function clutter from alias-specific completions
+  - Context-aware suggestions for schema.table patterns
+
+### Fixed
+- Cmd+C keyboard shortcut for copying selected cells now works consistently
+  - Added proper event propagation handling
+  - Automatic focus management when selecting cells
+  - Works alongside context menu copy options
+- Cmd+A keyboard shortcut for selecting all cells in results table
+  - Table container made focusable for keyboard event capture
+  - Proper event handling with preventDefault and stopPropagation
+- Connection pool exhaustion error (E-EDJS-8) with automatic retry
+  - Detects pool limit errors and resets driver connection
+  - Automatic single retry for failed queries
+  - Applied to both execute() and executeAndFetch() methods
+
+### Technical
+- Enhanced QueryResult interface with columnMetadata field
+- Added ColumnMetadata interface for type information storage
+- Updated QueryExecutor to extract and populate column metadata
+- Improved ObjectTreeProvider with optimized schema query using JOINs
+- Enhanced CompletionProvider with priority-based context detection
+
 ## [0.1.1] - 2025-10-17
 
 ### Added

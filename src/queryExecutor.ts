@@ -139,23 +139,57 @@ export class QueryExecutor {
             // Check if it's a pool exhaustion error
             const errorMsg = error instanceof Error ? error.message : String(error);
             if (errorMsg.includes('E-EDJS-8') || errorMsg.includes('pool reached its limit')) {
-                // Reset the driver and retry once
+                // Reset the driver and retry once with proper method
                 await this.connectionManager.resetDriver();
                 try {
                     const driver = await this.connectionManager.getDriver();
-                    const result = await driver.query(finalQuery);
+
+                    // Use the same logic as main flow - try query first for result sets, fall back to execute
+                    if (isResultSet) {
+                        try {
+                            const result = await driver.query(finalQuery);
+                            const executionTime = Date.now() - startTime;
+
+                            const columnsMeta = getColumnsFromResult(result);
+                            const rows = getRowsFromResult(result);
+                            const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
+                            const columnMetadata = this.extractColumnMetadata(columnsMeta);
+
+                            return {
+                                columns,
+                                columnMetadata,
+                                rows,
+                                rowCount: rows.length,
+                                executionTime
+                            };
+                        } catch (queryError) {
+                            // If query() fails, try execute
+                            const queryErrorMsg = queryError instanceof Error ? queryError.message : String(queryError);
+                            if (!queryErrorMsg.includes('Invalid result type') && !queryErrorMsg.includes('E-EDJS-11')) {
+                                throw queryError;
+                            }
+                            // Fall through to execute
+                        }
+                    }
+
+                    // Use execute for DDL/DML
+                    const rawExecuteResult = await executeWithoutResult(driver, finalQuery);
                     const executionTime = Date.now() - startTime;
 
-                    const columnsMeta = getColumnsFromResult(result);
-                    const rows = getRowsFromResult(result);
+                    const columnsMeta = getColumnsFromResult(rawExecuteResult);
+                    const rows = getRowsFromResult(rawExecuteResult);
                     const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
                     const columnMetadata = this.extractColumnMetadata(columnsMeta);
+                    const affectedRows =
+                        rows.length > 0
+                            ? rows.length
+                            : rawExecuteResult?.responseData?.results?.[0]?.rowCount ?? 0;
 
                     return {
                         columns,
                         columnMetadata,
                         rows,
-                        rowCount: rows.length,
+                        rowCount: affectedRows,
                         executionTime
                     };
                 } catch (retryError) {

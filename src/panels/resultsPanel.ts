@@ -240,7 +240,98 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
     }
 }
 
+function getSuccessHtml(result: QueryResult): string {
+    const executionTimeMs = result.executionTime;
+    const executionTimeSec = (executionTimeMs / 1000).toFixed(2);
+
+    return `<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Query Executed</title>
+        <style>
+            html, body {
+                margin: 0;
+                padding: 0;
+                height: 100%;
+                overflow: hidden;
+                font-family: var(--vscode-font-family);
+                color: var(--vscode-foreground);
+                background-color: var(--vscode-editor-background);
+            }
+            body {
+                padding: 16px;
+                box-sizing: border-box;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .success-container {
+                background-color: var(--vscode-inputValidation-infoBackground);
+                border: 1px solid var(--vscode-inputValidation-infoBorder);
+                border-radius: 4px;
+                padding: 20px 24px;
+                max-width: 500px;
+            }
+            .success-title {
+                color: var(--vscode-charts-green);
+                font-weight: 600;
+                margin-bottom: 12px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 16px;
+            }
+            .success-icon {
+                font-size: 24px;
+            }
+            .success-details {
+                font-size: 13px;
+                line-height: 1.6;
+                color: var(--vscode-foreground);
+            }
+            .detail-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 4px 0;
+            }
+            .detail-label {
+                color: var(--vscode-descriptionForeground);
+            }
+            .detail-value {
+                font-weight: 500;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="success-container">
+            <div class="success-title">
+                <span class="success-icon">✓</span>
+                <span>Query executed successfully</span>
+            </div>
+            <div class="success-details">
+                <div class="detail-row">
+                    <span class="detail-label">Rows affected:</span>
+                    <span class="detail-value">${result.rowCount.toLocaleString()}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Execution time:</span>
+                    <span class="detail-value">${executionTimeSec}s (${executionTimeMs.toLocaleString()}ms)</span>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    `;
+}
+
 export function getResultHtml(result: QueryResult, options: ResultViewOptions): string {
+    // Check if this is a DDL/DML statement (no columns returned)
+    if (!result.columns || result.columns.length === 0) {
+        return getSuccessHtml(result);
+    }
+
     const filterId = `filter-${Date.now()}`;
     const dataJson = JSON.stringify({
         columns: result.columns,
@@ -321,16 +412,59 @@ export function getResultHtml(result: QueryResult, options: ResultViewOptions): 
                 position: relative;
                 user-select: none;
                 -webkit-user-select: none;
+                max-width: 400px;
+            }
+            td.truncated {
+                cursor: help;
+                font-style: italic;
+                opacity: 0.95;
+            }
+            td.truncated::after {
+                content: '📋';
+                position: absolute;
+                right: 4px;
+                top: 50%;
+                transform: translateY(-50%);
+                font-size: 10px;
+                opacity: 0.5;
             }
             th {
                 background-color: var(--vscode-editor-background);
                 position: sticky;
-                top: 0;
+                top: -1px;
                 cursor: pointer;
                 min-width: 80px;
+                z-index: 10;
+                box-shadow: 0 1px 0 0 var(--vscode-panel-border);
+                border-top: 1px solid var(--vscode-editor-background);
+            }
+            th.row-number-header {
+                min-width: 30px;
+                width: 30px;
+                max-width: 30px;
+                text-align: left;
+                padding-left: 6px;
+                cursor: default;
+                background-color: var(--vscode-sideBarSectionHeader-background);
+                user-select: none;
+                border-right: 1px solid var(--vscode-panel-border);
             }
             td {
                 cursor: cell;
+            }
+            td.row-number {
+                min-width: 30px;
+                width: 30px;
+                max-width: 30px;
+                text-align: left;
+                padding-left: 6px;
+                background-color: var(--vscode-sideBarSectionHeader-background);
+                color: var(--vscode-descriptionForeground);
+                font-size: 11px;
+                user-select: none;
+                cursor: default;
+                font-weight: 500;
+                border-right: 1px solid var(--vscode-panel-border);
             }
             th:hover {
                 background-color: var(--vscode-list-hoverBackground);
@@ -393,6 +527,10 @@ export function getResultHtml(result: QueryResult, options: ResultViewOptions): 
                 background-color: var(--vscode-menu-selectionBackground);
                 color: var(--vscode-menu-selectionForeground);
             }
+            #scroll-sentinel {
+                height: 1px;
+                visibility: hidden;
+            }
         </style>
     </head>
     <body>
@@ -405,6 +543,7 @@ export function getResultHtml(result: QueryResult, options: ResultViewOptions): 
             <table id="results">
                 <thead>
                     <tr>
+                        <th class="row-number-header">#</th>
                         ${result.columns.map(col => `<th><span>${col}</span><div class="resizer"></div></th>`).join('')}
                     </tr>
                 </thead>
@@ -568,17 +707,48 @@ export function getResultHtml(result: QueryResult, options: ResultViewOptions): 
                 });
             };
 
-            const render = (rows) => {
-                tbody.innerHTML = '';
-                rows.forEach((row, rowIdx) => {
+            // Truncate long values for display
+            const truncateValue = (value, maxLength = 200) => {
+                const str = String(value);
+                if (str.length <= maxLength) {
+                    return { display: str, isTruncated: false };
+                }
+                return { display: str.substring(0, maxLength) + '...', isTruncated: true };
+            };
+
+            // Progressive rendering for large datasets
+            const CHUNK_SIZE = 1000;
+            let renderedRowCount = 0;
+            let isRendering = false;
+
+            const renderRows = (rows, startIdx, endIdx) => {
+                const fragment = document.createDocumentFragment();
+
+                for (let rowIdx = startIdx; rowIdx < endIdx && rowIdx < rows.length; rowIdx++) {
+                    const row = rows[rowIdx];
                     const tr = document.createElement('tr');
+
+                    // Add row number cell
+                    const rowNumTd = document.createElement('td');
+                    rowNumTd.className = 'row-number';
+                    rowNumTd.textContent = (rowIdx + 1).toString();
+                    tr.appendChild(rowNumTd);
+
                     data.columns.forEach((col, colIdx) => {
                         const td = document.createElement('td');
                         const value = row[col];
                         if (value === null || value === undefined) {
                             td.innerHTML = '<span class="null-value">(null)</span>';
                         } else {
-                            td.textContent = value;
+                            const fullValue = String(value);
+                            const truncated = truncateValue(fullValue);
+                            td.textContent = truncated.display;
+
+                            // Add tooltip with full value if truncated
+                            if (truncated.isTruncated) {
+                                td.title = fullValue;
+                                td.classList.add('truncated');
+                            }
                         }
                         td.dataset.row = rowIdx;
                         td.dataset.col = colIdx;
@@ -612,16 +782,104 @@ export function getResultHtml(result: QueryResult, options: ResultViewOptions): 
                             }
                         });
 
-                        // Click to inspect cell
+                        // Click to inspect cell - always use full value from dataset
                         td.addEventListener('click', (e) => {
-                            showCellInspector(col, value);
+                            const fullValue = td.dataset.value;
+                            showCellInspector(col, fullValue);
                         });
 
                         tr.appendChild(td);
                     });
-                    tbody.appendChild(tr);
+                    fragment.appendChild(tr);
+                }
+
+                tbody.appendChild(fragment);
+                renderedRowCount = endIdx;
+                updateCountDisplay(rows.length);
+            };
+
+            const updateCountDisplay = (totalRows) => {
+                if (renderedRowCount < totalRows) {
+                    countEl.textContent = totalRows.toLocaleString() + ' rows (' + renderedRowCount.toLocaleString() + ' rendered, ' + (totalRows - renderedRowCount).toLocaleString() + ' pending...)';
+                    countEl.style.color = 'var(--vscode-charts-orange)';
+                } else {
+                    countEl.textContent = totalRows.toLocaleString() + ' rows';
+                    countEl.style.color = '';
+                }
+            };
+
+            const renderNextChunk = (rows) => {
+                if (isRendering || renderedRowCount >= rows.length) {
+                    return;
+                }
+
+                isRendering = true;
+                const endIdx = Math.min(renderedRowCount + CHUNK_SIZE, rows.length);
+
+                // Use requestAnimationFrame for smooth rendering
+                requestAnimationFrame(() => {
+                    renderRows(rows, renderedRowCount, endIdx);
+                    isRendering = false;
+
+                    // If there are more rows, set up observer for next chunk
+                    if (renderedRowCount < rows.length) {
+                        setupScrollObserver(rows);
+                    }
                 });
-                countEl.textContent = ${result.rowCount} + ' rows (' + rows.length + ' visible)';
+            };
+
+            let scrollObserver = null;
+
+            const setupScrollObserver = (rows) => {
+                // Remove existing observer
+                if (scrollObserver) {
+                    scrollObserver.disconnect();
+                }
+
+                // Create sentinel element at the bottom
+                const sentinel = document.createElement('tr');
+                sentinel.id = 'scroll-sentinel';
+                sentinel.style.height = '1px';
+                tbody.appendChild(sentinel);
+
+                // Observe when sentinel comes into view
+                scrollObserver = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting && !isRendering) {
+                            renderNextChunk(rows);
+                        }
+                    });
+                }, {
+                    root: document.querySelector('.table-container'),
+                    rootMargin: '200px'  // Load when within 200px of bottom
+                });
+
+                scrollObserver.observe(sentinel);
+            };
+
+            const render = (rows) => {
+                tbody.innerHTML = '';
+                renderedRowCount = 0;
+                isRendering = false;
+
+                if (scrollObserver) {
+                    scrollObserver.disconnect();
+                    scrollObserver = null;
+                }
+
+                // Show info message if dataset is large
+                if (rows.length > CHUNK_SIZE) {
+                    console.log('Large dataset detected: ' + rows.length + ' rows. Rendering progressively in chunks of ' + CHUNK_SIZE + '.');
+                }
+
+                // Render first chunk immediately
+                const initialChunk = Math.min(CHUNK_SIZE, rows.length);
+                renderRows(rows, 0, initialChunk);
+
+                // Set up lazy loading for remaining rows
+                if (rows.length > initialChunk) {
+                    setupScrollObserver(rows);
+                }
             };
 
             // Mouse up - finish selection
@@ -748,7 +1006,7 @@ export function getResultHtml(result: QueryResult, options: ResultViewOptions): 
                     th.classList.remove('sorted-asc', 'sorted-desc');
                 });
                 const thIndex = data.columns.indexOf(column);
-                const th = document.querySelectorAll('th')[thIndex];
+                const th = document.querySelectorAll('th')[thIndex + 1]; // +1 to skip row number header
                 th.classList.add('sorted-' + sortDirection);
 
                 currentRows = sorted;
@@ -767,6 +1025,8 @@ export function getResultHtml(result: QueryResult, options: ResultViewOptions): 
             const table = document.querySelector('#results');
             const ths = document.querySelectorAll('th');
             ths.forEach((th, idx) => {
+                // Skip row number header (index 0)
+                if (idx === 0) return;
                 // Set initial width based on content
                 th.style.width = '150px';
                 th.style.minWidth = '80px';
@@ -794,7 +1054,7 @@ export function getResultHtml(result: QueryResult, options: ResultViewOptions): 
                 // Also set width on all cells in this column to maintain alignment
                 const rows = document.querySelectorAll('#results tbody tr');
                 rows.forEach(row => {
-                    const cell = row.children[currentCol];
+                    const cell = row.children[currentCol + 1]; // +1 to skip row number cell
                     if (cell) {
                         cell.style.width = newWidth + 'px';
                     }
@@ -812,7 +1072,7 @@ export function getResultHtml(result: QueryResult, options: ResultViewOptions): 
 
             // Add click handlers to headers (for sorting)
             data.columns.forEach((col, idx) => {
-                const th = document.querySelectorAll('th')[idx];
+                const th = document.querySelectorAll('th')[idx + 1]; // +1 to skip row number header
                 th.querySelector('span').addEventListener('click', (e) => {
                     e.stopPropagation();
                     sortRows(col);

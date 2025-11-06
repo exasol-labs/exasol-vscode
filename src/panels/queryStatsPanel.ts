@@ -44,7 +44,41 @@ export class QueryStatsPanel implements vscode.WebviewViewProvider {
     resolveWebviewView(webviewView: vscode.WebviewView): void | Thenable<void> {
         this.view = webviewView;
         this.view.webview.options = { enableScripts: true };
+
+        // Listen for messages from other panels
+        this.view.webview.onDidReceiveMessage(message => {
+            if (message.command === 'updateCellInspector') {
+                this.updateCellInspector(message.column, message.value, message.type);
+            }
+        });
+
         this.updateWebview();
+    }
+
+    private updateCellInspector(column: string, value: any, type: string) {
+        if (!this.view) {
+            return;
+        }
+
+        this.view.webview.postMessage({
+            command: 'showCellInspector',
+            column,
+            value,
+            type
+        });
+    }
+
+    public static updateCellInspector(column: string, value: any, type: string) {
+        if (!QueryStatsPanel.instance || !QueryStatsPanel.instance.view) {
+            return;
+        }
+
+        QueryStatsPanel.instance.view.webview.postMessage({
+            command: 'showCellInspector',
+            column,
+            value,
+            type
+        });
     }
 
     private update(stats: QueryStats) {
@@ -117,7 +151,61 @@ export class QueryStatsPanel implements vscode.WebviewViewProvider {
                         color: var(--vscode-foreground);
                         background-color: var(--vscode-sideBar-background);
                         font-size: 12px;
-                        max-width: 200px;
+                        width: fit-content;
+                        min-width: 200px;
+                        max-width: 400px;
+                    }
+                    .section-header {
+                        color: var(--vscode-descriptionForeground);
+                        font-size: 10px;
+                        font-weight: 600;
+                        text-transform: uppercase;
+                        margin-bottom: 8px;
+                        letter-spacing: 0.5px;
+                    }
+                    .cell-inspector {
+                        border: 1px solid var(--vscode-panel-border);
+                        border-radius: 3px;
+                        padding: 8px;
+                        margin-bottom: 12px;
+                        background-color: var(--vscode-editor-background);
+                        display: none;
+                    }
+                    .cell-inspector.visible {
+                        display: block;
+                    }
+                    .inspector-header {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 6px;
+                        gap: 6px;
+                    }
+                    .inspector-column {
+                        color: var(--vscode-descriptionForeground);
+                        font-size: 10px;
+                        font-weight: 600;
+                    }
+                    .inspector-type {
+                        color: var(--vscode-charts-blue);
+                        font-size: 10px;
+                        font-family: var(--vscode-editor-font-family);
+                    }
+                    .inspector-value {
+                        font-family: var(--vscode-editor-font-family);
+                        font-size: 11px;
+                        word-wrap: break-word;
+                        white-space: pre-wrap;
+                        max-height: 100px;
+                        overflow-y: auto;
+                        padding: 6px;
+                        background-color: var(--vscode-input-background);
+                        border: 1px solid var(--vscode-input-border);
+                        border-radius: 2px;
+                    }
+                    .inspector-null {
+                        color: var(--vscode-disabledForeground);
+                        font-style: italic;
                     }
                     .stat-group {
                         margin-bottom: 10px;
@@ -129,25 +217,22 @@ export class QueryStatsPanel implements vscode.WebviewViewProvider {
                         margin-bottom: 0;
                     }
                     .stat-item {
-                        display: flex;
-                        justify-content: space-between;
+                        display: grid;
+                        grid-template-columns: auto 1fr;
                         align-items: baseline;
                         margin-bottom: 5px;
-                        gap: 8px;
+                        gap: 12px;
                     }
                     .stat-label {
                         color: var(--vscode-descriptionForeground);
                         font-size: 11px;
                         white-space: nowrap;
-                        flex-shrink: 0;
                     }
                     .stat-value {
                         color: var(--vscode-foreground);
                         font-weight: 500;
                         text-align: right;
                         font-size: 12px;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
                         white-space: nowrap;
                     }
                     .stat-value.highlight {
@@ -169,7 +254,7 @@ export class QueryStatsPanel implements vscode.WebviewViewProvider {
                         white-space: nowrap;
                         color: var(--vscode-editor-foreground);
                         margin-top: 4px;
-                        max-width: 180px;
+                        max-width: 100%;
                     }
                     .timestamp {
                         color: var(--vscode-descriptionForeground);
@@ -181,6 +266,16 @@ export class QueryStatsPanel implements vscode.WebviewViewProvider {
                 </style>
             </head>
             <body>
+                <div class="cell-inspector" id="cellInspector">
+                    <div class="section-header">Cell Value</div>
+                    <div class="inspector-header">
+                        <span class="inspector-column" id="inspectorColumn"></span>
+                        <span class="inspector-type" id="inspectorType"></span>
+                    </div>
+                    <div class="inspector-value" id="inspectorValue"></div>
+                </div>
+
+                <div class="section-header">Query Statistics</div>
                 <div class="stat-group">
                     <div class="stat-item">
                         <span class="stat-label">Time</span>
@@ -213,6 +308,29 @@ export class QueryStatsPanel implements vscode.WebviewViewProvider {
                 </div>
 
                 <div class="timestamp">${timestampFormatted}</div>
+
+                <script>
+                    const vscode = acquireVsCodeApi();
+                    const cellInspector = document.getElementById('cellInspector');
+                    const inspectorColumn = document.getElementById('inspectorColumn');
+                    const inspectorType = document.getElementById('inspectorType');
+                    const inspectorValue = document.getElementById('inspectorValue');
+
+                    window.addEventListener('message', event => {
+                        const message = event.data;
+                        if (message.command === 'showCellInspector') {
+                            cellInspector.classList.add('visible');
+                            inspectorColumn.textContent = message.column;
+                            inspectorType.textContent = message.type;
+
+                            if (message.value === null || message.value === undefined || message.value === '') {
+                                inspectorValue.innerHTML = '<span class="inspector-null">(null)</span>';
+                            } else {
+                                inspectorValue.textContent = String(message.value);
+                            }
+                        }
+                    });
+                </script>
             </body>
             </html>
         `;
@@ -220,7 +338,7 @@ export class QueryStatsPanel implements vscode.WebviewViewProvider {
 
     private getQueryPreview(query: string): string {
         const cleaned = query.replace(/\s+/g, ' ').trim();
-        const maxLength = 100;
+        const maxLength = 50;
         if (cleaned.length <= maxLength) {
             return this.escapeHtml(cleaned);
         }

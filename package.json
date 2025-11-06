@@ -3,7 +3,7 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "exasol",
   "engines": {
     "vscode": "^1.105.0"
@@ -85,7 +85,7 @@
       },
       {
         "command": "exasol.previewTable",
-        "title": "Preview Table Data"
+        "title": "Preview Table (100 rows)"
       },
       {
         "command": "exasol.showTableDDL",
@@ -217,6 +217,11 @@
           "group": "exasol@1"
         },
         {
+          "command": "exasol.previewTable",
+          "when": "view == exasol.objects && viewItem == table",
+          "group": "exasol@2"
+        },
+        {
           "command": "exasol.describeTable",
           "when": "view == exasol.objects && viewItem == table",
           "group": "exasol@3"
@@ -228,6 +233,11 @@
         },
         {
           "command": "exasol.showViewDDL",
+          "when": "view == exasol.objects && viewItem == view",
+          "group": "exasol@1"
+        },
+        {
+          "command": "exasol.previewTable",
           "when": "view == exasol.objects && viewItem == view",
           "group": "exasol@2"
         },
