@@ -213,9 +213,20 @@ export class ConnectionManager {
             throw new Error(`Connection ${id} not found`);
         }
 
-        // Return existing driver if available
+        // Check if we have an existing driver
         if (this.drivers.has(id)) {
-            return this.drivers.get(id)!;
+            const driver = this.drivers.get(id)!;
+
+            // Validate the connection is still alive
+            const isValid = await this.validateDriver(driver, id);
+            if (isValid) {
+                return driver;
+            }
+
+            // Connection is stale, remove it and create a new one
+            const outputChannel = getOutputChannel();
+            outputChannel.appendLine(`Connection ${connection.name} appears stale, reconnecting...`);
+            this.drivers.delete(id);
         }
 
         // Create new driver
@@ -238,6 +249,27 @@ export class ConnectionManager {
                 // Ignore errors when closing
             }
             this.drivers.delete(id);
+        }
+    }
+
+    private async validateDriver(driver: ExasolDriver, connectionId: string): Promise<boolean> {
+        try {
+            const config = vscode.workspace.getConfiguration('exasol');
+            const validationTimeout = config.get<number>('connectionValidationTimeout', 5) * 1000; // Convert to milliseconds
+
+            // Run a simple query with a short timeout to check if connection is alive
+            const validationPromise = driver.query('SELECT 1');
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error('Validation timeout')), validationTimeout);
+            });
+
+            await Promise.race([validationPromise, timeoutPromise]);
+            return true;
+        } catch (error) {
+            // Connection is not responsive, consider it stale
+            const outputChannel = getOutputChannel();
+            outputChannel.appendLine(`Connection validation failed: ${error}`);
+            return false;
         }
     }
 

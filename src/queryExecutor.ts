@@ -136,9 +136,22 @@ export class QueryExecutor {
                 throw new Error('Query execution was cancelled by user');
             }
 
-            // Check if it's a pool exhaustion error
+            // Check if it's a connection-related error that requires reconnection
             const errorMsg = error instanceof Error ? error.message : String(error);
-            if (errorMsg.includes('E-EDJS-8') || errorMsg.includes('pool reached its limit')) {
+            const isConnectionError =
+                errorMsg.includes('E-EDJS-8') || // Pool exhaustion
+                errorMsg.includes('pool reached its limit') ||
+                errorMsg.includes('ECONNRESET') || // Connection reset
+                errorMsg.includes('EPIPE') || // Broken pipe
+                errorMsg.includes('ETIMEDOUT') || // Timeout
+                errorMsg.includes('ENOTFOUND') || // Host not found
+                errorMsg.includes('ECONNREFUSED') || // Connection refused
+                errorMsg.includes('connection closed') ||
+                errorMsg.includes('WebSocket') ||
+                errorMsg.includes('socket hang up') ||
+                errorMsg.toLowerCase().includes('timeout');
+
+            if (isConnectionError) {
                 // Reset the driver and retry once with proper method
                 await this.connectionManager.resetDriver();
                 try {
@@ -235,9 +248,22 @@ export class QueryExecutor {
                 executionTime
             };
         } catch (error) {
-            // Check if it's a pool exhaustion error
+            // Check if it's a connection-related error that requires reconnection
             const errorMsg = error instanceof Error ? error.message : String(error);
-            if (errorMsg.includes('E-EDJS-8') || errorMsg.includes('pool reached its limit')) {
+            const isConnectionError =
+                errorMsg.includes('E-EDJS-8') || // Pool exhaustion
+                errorMsg.includes('pool reached its limit') ||
+                errorMsg.includes('ECONNRESET') || // Connection reset
+                errorMsg.includes('EPIPE') || // Broken pipe
+                errorMsg.includes('ETIMEDOUT') || // Timeout
+                errorMsg.includes('ENOTFOUND') || // Host not found
+                errorMsg.includes('ECONNREFUSED') || // Connection refused
+                errorMsg.includes('connection closed') ||
+                errorMsg.includes('WebSocket') ||
+                errorMsg.includes('socket hang up') ||
+                errorMsg.toLowerCase().includes('timeout');
+
+            if (isConnectionError) {
                 // Reset the driver and retry once
                 await this.connectionManager.resetDriver();
                 try {
