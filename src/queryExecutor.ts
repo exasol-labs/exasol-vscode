@@ -60,158 +60,71 @@ export class QueryExecutor {
 
         // Clean the query - remove trailing semicolons and trim
         let finalQuery = query.trim().replace(/;+\s*$/, '').trim();
-        const isResultSet = this.isResultSetQuery(finalQuery);
 
-        if (isResultSet && finalQuery.toUpperCase().startsWith('SELECT') && !finalQuery.toUpperCase().includes('LIMIT')) {
+        // Auto-add LIMIT to SELECT queries without explicit LIMIT
+        if (finalQuery.toUpperCase().startsWith('SELECT') && !finalQuery.toUpperCase().includes('LIMIT')) {
             finalQuery += ` LIMIT ${maxRows}`;
         }
 
-        try {
+        // Use centralized retry logic from ConnectionManager
+        return await this.connectionManager.executeWithRetry(async () => {
             const driver = await this.connectionManager.getDriver();
 
             if (cancellationToken?.isCancellationRequested) {
                 throw new Error('Query execution was cancelled');
             }
 
+            // Classify the query to determine which driver method to use
+            const isResultSet = this.isResultSetQuery(finalQuery);
+
             if (isResultSet) {
-                try {
-                    const result = await driver.query(finalQuery);
+                // Result-set queries (SELECT, SHOW, DESCRIBE, etc.) - use query()
+                const result = await driver.query(finalQuery);
 
-                    if (cancellationToken?.isCancellationRequested) {
-                        throw new Error('Query execution was cancelled');
-                    }
-
-                    const executionTime = Date.now() - startTime;
-
-                    const columnsMeta = getColumnsFromResult(result);
-                    const rows = getRowsFromResult(result);
-                    const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
-                    const columnMetadata = this.extractColumnMetadata(columnsMeta);
-
-                    return {
-                        columns,
-                        columnMetadata,
-                        rows,
-                        rowCount: rows.length,
-                        executionTime
-                    };
-                } catch (error) {
-                    // If query() fails with "Invalid result type", the query might be a DDL/DML
-                    // Try again with execute method
-                    const errorMsg = error instanceof Error ? error.message : String(error);
-                    if (errorMsg.includes('Invalid result type') || errorMsg.includes('E-EDJS-11')) {
-                        // Fall through to execute method below
-                    } else {
-                        throw error;
-                    }
+                if (cancellationToken?.isCancellationRequested) {
+                    throw new Error('Query execution was cancelled');
                 }
-            }
 
-            const rawExecuteResult = await executeWithoutResult(driver, finalQuery);
+                const executionTime = Date.now() - startTime;
+                const columnsMeta = getColumnsFromResult(result);
+                const rows = getRowsFromResult(result);
+                const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
+                const columnMetadata = this.extractColumnMetadata(columnsMeta);
 
-            if (cancellationToken?.isCancellationRequested) {
-                throw new Error('Query execution was cancelled');
-            }
+                return {
+                    columns,
+                    columnMetadata,
+                    rows,
+                    rowCount: rows.length,
+                    executionTime
+                };
+            } else {
+                // Non-result-set commands (CREATE, ALTER, DROP, RENAME, INSERT, etc.) - use execute()
+                const rawExecuteResult = await driver.execute(finalQuery, undefined, undefined, 'raw');
 
-            const executionTime = Date.now() - startTime;
-
-            const columnsMeta = getColumnsFromResult(rawExecuteResult);
-            const rows = getRowsFromResult(rawExecuteResult);
-            const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
-            const columnMetadata = this.extractColumnMetadata(columnsMeta);
-            const affectedRows =
-                rows.length > 0
-                    ? rows.length
-                    : rawExecuteResult?.responseData?.results?.[0]?.rowCount ?? 0;
-
-            return {
-                columns,
-                columnMetadata,
-                rows,
-                rowCount: affectedRows,
-                executionTime
-            };
-        } catch (error) {
-            if (cancellationToken?.isCancellationRequested) {
-                throw new Error('Query execution was cancelled by user');
-            }
-
-            // Check if it's a connection-related error that requires reconnection
-            const errorMsg = error instanceof Error ? error.message : String(error);
-            const isConnectionError =
-                errorMsg.includes('E-EDJS-8') || // Pool exhaustion
-                errorMsg.includes('pool reached its limit') ||
-                errorMsg.includes('ECONNRESET') || // Connection reset
-                errorMsg.includes('EPIPE') || // Broken pipe
-                errorMsg.includes('ETIMEDOUT') || // Timeout
-                errorMsg.includes('ENOTFOUND') || // Host not found
-                errorMsg.includes('ECONNREFUSED') || // Connection refused
-                errorMsg.includes('connection closed') ||
-                errorMsg.includes('WebSocket') ||
-                errorMsg.includes('socket hang up') ||
-                errorMsg.toLowerCase().includes('timeout');
-
-            if (isConnectionError) {
-                // Reset the driver and retry once with proper method
-                await this.connectionManager.resetDriver();
-                try {
-                    const driver = await this.connectionManager.getDriver();
-
-                    // Use the same logic as main flow - try query first for result sets, fall back to execute
-                    if (isResultSet) {
-                        try {
-                            const result = await driver.query(finalQuery);
-                            const executionTime = Date.now() - startTime;
-
-                            const columnsMeta = getColumnsFromResult(result);
-                            const rows = getRowsFromResult(result);
-                            const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
-                            const columnMetadata = this.extractColumnMetadata(columnsMeta);
-
-                            return {
-                                columns,
-                                columnMetadata,
-                                rows,
-                                rowCount: rows.length,
-                                executionTime
-                            };
-                        } catch (queryError) {
-                            // If query() fails, try execute
-                            const queryErrorMsg = queryError instanceof Error ? queryError.message : String(queryError);
-                            if (!queryErrorMsg.includes('Invalid result type') && !queryErrorMsg.includes('E-EDJS-11')) {
-                                throw queryError;
-                            }
-                            // Fall through to execute
-                        }
-                    }
-
-                    // Use execute for DDL/DML
-                    const rawExecuteResult = await executeWithoutResult(driver, finalQuery);
-                    const executionTime = Date.now() - startTime;
-
-                    const columnsMeta = getColumnsFromResult(rawExecuteResult);
-                    const rows = getRowsFromResult(rawExecuteResult);
-                    const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
-                    const columnMetadata = this.extractColumnMetadata(columnsMeta);
-                    const affectedRows =
-                        rows.length > 0
-                            ? rows.length
-                            : rawExecuteResult?.responseData?.results?.[0]?.rowCount ?? 0;
-
-                    return {
-                        columns,
-                        columnMetadata,
-                        rows,
-                        rowCount: affectedRows,
-                        executionTime
-                    };
-                } catch (retryError) {
-                    throw new Error(`Query execution failed after retry: ${retryError}`);
+                if (cancellationToken?.isCancellationRequested) {
+                    throw new Error('Query execution was cancelled');
                 }
-            }
 
-            throw new Error(`Query execution failed: ${error}`);
-        }
+                const executionTime = Date.now() - startTime;
+                const columnsMeta = getColumnsFromResult(rawExecuteResult);
+                const rows = getRowsFromResult(rawExecuteResult);
+                const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
+                const columnMetadata = this.extractColumnMetadata(columnsMeta);
+                const affectedRows =
+                    rows.length > 0
+                        ? rows.length
+                        : rawExecuteResult?.responseData?.results?.[0]?.rowCount ?? 0;
+
+                return {
+                    columns,
+                    columnMetadata,
+                    rows,
+                    rowCount: affectedRows,
+                    executionTime
+                };
+            }
+        });
     }
 
     setCancellationToken(token: vscode.CancellationTokenSource) {
@@ -231,7 +144,8 @@ export class QueryExecutor {
 
         const startTime = Date.now();
 
-        try {
+        // Use centralized retry logic from ConnectionManager
+        return await this.connectionManager.executeWithRetry(async () => {
             const driver = await this.connectionManager.getDriver();
             const result = await driver.query(query);
             const executionTime = Date.now() - startTime;
@@ -247,48 +161,7 @@ export class QueryExecutor {
                 rowCount: rows.length,
                 executionTime
             };
-        } catch (error) {
-            // Check if it's a connection-related error that requires reconnection
-            const errorMsg = error instanceof Error ? error.message : String(error);
-            const isConnectionError =
-                errorMsg.includes('E-EDJS-8') || // Pool exhaustion
-                errorMsg.includes('pool reached its limit') ||
-                errorMsg.includes('ECONNRESET') || // Connection reset
-                errorMsg.includes('EPIPE') || // Broken pipe
-                errorMsg.includes('ETIMEDOUT') || // Timeout
-                errorMsg.includes('ENOTFOUND') || // Host not found
-                errorMsg.includes('ECONNREFUSED') || // Connection refused
-                errorMsg.includes('connection closed') ||
-                errorMsg.includes('WebSocket') ||
-                errorMsg.includes('socket hang up') ||
-                errorMsg.toLowerCase().includes('timeout');
-
-            if (isConnectionError) {
-                // Reset the driver and retry once
-                await this.connectionManager.resetDriver();
-                try {
-                    const driver = await this.connectionManager.getDriver();
-                    const result = await driver.query(query);
-                    const executionTime = Date.now() - startTime;
-
-                    const columnsMeta = getColumnsFromResult(result);
-                    const rows = getRowsFromResult(result).slice(0, maxRows);
-                    const columnMetadata = this.extractColumnMetadata(columnsMeta);
-
-                    return {
-                        columns: columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col),
-                        columnMetadata,
-                        rows,
-                        rowCount: rows.length,
-                        executionTime
-                    };
-                } catch (retryError) {
-                    throw new Error(`Query execution failed after retry: ${retryError}`);
-                }
-            }
-
-            throw new Error(`Query execution failed: ${error}`);
-        }
+        });
     }
 
     private isResultSetQuery(query: string): boolean {
@@ -298,6 +171,12 @@ export class QueryExecutor {
             .replace(/^\(+/, '')
             .replace(/--.*$/gm, '') // Remove single-line comments
             .replace(/\/\*[\s\S]*?\*\//g, ''); // Remove multi-line comments
+
+        // Special case: SELECT INTO creates a table (DDL with side effects)
+        // Match pattern: SELECT ... INTO table_name ...
+        if (/^SELECT\s+.*\s+INTO\s+/i.test(cleaned)) {
+            return false; // Use execute() method
+        }
 
         const firstWordMatch = cleaned.match(/^([a-zA-Z]+)/);
         if (!firstWordMatch) {
@@ -321,9 +200,13 @@ export class QueryExecutor {
 
         // Commands that don't return result sets (use execute method)
         const executeCommands = new Set([
+            // DDL
             'CREATE',
             'ALTER',
             'DROP',
+            'RENAME',
+            'COMMENT',
+            // DML
             'INSERT',
             'UPDATE',
             'DELETE',
@@ -331,11 +214,25 @@ export class QueryExecutor {
             'MERGE',
             'IMPORT',
             'EXPORT',
+            // DCL
             'GRANT',
             'REVOKE',
+            // Transaction Control
             'COMMIT',
             'ROLLBACK',
-            'SET'
+            // Session & System Management
+            'SET',
+            'EXECUTE',      // EXECUTE SCRIPT
+            'KILL',         // KILL session/query
+            'OPEN',         // OPEN SCHEMA
+            'CLOSE',        // CLOSE SCHEMA
+            'CONSUMER',     // CONSUMER GROUP
+            'IMPERSONATE',  // IMPERSONATE user
+            // Maintenance & Performance
+            'RECOMPRESS',
+            'REORGANIZE',
+            'FLUSH',        // FLUSH STATISTICS
+            'PRELOAD'
         ]);
 
         // If it's explicitly an execute command, return false

@@ -87,7 +87,7 @@ export class ObjectActions {
                         };
                     }, connection.id);
 
-                    ResultsPanel.show(queryResult);
+                    await ResultsPanel.show(queryResult);
                     if (showNotification) {
                         vscode.window.showInformationMessage(
                             `Preview: ${queryResult.rowCount} rows from ${schemaName}.${tableName}`

@@ -11,7 +11,7 @@ import { QueryStatsPanel } from './panels/queryStatsPanel';
 import { ConnectionPanel } from './panels/connectionPanel';
 import { SessionManager } from './sessionManager';
 import { ObjectActions } from './objectActions';
-import { findStatementAtCursor } from './utils';
+import { findStatementAtCursor, splitIntoStatements } from './utils';
 
 // Create output channel for logging
 let outputChannel: vscode.OutputChannel;
@@ -396,13 +396,13 @@ async function executeQuery(
         return;
     }
 
-    let query: string;
+    let queryText: string;
     const selection = editor.selection;
     const hasSelection = !selection.isEmpty;
 
     if (selectedOnly || hasSelection) {
         // Execute selected text if explicitly requested OR if there's a selection
-        query = editor.document.getText(selection);
+        queryText = editor.document.getText(selection);
         if (hasSelection) {
             output.appendLine(`📝 Executing selected text (lines ${selection.start.line + 1}-${selection.end.line + 1})`);
         }
@@ -414,36 +414,57 @@ async function executeQuery(
 
         if (statement) {
             // Found a statement at the cursor - execute only that statement
-            query = statement.text;
+            queryText = statement.text;
             output.appendLine(`🎯 Executing statement at cursor (lines ${statement.range.start + 1}-${statement.range.end + 1})`);
         } else {
             // No statement found at cursor - execute entire file
-            query = documentText;
+            queryText = documentText;
             output.appendLine('📄 Executing entire file');
         }
     }
 
-    if (!query.trim()) {
+    if (!queryText.trim()) {
         vscode.window.showWarningMessage('No query to execute');
         return;
+    }
+
+    // Split the text into individual statements
+    const statements = splitIntoStatements(queryText);
+
+    if (statements.length === 0) {
+        vscode.window.showWarningMessage('No queries to execute');
+        return;
+    }
+
+    // DEBUG: Log statement count and content
+    output.appendLine(`🐛 DEBUG: Split into ${statements.length} statements`);
+    statements.forEach((stmt, idx) => {
+        output.appendLine(`🐛 Statement ${idx + 1}: ${stmt.substring(0, 80).replace(/\n/g, ' ')}...`);
+    });
+
+    const activeConnection = connectionManager.getActiveConnection();
+    if (!activeConnection) {
+        const message = 'No active connection. Please add a connection first.';
+        output.appendLine(`❌ ${message}`);
+        vscode.window.showErrorMessage(message);
+        return;
+    }
+
+    // If multiple statements, notify the user
+    if (statements.length > 1) {
+        output.appendLine(`🔢 Found ${statements.length} statements to execute`);
     }
 
     const cancellationTokenSource = new vscode.CancellationTokenSource();
     queryExecutor.setCancellationToken(cancellationTokenSource);
 
     try {
-        const activeConnection = connectionManager.getActiveConnection();
-        if (!activeConnection) {
-            const message = 'No active connection. Please add a connection first.';
-            output.appendLine(`❌ ${message}`);
-            vscode.window.showErrorMessage(message);
-            return;
-        }
-
         await vscode.window.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
-                title: 'Executing query...',
+                title: statements.length > 1
+                    ? `Executing ${statements.length} queries...`
+                    : 'Executing query...',
                 cancellable: true
             },
             async (progress, token) => {
@@ -451,26 +472,91 @@ async function executeQuery(
                     cancellationTokenSource.cancel();
                 });
 
-                const result = await queryExecutor.execute(query, cancellationTokenSource.token);
+                let lastResult = null;
 
-                // Add to history
-                queryHistoryProvider.addQuery(query, result.rowCount);
+                for (let i = 0; i < statements.length; i++) {
+                    const query = statements[i];
+                    const queryNum = i + 1;
 
-                // Show results and stats
-                ResultsPanel.show(result);
-                QueryStatsPanel.updateStats(query, result);
+                    output.appendLine(`🐛 DEBUG: Loop iteration ${i}, query ${queryNum}/${statements.length}`);
 
-                output.appendLine(`✅ Query executed successfully. ${result.rowCount} rows returned.`);
+                    if (token.isCancellationRequested) {
+                        output.appendLine(`⚠️ Execution cancelled after query ${i}/${statements.length}`);
+                        break;
+                    }
+
+                    if (statements.length > 1) {
+                        progress.report({
+                            message: `Query ${queryNum}/${statements.length}`,
+                            increment: (100 / statements.length)
+                        });
+                        output.appendLine(`\n▶️ Executing query ${queryNum}/${statements.length}:`);
+                        output.appendLine(`   ${query.substring(0, 100)}${query.length > 100 ? '...' : ''}`);
+                    }
+
+                    output.appendLine(`🐛 DEBUG: About to call queryExecutor.execute()`);
+                    try {
+                        const result = await queryExecutor.execute(query, cancellationTokenSource.token);
+                        output.appendLine(`🐛 DEBUG: queryExecutor.execute() returned successfully`);
+
+                        // Add to history
+                        queryHistoryProvider.addQuery(query, result.rowCount);
+
+                        // Keep track of the last result to show in the panel
+                        lastResult = result;
+
+                        if (statements.length > 1) {
+                            output.appendLine(`   ✅ Query ${queryNum} completed. ${result.rowCount} rows affected.`);
+                        } else {
+                            output.appendLine(`✅ Query executed successfully. ${result.rowCount} rows returned.`);
+                        }
+
+                        // Show results for each query (last one will remain visible)
+                        await ResultsPanel.show(result);
+                        QueryStatsPanel.updateStats(query, result);
+
+                    } catch (error) {
+                        const errorMsg = String(error);
+
+                        if (statements.length > 1) {
+                            output.appendLine(`   ❌ Query ${queryNum} failed: ${errorMsg}`);
+                        } else {
+                            output.appendLine(`❌ Query failed: ${errorMsg}`);
+                        }
+
+                        // Show error in results panel
+                        await ResultsPanel.showError(errorMsg);
+
+                        queryHistoryProvider.addQuery(query, 0, errorMsg);
+
+                        // Ask user if they want to continue with remaining queries
+                        if (statements.length > 1 && i < statements.length - 1) {
+                            const continueExecution = await vscode.window.showErrorMessage(
+                                `Query ${queryNum}/${statements.length} failed. Continue with remaining queries?`,
+                                'Continue',
+                                'Stop'
+                            );
+
+                            if (continueExecution !== 'Continue') {
+                                output.appendLine(`⚠️ Execution stopped by user after query ${queryNum}/${statements.length}`);
+                                break;
+                            } else {
+                                output.appendLine(`   ⏩ Continuing with remaining queries...`);
+                            }
+                        } else {
+                            // Single query or last query - just throw
+                            throw error;
+                        }
+                    }
+                }
+
+                if (statements.length > 1) {
+                    output.appendLine(`\n🎉 Completed executing ${statements.length} queries`);
+                }
             }
         );
     } catch (error) {
-        const errorMsg = String(error);
-        output.appendLine(`❌ Query failed: ${errorMsg}`);
-
-        // Show error in results panel
-        ResultsPanel.showError(errorMsg);
-
-        queryHistoryProvider.addQuery(query, 0, errorMsg);
+        // Error already handled in the loop
     } finally {
         cancellationTokenSource.dispose();
     }
@@ -603,7 +689,7 @@ async function executeStatement(
                 queryHistoryProvider.addQuery(query, result.rowCount);
 
                 // Show results and stats
-                ResultsPanel.show(result);
+                await ResultsPanel.show(result);
                 QueryStatsPanel.updateStats(query, result);
 
                 output.appendLine(`✅ Query executed successfully. ${result.rowCount} rows returned.`);
@@ -614,7 +700,7 @@ async function executeStatement(
         output.appendLine(`❌ Query failed: ${errorMsg}`);
 
         // Show error in results panel
-        ResultsPanel.showError(errorMsg);
+        await ResultsPanel.showError(errorMsg);
 
         queryHistoryProvider.addQuery(query, 0, errorMsg);
     } finally {

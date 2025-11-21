@@ -155,11 +155,13 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
     private async loadReservedKeywords(connectionId: string): Promise<void> {
         try {
-            const driver = await this.connectionManager.getDriver(connectionId);
-            const result = await this.safeQuery(driver, 'SELECT keyword FROM sys.exa_sql_keywords WHERE reserved');
-            const rows = getRowsFromResult(result);
-            this.reservedKeywords = new Set(rows.map((r: any) => r.KEYWORD.toUpperCase()));
-            this.reservedKeywordsLoaded = true;
+            await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connectionId);
+                const result = await this.safeQuery(driver, 'SELECT keyword FROM sys.exa_sql_keywords WHERE reserved');
+                const rows = getRowsFromResult(result);
+                this.reservedKeywords = new Set(rows.map((r: any) => r.KEYWORD.toUpperCase()));
+                this.reservedKeywordsLoaded = true;
+            }, connectionId);
         } catch (error) {
             console.error('Failed to load reserved keywords:', error);
             // Fallback to common reserved keywords
@@ -319,20 +321,22 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         }
 
         try {
-            const driver = await this.connectionManager.getDriver(connectionId);
-            const schemasQuery = `
-                SELECT SCHEMA_NAME
-                FROM SYS.EXA_SCHEMAS
-                WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
-                ORDER BY SCHEMA_NAME
-            `;
-            const result = await this.safeQuery(driver, schemasQuery);
-            const rows = getRowsFromResult(result);
-            const schemas = rows.map((r: any) => r.SCHEMA_NAME);
+            return await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connectionId);
+                const schemasQuery = `
+                    SELECT SCHEMA_NAME
+                    FROM SYS.EXA_SCHEMAS
+                    WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
+                    ORDER BY SCHEMA_NAME
+                `;
+                const result = await this.safeQuery(driver, schemasQuery);
+                const rows = getRowsFromResult(result);
+                const schemas = rows.map((r: any) => r.SCHEMA_NAME);
 
-            // Cache schemas
-            this.schemasCache.set(connectionId, schemas);
-            return schemas;
+                // Cache schemas
+                this.schemasCache.set(connectionId, schemas);
+                return schemas;
+            }, connectionId);
         } catch (error) {
             console.error('Failed to fetch schemas:', error);
             return [];
@@ -349,61 +353,63 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         }
 
         try {
-            const driver = await this.connectionManager.getDriver(connectionId);
+            return await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connectionId);
 
-            // Fetch tables and views with their schemas
-            const tablesQuery = `
-                SELECT
-                    TABLE_SCHEMA,
-                    TABLE_NAME,
-                    'table' AS OBJECT_TYPE
-                FROM SYS.EXA_ALL_TABLES
-                WHERE TABLE_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
-                UNION ALL
-                SELECT
-                    VIEW_SCHEMA AS TABLE_SCHEMA,
-                    VIEW_NAME AS TABLE_NAME,
-                    'view' AS OBJECT_TYPE
-                FROM SYS.EXA_ALL_VIEWS
-                WHERE VIEW_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
-                ORDER BY 1, 2
-            `;
+                // Fetch tables and views with their schemas
+                const tablesQuery = `
+                    SELECT
+                        TABLE_SCHEMA,
+                        TABLE_NAME,
+                        'table' AS OBJECT_TYPE
+                    FROM SYS.EXA_ALL_TABLES
+                    WHERE TABLE_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
+                    UNION ALL
+                    SELECT
+                        VIEW_SCHEMA AS TABLE_SCHEMA,
+                        VIEW_NAME AS TABLE_NAME,
+                        'view' AS OBJECT_TYPE
+                    FROM SYS.EXA_ALL_VIEWS
+                    WHERE VIEW_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
+                    ORDER BY 1, 2
+                `;
 
-            const result = await this.safeQuery(driver, tablesQuery);
-            const tableRows = getRowsFromResult(result);
-            const objects: DatabaseObject[] = [];
+                const result = await this.safeQuery(driver, tablesQuery);
+                const tableRows = getRowsFromResult(result);
+                const objects: DatabaseObject[] = [];
 
-            for (const row of tableRows) {
-                const obj: DatabaseObject = {
-                    schema: row.TABLE_SCHEMA,
-                    name: row.TABLE_NAME,
-                    type: row.OBJECT_TYPE === 'view' ? 'view' : 'table'
-                };
+                for (const row of tableRows) {
+                    const obj: DatabaseObject = {
+                        schema: row.TABLE_SCHEMA,
+                        name: row.TABLE_NAME,
+                        type: row.OBJECT_TYPE === 'view' ? 'view' : 'table'
+                    };
 
-                // Fetch columns for this object
-                try {
-                    const columnsQuery = `
-                        SELECT COLUMN_NAME
-                        FROM SYS.EXA_ALL_COLUMNS
-                        WHERE COLUMN_SCHEMA = '${row.TABLE_SCHEMA}'
-                        AND COLUMN_TABLE = '${row.TABLE_NAME}'
-                        ORDER BY COLUMN_ORDINAL_POSITION
-                    `;
-                    const colResult = await this.safeQuery(driver, columnsQuery);
-                    const columnRows = getRowsFromResult(colResult);
-                    obj.columns = columnRows.map((r: any) => r.COLUMN_NAME);
-                } catch (error) {
-                    console.error(`Failed to fetch columns for ${row.TABLE_NAME}:`, error);
+                    // Fetch columns for this object
+                    try {
+                        const columnsQuery = `
+                            SELECT COLUMN_NAME
+                            FROM SYS.EXA_ALL_COLUMNS
+                            WHERE COLUMN_SCHEMA = '${row.TABLE_SCHEMA}'
+                            AND COLUMN_TABLE = '${row.TABLE_NAME}'
+                            ORDER BY COLUMN_ORDINAL_POSITION
+                        `;
+                        const colResult = await this.safeQuery(driver, columnsQuery);
+                        const columnRows = getRowsFromResult(colResult);
+                        obj.columns = columnRows.map((r: any) => r.COLUMN_NAME);
+                    } catch (error) {
+                        console.error(`Failed to fetch columns for ${row.TABLE_NAME}:`, error);
+                    }
+
+                    objects.push(obj);
                 }
 
-                objects.push(obj);
-            }
+                // Update cache
+                this.cache.set(connectionId, objects);
+                this.cacheExpiry.set(connectionId, Date.now() + this.CACHE_TTL);
 
-            // Update cache
-            this.cache.set(connectionId, objects);
-            this.cacheExpiry.set(connectionId, Date.now() + this.CACHE_TTL);
-
-            return objects;
+                return objects;
+            }, connectionId);
         } catch (error) {
             console.error('Failed to fetch database objects:', error);
             return [];

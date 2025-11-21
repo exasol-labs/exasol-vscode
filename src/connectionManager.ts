@@ -252,10 +252,90 @@ export class ConnectionManager {
         }
     }
 
+    /**
+     * Checks if an error is a connection-related error that requires reconnection
+     */
+    private isConnectionError(error: unknown): boolean {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        return (
+            errorMsg.includes('E-EDJS-8') || // Pool exhaustion
+            errorMsg.includes('pool reached its limit') ||
+            errorMsg.includes('ECONNRESET') || // Connection reset
+            errorMsg.includes('EPIPE') || // Broken pipe
+            errorMsg.includes('ETIMEDOUT') || // Timeout
+            errorMsg.includes('ENOTFOUND') || // Host not found
+            errorMsg.includes('ECONNREFUSED') || // Connection refused
+            errorMsg.includes('connection closed') ||
+            errorMsg.includes('WebSocket') ||
+            errorMsg.includes('socket hang up') ||
+            errorMsg.toLowerCase().includes('timeout')
+        );
+    }
+
+    /**
+     * Executes a function with automatic retry on connection errors.
+     * If a connection error occurs, the driver is reset and the function is retried once.
+     *
+     * @param fn The function to execute
+     * @param connectionId Optional connection ID (defaults to active connection)
+     * @returns The result of the function
+     */
+    async executeWithRetry<T>(fn: () => Promise<T>, connectionId?: string): Promise<T> {
+        try {
+            return await fn();
+        } catch (error) {
+            // Check if it's a connection-related error that requires reconnection
+            if (this.isConnectionError(error)) {
+                const id = connectionId || this.activeConnection;
+                if (id) {
+                    const outputChannel = getOutputChannel();
+                    outputChannel.appendLine(`Connection error detected, resetting driver and retrying...`);
+
+                    // Reset driver and retry once
+                    await this.resetDriver(id);
+
+                    // Wait a bit for the connection to stabilize
+                    await new Promise(resolve => setTimeout(resolve, 100));
+
+                    return await fn();
+                }
+            }
+            throw error;
+        }
+    }
+
+    private isWebSocketHealthy(driver: ExasolDriver): boolean {
+        try {
+            // Access the internal WebSocket connection to check its state
+            // The driver has a connection property that may contain the WebSocket
+            const driverAny = driver as any;
+            const connection = driverAny._connection || driverAny.connection || driverAny._ws || driverAny.ws;
+
+            if (connection && connection.readyState !== undefined) {
+                // WebSocket.OPEN = 1
+                // If not open (CONNECTING=0, CLOSING=2, CLOSED=3), connection is not healthy
+                return connection.readyState === 1;
+            }
+
+            // If we can't access WebSocket state, assume we need to validate with query
+            return true;
+        } catch (error) {
+            // If we can't check WebSocket state, assume we need to validate with query
+            return true;
+        }
+    }
+
     private async validateDriver(driver: ExasolDriver, connectionId: string): Promise<boolean> {
         try {
+            // FAST CHECK: First check WebSocket state for instant detection
+            if (!this.isWebSocketHealthy(driver)) {
+                const outputChannel = getOutputChannel();
+                outputChannel.appendLine(`WebSocket is closed or closing - connection is stale`);
+                return false;
+            }
+
             const config = vscode.workspace.getConfiguration('exasol');
-            const validationTimeout = config.get<number>('connectionValidationTimeout', 5) * 1000; // Convert to milliseconds
+            const validationTimeout = config.get<number>('connectionValidationTimeout', 1) * 1000; // Convert to milliseconds
 
             // Run a simple query with a short timeout to check if connection is alive
             const validationPromise = driver.query('SELECT 1');

@@ -198,3 +198,52 @@ export function findStatementAtCursor(
 
     return undefined;
 }
+
+/**
+ * Split text into individual SQL statements based on semicolon delimiters.
+ * Returns an array of statement strings, trimmed and filtered for non-empty statements.
+ * Handles comments and skips empty statements.
+ *
+ * @param text The SQL text to split
+ * @returns Array of individual SQL statements
+ */
+export function splitIntoStatements(text: string): string[] {
+    const lines = text.split('\n');
+    const statements: string[] = [];
+    let currentStatementLines: string[] = [];
+
+    for (const line of lines) {
+        const trimmedLine = line.trim();
+
+        // Skip pure comment lines and empty lines at statement boundaries
+        if (!trimmedLine || trimmedLine.startsWith('--')) {
+            // If we're in the middle of a statement, keep the line
+            if (currentStatementLines.length > 0) {
+                currentStatementLines.push(line);
+            }
+            continue;
+        }
+
+        // Add line to current statement
+        currentStatementLines.push(line);
+
+        // Check if this line ends with a semicolon (end of statement)
+        if (trimmedLine.endsWith(';')) {
+            const statementText = currentStatementLines.join('\n').trim();
+            if (statementText && statementText !== ';') {
+                statements.push(statementText);
+            }
+            currentStatementLines = [];
+        }
+    }
+
+    // Handle remaining statement without trailing semicolon
+    if (currentStatementLines.length > 0) {
+        const statementText = currentStatementLines.join('\n').trim();
+        if (statementText) {
+            statements.push(statementText);
+        }
+    }
+
+    return statements;
+}

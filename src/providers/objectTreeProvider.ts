@@ -16,22 +16,6 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
 
     constructor(private readonly connectionManager: ConnectionManager) {}
 
-    private async executeWithRetry<T>(fn: () => Promise<T>, connectionId: string): Promise<T> {
-        try {
-            return await fn();
-        } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error);
-            if (errorMsg.includes('E-EDJS-8') || errorMsg.includes('pool reached its limit')) {
-                // Reset driver and retry once
-                await this.connectionManager.resetDriver(connectionId);
-                // Wait a bit for the pool to stabilize
-                await new Promise(resolve => setTimeout(resolve, 100));
-                return await fn();
-            }
-            throw error;
-        }
-    }
-
     // Handle drag operation
     async handleDrag(source: readonly ObjectNode[], dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken): Promise<void> {
         const items = source.filter((item): item is ObjectTreeItem => item instanceof ObjectTreeItem);
@@ -248,7 +232,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
     private async fetchSchemas(connection: StoredConnection): Promise<Array<{ name: string; tableCount?: number; viewCount?: number }>> {
         const outputChannel = getOutputChannel();
         try {
-            return await this.executeWithRetry(async () => {
+            return await this.connectionManager.executeWithRetry(async () => {
                 outputChannel?.appendLine(`   Getting driver for connection ID: ${connection.id}`);
                 const driver = await this.connectionManager.getDriver(connection.id);
                 outputChannel?.appendLine(`   Driver obtained, running schema query with object counts...`);
@@ -309,7 +293,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
     ): Promise<Array<{ name: string; rowCount?: number }>> {
         const outputChannel = getOutputChannel();
         try {
-            return await this.executeWithRetry(async () => {
+            return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id);
                 const attempts: Array<{
                 description: string;
@@ -415,7 +399,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
     private async fetchViews(connection: StoredConnection, schemaName: string): Promise<Array<{ name: string }>> {
         const outputChannel = getOutputChannel();
         try {
-            return await this.executeWithRetry(async () => {
+            return await this.connectionManager.executeWithRetry(async () => {
                 outputChannel?.appendLine(`   Running views query for schema '${schemaName}'`);
                 const driver = await this.connectionManager.getDriver(connection.id);
 
@@ -513,7 +497,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         tableName: string
     ): Promise<Array<{ name: string; type: string; nullable: boolean }>> {
         try {
-            return await this.executeWithRetry(async () => {
+            return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id);
                 const result = await driver.query(`
                     SELECT

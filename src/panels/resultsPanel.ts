@@ -644,6 +644,11 @@ export function getResultHtml(result: QueryResult, options: ResultViewOptions): 
                 const columns = new Set();
 
                 selectedCells.forEach(td => {
+                    // Skip row-number cells (they don't have dataset attributes)
+                    if (td.classList.contains('row-number')) {
+                        return;
+                    }
+
                     const row = parseInt(td.dataset.row);
                     const col = parseInt(td.dataset.col);
                     const colName = td.dataset.colname;
@@ -667,21 +672,26 @@ export function getResultHtml(result: QueryResult, options: ResultViewOptions): 
                 const rows = Array.from(cellsByRow.keys()).sort((a, b) => a - b);
 
                 let text = '';
-                const separator = format === 'csv' ? ',' : '\\t';
-                const lineSep = '\\n';
+                const separator = format === 'csv' ? ',' : String.fromCharCode(9); // Tab character
+                const lineSep = String.fromCharCode(10); // Newline character
 
                 // Add headers if requested
                 if (includeHeaders) {
                     const headers = columns.map(colIdx => {
-                        const firstRow = cellsByRow.values().next().value;
-                        const cell = firstRow.get(colIdx);
-                        return cell ? cell.colName : '';
+                        // Find ANY row that has this column to get the column name
+                        for (const row of cellsByRow.values()) {
+                            const cell = row.get(colIdx);
+                            if (cell && cell.colName) {
+                                return cell.colName;
+                            }
+                        }
+                        return '';
                     });
 
                     if (format === 'csv') {
-                        text += headers.map(h => h.includes(',') || h.includes('"') ? '"' + h.replace(/"/g, '""') + '"' : h).join(',') + lineSep;
+                        text += headers.map(h => h.includes(',') || h.includes('"') || h.includes(String.fromCharCode(10)) ? '"' + h.replace(/"/g, '""') + '"' : h).join(',') + lineSep;
                     } else {
-                        text += headers.join('\\t') + lineSep;
+                        text += headers.join(separator) + lineSep;
                     }
                 }
 
@@ -692,7 +702,7 @@ export function getResultHtml(result: QueryResult, options: ResultViewOptions): 
                         const cell = rowData.get(colIdx);
                         const value = cell ? cell.value : '';
 
-                        if (format === 'csv' && (value.includes(',') || value.includes('"') || value.includes('\\n'))) {
+                        if (format === 'csv' && (value.includes(',') || value.includes('"') || value.includes(String.fromCharCode(10)))) {
                             return '"' + value.replace(/"/g, '""') + '"';
                         }
                         return value;
@@ -911,8 +921,8 @@ export function getResultHtml(result: QueryResult, options: ResultViewOptions): 
                     // Clear existing selection
                     clearSelection();
 
-                    // Select all cells in the table
-                    const allCells = document.querySelectorAll('#results tbody td');
+                    // Select all cells in the table (excluding row-number cells)
+                    const allCells = document.querySelectorAll('#results tbody td:not(.row-number)');
                     allCells.forEach(td => td.classList.add('selected'));
                     return;
                 }

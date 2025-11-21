@@ -3,7 +3,7 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "exasol",
   "engines": {
     "vscode": "^1.105.0"
@@ -350,8 +350,8 @@
         },
         "exasol.connectionValidationTimeout": {
           "type": "number",
-          "default": 5,
-          "description": "Timeout in seconds for validating if a connection is still alive (helps detect stale connections quickly)"
+          "default": 1,
+          "description": "Timeout in seconds for validating if a connection is still alive (lower values detect stale connections faster, recommended: 1-2 seconds)"
         },
         "exasol.autoComplete": {
           "type": "boolean",
