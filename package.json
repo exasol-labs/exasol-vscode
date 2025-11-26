@@ -3,7 +3,7 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "exasol",
   "engines": {
     "vscode": "^1.105.0"

@@ -79,7 +79,21 @@ export class QueryExecutor {
 
             if (isResultSet) {
                 // Result-set queries (SELECT, SHOW, DESCRIBE, etc.) - use query()
-                const result = await driver.query(finalQuery);
+                let result: any;
+                let usedExecuteFallback = false;
+
+                try {
+                    result = await driver.query(finalQuery);
+                } catch (queryError: any) {
+                    // E-EDJS-11: Driver says "Invalid result type. Please use method execute instead of query"
+                    // This can happen with certain query patterns - fall back to execute() with raw mode
+                    if (queryError?.message?.includes('E-EDJS-11')) {
+                        result = await driver.execute(finalQuery, undefined, undefined, 'raw');
+                        usedExecuteFallback = true;
+                    } else {
+                        throw queryError;
+                    }
+                }
 
                 if (cancellationToken?.isCancellationRequested) {
                     throw new Error('Query execution was cancelled');
