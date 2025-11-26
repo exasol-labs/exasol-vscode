@@ -141,43 +141,10 @@ The extension can be configured through VS Code settings:
 - `exasol.maxResultRows` - Maximum number of rows to fetch from query results (default: 10000)
 - `exasol.autoComplete` - Enable SQL auto-completion (default: true)
 
-## What's New in v0.1.1
-
-### Major Features
-✅ **IntelliSense & Autocomplete** - Context-aware completions for tables, columns, and functions
-✅ **Complete Object Browser** - Full hierarchy with tables, views, and columns
-✅ **Session Management** - Set active schema per connection
-✅ **Advanced Results** - Sorting, filtering, and CSV export
-✅ **Object Actions** - Preview data, view DDL, generate queries
-✅ **Secure Credentials** - Passwords stored in VS Code Secret Storage
-✅ **Query Cancellation** - Stop long-running queries
-✅ **Enhanced UI** - Status bar integration, better icons, row counts
-✅ **Query Stats Panel** - Real-time execution metrics
-✅ **CodeLens Execute Buttons** - Click to run individual SQL statements
-
 ## Known Issues
 
 - Very large result sets (>10,000 rows) may impact browser rendering performance
 - Query cancellation relies on driver support; some queries may not be immediately cancellable
-
-## Release Notes
-
-### 0.1.1
-
-Initial release of the Exasol VS Code extension:
-- IntelliSense with context-aware autocomplete for tables, views, columns, keywords, and functions
-- Complete object browser showing full table/view/column hierarchy with metadata
-- Session management with active schema tracking
-- Advanced results viewer with sorting, filtering, and CSV export
-- Query Stats panel with real-time execution metrics (time, rows, throughput)
-- CodeLens execute buttons for individual SQL statements
-- Object context menu actions (preview, DDL, describe, generate SELECT)
-- Secure credential storage using VS Code's Secret Storage API
-- Cancellable query execution
-- Status bar integration showing active connection and schema
-- Enhanced tree view with table row counts and column types
-- Drag-and-drop support for database objects
-- Query history tracking with 83 comprehensive tests
 
 ## Contributing
 
