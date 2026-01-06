@@ -280,22 +280,6 @@ npm run test:unit     # Unit tests only
 npm run test:watch    # Watch mode
 ```
 
-### Run Tests
-
-**Requires local Exasol at `localhost:8563` with `sys:exasol` credentials**
-
-```bash
-npm test              # Full integration tests (32 tests)
-npm run test:unit     # Fast unit tests
-```
-
-Tests auto-create `TEST_SCHEMA` and clean up. See [src/test/README.md](src/test/README.md).
-
-### Debug Tests
-1. Open `src/test` folder
-2. Set breakpoints
-3. Press `F5` → Select "Extension Tests"
-
 ### Watch Mode
 ```bash
 npm run watch  # Terminal 1: auto-compile
@@ -332,13 +316,6 @@ exasol-vscode/
 1. Update version in `package.json`
 2. Update `CHANGELOG.md`
 3. Test: `npm run compile && npm test`
-
-### Publish
-
-```bash
-vsce login <publisher-name>
-vsce publish
-```
 
 ### Create GitHub Release
 
@@ -389,8 +366,3 @@ Contributions welcome! Please submit issues or pull requests.
 ISC
 
 ---
-
-## Version History
-
-- **v0.1.6** (current) - IntelliSense, object browser, session management, secure credentials, query cancellation
-- **v1.0.0** (future) - Marketplace release
