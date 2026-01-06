@@ -2,6 +2,8 @@
 
 A Visual Studio Code extension for working with Exasol databases. Provides comprehensive database management, intelligent SQL editing, and powerful query execution capabilities.
 
+⚠️ Note: this extension is currently a **community-supported prototype** and not officially supported by Exasol. Exasol cannot guarantee the functionality and performance of this extension. 
+
 ## 🚀 Quick Start (5 Minutes)
 
 ### Prerequisites
