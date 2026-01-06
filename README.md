@@ -11,6 +11,8 @@ A feature-rich Visual Studio Code extension for working with Exasol databases. P
 
 ### Launch Extension
 
+Clone this repo to your local machine then run:
+
 ```bash
 cd exasol-vscode
 npm install
@@ -112,13 +114,23 @@ In the **new window** that opened:
 
 ### Method 1: Development Mode (Recommended for Testing)
 
+Clone this repo to your local machine then run:
+
 ```bash
 cd exasol-vscode
 npm install
 npm run compile
 code .
-# Press F5
 ```
+**Option A: Using F5 Key**
+- Just press `F5`
+- A new VS Code window opens with "[Extension Development Host]" in the title
+- ✅ Extension is now running!
+
+**Option B: Using Run Menu**
+- Click `Run` menu → `Start Debugging`
+- Or click the green play button in the debug panel
+- ✅ Extension is now running!
 
 Benefits:
 - Hot reload on changes (press `F5` again)
@@ -127,19 +139,35 @@ Benefits:
 
 ### Method 2: Package and Install (.vsix)
 
+Clone this repo to your local machine then run:
+
+1. **Install vsce (VSCode Extension Manager)**
+   ```bash
+   npm install -g @vscode/vsce
+   ```
+
+2. **Package the extension**
+   ```bash
+   cd ../exasol-vscode
+   vsce package
+   ```
+
+   This creates: `exasol-vscode-2.0.0.vsix`
+
+3. **Install the Package**
+
+#### Option A: Via Command Line
 ```bash
-npm install -g @vscode/vsce
-vsce package  # Creates exasol-vscode-0.1.6.vsix
-code --install-extension exasol-vscode-0.1.6.vsix
+code --install-extension exasol-vscode-2.0.0.vsix
 ```
 
-Or via VS Code UI: Extensions → "..." → "Install from VSIX..."
-
-### Method 3: From Marketplace (Future)
-
-Once published: Extensions → Search "Exasol" → Install
-
----
+#### Option B: Via VS Code UI
+1. Open VS Code
+2. Go to Extensions view (`Cmd+Shift+X` or `Ctrl+Shift+X`)
+3. Click the "..." menu in the top right
+4. Select "Install from VSIX..."
+5. Choose `exasol-vscode-2.0.0.vsix`
+6. Reload VS Code when prompted
 
 ## Commands
 
