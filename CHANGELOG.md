@@ -2,6 +2,32 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.0.0] - 2026-01-06
+
+### Added
+- AI agent instructions in `.github/copilot-instructions.md` for GitHub Copilot and other AI coding assistants
+  - Critical connection error handling patterns
+  - Centralized retry logic (`executeWithRetry`)
+  - Security conventions (VS Code Secrets API)
+  - Multi-query execution workflow
+  - VSIX packaging requirements
+
+### Changed
+- Consolidated documentation into single `README.md`
+  - Merged START-HERE.md, INSTALLATION.md, QUICKSTART.md into README.md
+  - Quick Start section at top for immediate results
+  - Complete feature documentation, installation methods, troubleshooting
+  - Development and publishing workflows
+- Removed user-specific paths from documentation (e.g., `/Users/mikhail.zhadanov` → `exasol-vscode`)
+
+### Removed
+- CLAUDE.md (replaced by `.github/copilot-instructions.md`)
+- TEST-COVERAGE.md (covered in `src/test/README.md`)
+- reinstall.sh (outdated installation script)
+- START-HERE.md (merged into README.md)
+- INSTALLATION.md (merged into README.md)
+- QUICKSTART.md (merged into README.md)
+
 ## [0.1.2] - 2025-11-05
 
 ### Added
