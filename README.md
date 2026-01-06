@@ -1,6 +1,6 @@
 # Exasol Extension for Visual Studio Code
 
-A feature-rich Visual Studio Code extension for working with Exasol databases. Provides comprehensive database management, intelligent SQL editing, and powerful query execution capabilities.
+A Visual Studio Code extension for working with Exasol databases. Provides comprehensive database management, intelligent SQL editing, and powerful query execution capabilities.
 
 ## 🚀 Quick Start (5 Minutes)
 
@@ -39,8 +39,6 @@ In the **new window** that opened:
    - Create `test.sql`
    - Type: `SELECT * FROM INFORMATION_SCHEMA.TABLES LIMIT 10;`
    - Press `Cmd+Enter` (Mac) or `Ctrl+Enter` (Windows/Linux)
-
-🎉 **You're running!**
 
 ---
 
