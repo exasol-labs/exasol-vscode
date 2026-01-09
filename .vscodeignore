@@ -8,3 +8,9 @@ vsc-extension-quickstart.md
 **/.eslintrc.json
 **/*.map
 **/*.ts
+# Test files - exclude from package
+out/test/**
+# Development files
+node_modules/**/.vscode/**
+*.vsix
+.DS_Store

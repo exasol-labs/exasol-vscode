@@ -4,32 +4,29 @@ A Visual Studio Code extension for working with Exasol databases. Provides compr
 
 ⚠️ Note: this extension is currently a **community-supported prototype** and not officially supported by Exasol. Exasol cannot guarantee the functionality and performance of this extension. 
 
-## 🚀 Quick Start (5 Minutes)
+## Quickstart:Launch with packaged extension (easiest)
+### Step 1: Download
 
-### Prerequisites
-- Node.js (v14 or higher)
-- VS Code (v1.85.0 or higher)
-- Exasol database instance
+Download `exasol-vscode-1.0.1.vsix` from the [latest release](https://github.com/exasol/exasol-vscode/releases)
 
-### Launch Extension
+### Step 2: Install
+**Option A: VS Code UI**
+1. Open VS Code
+2. Extensions view: `Cmd+Shift+X` (Mac) or `Ctrl+Shift+X` (Windows/Linux)
+3. Click "..." menu (top right)
+4. Select "Install from VSIX..."
+5. Choose the downloaded `.vsix` file
+6. Reload if/when prompted
 
-Clone this repo to your local machine then run:
-
+**Option B: Command Line**
 ```bash
-cd exasol-vscode
-npm install
-npm run compile
-code .
+code --install-extension exasol-vscode-1.0.1.vsix
 ```
 
-Press `F5` in VS Code → New window opens with "[Extension Development Host]" title
-
-### First Steps
-
-In the **new window** that opened:
+### Step Connect to Exasol
 
 1. **Add Connection**
-   - Click the Exasol icon (blue "E") in the left sidebar
+   - Click the Exasol icon ("X") in the left sidebar under Extensions
    - Click the `+` button
    - Enter: `Local Exasol`, `localhost:8563`, `sys`, `exasol`
 
@@ -148,7 +145,8 @@ Clone this repo to your local machine then run:
 
 2. **Package the extension**
    ```bash
-   cd ../exasol-vscode
+   cd exasol-vscode
+   npm install
    vsce package
    ```
 

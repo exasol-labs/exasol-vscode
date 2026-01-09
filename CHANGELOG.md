@@ -2,6 +2,18 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.0.1] - 2026-01-09
+
+### Added
+- Pre-packaged .vsix extension file for easy installation (exasol-vscode-1.0.1.vsix)
+- RELEASE.md with release checklist for maintainers
+- Repository URL in package.json for proper vsce packaging
+
+### Changed
+- Updated .vscodeignore to exclude test files from package (reduced size to ~1.0 MB, 170 files)
+- Enhanced README.md with streamlined installation section (packaged extension method first)
+- Improved publishing documentation with GitHub release workflow
+
 ## [1.0.0] - 2026-01-06
 
 ### Added

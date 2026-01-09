@@ -3,8 +3,12 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "0.1.6",
+  "version": "1.0.1",
   "publisher": "exasol",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/exasol/exasol-vscode"
+  },
   "engines": {
     "vscode": "^1.105.0"
   },
