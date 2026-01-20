@@ -2,6 +2,11 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.0.2] - 2026-01-20
+
+### Fixed
+- Statement parsing now correctly handles semicolons inside both single-line (`--`) and multi-line (`/* */`) comments, preventing premature statement termination
+
 ## [1.0.1] - 2026-01-09
 
 ### Added
