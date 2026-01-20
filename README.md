@@ -338,10 +338,11 @@ Extensions → "Exasol" → Gear icon → Uninstall
 
 ---
 
-## Known Issues
+## Limitations
 
 - Very large result sets (>10,000 rows) may impact rendering performance
 - Query cancellation relies on driver support; some queries may not cancel immediately
+- This extension uses the [Exasol TypeScript driver](https://github.com/exasol/exasol-driver-ts), which currently only supports cloud file uploads. You will get an error trying to upload local files. In that case, stage the file in a cloud location for upload.
 
 ---
 

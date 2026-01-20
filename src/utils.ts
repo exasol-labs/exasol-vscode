@@ -127,6 +127,36 @@ export async function executeWithoutResult(
 }
 
 /**
+ * Check if a line ends with a semicolon outside of any comments.
+ * Handles both single-line (--) and multi-line (slash-star star-slash) comments.
+ * 
+ * @param line The line to check
+ * @returns true if the line ends with a semicolon that's not inside a comment
+ */
+function endsWithSemicolonOutsideComment(line: string): boolean {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.includes(';')) {
+        return false;
+    }
+
+    // Remove all comments from the line to check for semicolons in actual code
+    let cleaned = trimmed;
+    
+    // Remove multi-line comments (/* ... */)
+    // This handles both complete multi-line comments on a single line
+    // and the end of multi-line comments that started on a previous line
+    cleaned = cleaned.replace(/\/\*[\s\S]*?\*\//g, '');
+    
+    // Remove single-line comments (-- ...)
+    cleaned = cleaned.replace(/--.*$/, '');
+    
+    cleaned = cleaned.trim();
+    
+    // Check if the remaining line (without comments) ends with semicolon
+    return cleaned.endsWith(';');
+}
+
+/**
  * Find the SQL statement at the given cursor position in a document.
  * Uses the same logic as CodeLens provider to detect statement boundaries (semicolons).
  * Returns the statement text and its range, or undefined if no statement found.
@@ -159,7 +189,8 @@ export function findStatementAtCursor(
         }
 
         // Check if this line ends with a semicolon (end of statement)
-        if (line.endsWith(';')) {
+        // Must check the full line text, not just trimmed, to preserve formatting
+        if (endsWithSemicolonOutsideComment(lines[i])) {
             // Save this statement
             if (currentStatementStart !== null && statementLines.length > 0) {
                 const statementText = statementLines.join('\n');
@@ -228,7 +259,8 @@ export function splitIntoStatements(text: string): string[] {
         currentStatementLines.push(line);
 
         // Check if this line ends with a semicolon (end of statement)
-        if (trimmedLine.endsWith(';')) {
+        // Use the helper to avoid breaking on semicolons inside comments
+        if (endsWithSemicolonOutsideComment(line)) {
             const statementText = currentStatementLines.join('\n').trim();
             if (statementText && statementText !== ';') {
                 statements.push(statementText);
