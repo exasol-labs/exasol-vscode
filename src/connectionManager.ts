@@ -1,7 +1,11 @@
 import * as vscode from 'vscode';
+import * as crypto from 'crypto';
+import * as tls from 'tls';
 import { ExasolDriver, ExaWebsocket } from '@exasol/exasol-driver-ts';
 import { WebSocket } from 'ws';
 import { getOutputChannel } from './extension';
+
+export type TlsMode = 'off' | 'fingerprint' | 'full';
 
 export interface ExasolConnection {
     name: string;
@@ -10,6 +14,39 @@ export interface ExasolConnection {
     password: string;
     database?: string;
     schema?: string;
+    tlsMode?: TlsMode;
+    fingerprint?: string;
+}
+
+/**
+ * Custom error thrown when a fingerprint-mode connection has no stored fingerprint.
+ * Contains the server's fingerprint so the caller can prompt the user (TOFU).
+ */
+export class FingerprintRequiredError extends Error {
+    constructor(public readonly serverFingerprint: string) {
+        super(`Server fingerprint not yet accepted: ${serverFingerprint}`);
+        this.name = 'FingerprintRequiredError';
+    }
+}
+
+/**
+ * Custom error thrown when the server's fingerprint doesn't match the stored one.
+ */
+export class FingerprintMismatchError extends Error {
+    constructor(
+        public readonly storedFingerprint: string,
+        public readonly serverFingerprint: string
+    ) {
+        super(`Server certificate fingerprint has changed`);
+        this.name = 'FingerprintMismatchError';
+    }
+}
+
+/**
+ * Normalize a fingerprint: strip colons/spaces, uppercase.
+ */
+export function normalizeFingerprint(fp: string): string {
+    return fp.replace(/[:\s]/g, '').toUpperCase();
 }
 
 export interface StoredConnection extends ExasolConnection {
@@ -148,6 +185,16 @@ export class ConnectionManager {
         }
     }
 
+    async saveFingerprint(connectionId: string, fingerprint: string): Promise<void> {
+        const connection = this.connections.get(connectionId);
+        if (!connection) {
+            throw new Error(`Connection ${connectionId} not found`);
+        }
+        connection.fingerprint = normalizeFingerprint(fingerprint);
+        this.connections.set(connectionId, connection);
+        await this.saveConnections();
+    }
+
     async removeConnection(id: string): Promise<void> {
         this.connections.delete(id);
 
@@ -256,6 +303,10 @@ export class ConnectionManager {
      * Checks if an error is a connection-related error that requires reconnection
      */
     private isConnectionError(error: unknown): boolean {
+        // Fingerprint errors are not retriable — they must be surfaced to the user
+        if (ConnectionManager.extractFingerprintError(error)) {
+            return false;
+        }
         const errorMsg = error instanceof Error ? error.message : String(error);
         return (
             errorMsg.includes('E-EDJS-8') || // Pool exhaustion
@@ -353,21 +404,111 @@ export class ConnectionManager {
         }
     }
 
-    private async createDriver(connection: StoredConnection): Promise<ExasolDriver> {
+    /**
+     * Extract a FingerprintRequiredError or FingerprintMismatchError from a potentially wrapped error.
+     * The TLS/WebSocket layer may wrap our custom errors.
+     */
+    static extractFingerprintError(error: unknown): FingerprintRequiredError | FingerprintMismatchError | null {
+        if (error instanceof FingerprintRequiredError || error instanceof FingerprintMismatchError) {
+            return error;
+        }
+        // Check if the error message contains our custom error markers
+        const msg = error instanceof Error ? error.message : String(error);
+        const tofuMatch = msg.match(/Server fingerprint not yet accepted: ([A-Fa-f0-9]{64})/);
+        if (tofuMatch) {
+            return new FingerprintRequiredError(tofuMatch[1].toUpperCase());
+        }
+        if (msg.includes('Server certificate fingerprint has changed')) {
+            // Try to reconstruct — the mismatch error message doesn't include both fingerprints in the base message,
+            // but the error object may be nested
+            const cause = (error as any)?.cause;
+            if (cause instanceof FingerprintMismatchError) {
+                return cause;
+            }
+            // Fallback: we know it's a mismatch but can't recover fingerprints from the message alone
+            return new FingerprintMismatchError('', '');
+        }
+        return null;
+    }
+
+    /**
+     * Build a WebSocket factory function that applies TLS settings based on the connection's tlsMode.
+     *
+     * For "fingerprint" mode, validation is done by validateFingerprint() BEFORE
+     * creating the driver, so the factory just uses rejectUnauthorized: false.
+     */
+    private createWebSocketFactory(connection: StoredConnection): (url: string) => ExaWebsocket {
+        const tlsMode = connection.tlsMode || 'off';
+
+        return (url: string) => {
+            const rejectUnauthorized = tlsMode === 'full';
+            return new WebSocket(url, { rejectUnauthorized }) as ExaWebsocket;
+        };
+    }
+
+    /**
+     * Connect to the server with TLS (no application protocol) just to read
+     * the peer certificate. Returns the SHA-256 fingerprint (uppercase hex).
+     */
+    private getServerCertificateFingerprint(host: string, port: number): Promise<string> {
+        return new Promise((resolve, reject) => {
+            const socket = tls.connect({ host, port, rejectUnauthorized: false }, () => {
+                const cert = socket.getPeerCertificate(true);
+                socket.destroy();
+                if (cert && cert.raw) {
+                    const fp = crypto.createHash('sha256').update(cert.raw).digest('hex').toUpperCase();
+                    resolve(fp);
+                } else {
+                    reject(new Error('Server did not present a certificate'));
+                }
+            });
+            socket.on('error', (err) => {
+                socket.destroy();
+                reject(err);
+            });
+            socket.setTimeout(10000, () => {
+                socket.destroy();
+                reject(new Error('TLS connection timeout while checking certificate'));
+            });
+        });
+    }
+
+    /**
+     * Validate the server certificate fingerprint for connections using "fingerprint" TLS mode.
+     * Called before creating a driver. Throws FingerprintRequiredError (TOFU) or
+     * FingerprintMismatchError if validation fails.
+     */
+    private async validateFingerprint(connection: StoredConnection): Promise<void> {
+        if ((connection.tlsMode || 'off') !== 'fingerprint') {
+            return;
+        }
+
         const [host, portStr] = connection.host.split(':');
         const port = portStr ? parseInt(portStr) : 8563;
 
-        const driver = new ExasolDriver((url: string) => {
-            // For self-signed certificates (common in local/dev environments)
-            return new WebSocket(url, {
-                rejectUnauthorized: false
-            }) as ExaWebsocket;
-        }, {
+        const serverFp = await this.getServerCertificateFingerprint(host, port);
+        const storedFp = connection.fingerprint ? normalizeFingerprint(connection.fingerprint) : '';
+
+        if (!storedFp) {
+            throw new FingerprintRequiredError(serverFp);
+        }
+        if (serverFp !== storedFp) {
+            throw new FingerprintMismatchError(storedFp, serverFp);
+        }
+    }
+
+    private async createDriver(connection: StoredConnection): Promise<ExasolDriver> {
+        await this.validateFingerprint(connection);
+
+        const [host, portStr] = connection.host.split(':');
+        const port = portStr ? parseInt(portStr) : 8563;
+
+        const driver = new ExasolDriver(this.createWebSocketFactory(connection), {
             host,
             port,
             user: connection.user,
             password: connection.password,
-            encryption: true  // Enable TLS encryption
+            encryption: true
         });
 
         await driver.connect();
@@ -375,25 +516,23 @@ export class ConnectionManager {
     }
 
     private async testConnection(connection: StoredConnection): Promise<void> {
+        // Validate fingerprint before attempting the full connection
+        await this.validateFingerprint(connection);
+
         const [host, portStr] = connection.host.split(':');
         const port = portStr ? parseInt(portStr) : 8563;
 
         const outputChannel = getOutputChannel();
         outputChannel.appendLine(`   Creating driver for ${host}:${port}`);
         outputChannel.appendLine(`   User: ${connection.user}`);
+        outputChannel.appendLine(`   TLS mode: ${connection.tlsMode || 'off'}`);
 
-        const driver = new ExasolDriver((url: string) => {
-            outputChannel.appendLine(`   WebSocket URL: ${url}`);
-            // For self-signed certificates (common in local/dev environments)
-            return new WebSocket(url, {
-                rejectUnauthorized: false
-            }) as ExaWebsocket;
-        }, {
+        const driver = new ExasolDriver(this.createWebSocketFactory(connection), {
             host,
             port,
             user: connection.user,
             password: connection.password,
-            encryption: true  // Enable TLS encryption
+            encryption: true
         });
 
         try {
@@ -403,6 +542,11 @@ export class ConnectionManager {
             await driver.close();
         } catch (error) {
             outputChannel.appendLine(`   Connection failed: ${error}`);
+            // Re-throw fingerprint errors directly so callers can handle TOFU
+            const fpError = ConnectionManager.extractFingerprintError(error);
+            if (fpError) {
+                throw fpError;
+            }
             throw new Error(`Connection test failed: ${error}`);
         }
     }
