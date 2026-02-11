@@ -2,6 +2,26 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.1.1] - 2026-02-11
+
+### Fixed
+- Connection form now allows blank password when editing (keeps existing password)
+- Error messages no longer show `[object Object]` for authentication failures
+- Error messages no longer show empty text after "Connection failed:" on wrong port
+- Error codes (e.g. `ECONNREFUSED`) now surfaced when original error message is empty
+- "Full validation" TLS mode now shows meaningful error instead of generic `E-EDJS-1`
+- Edit connection button now correctly shows "Test & Update Connection" instead of "Test & Add Connection"
+
+### Changed
+- Separated `host` and `port` into distinct fields in connection model (old format auto-migrated)
+- Added 10-second connection timeout to prevent indefinite hangs on unreachable hosts
+- Reduced TLS certificate probe timeout from 10s to 5s
+- Fingerprint is now re-validated on every reconnect, not just initial connection
+- Extracted connection types and utilities into `connectionTypes.ts` for testability
+
+### Added
+- 28 unit tests for TLS validation logic (fingerprint normalization, error formatting, error extraction)
+
 ## [1.1.0] - 2026-02-06
 
 ### Added
