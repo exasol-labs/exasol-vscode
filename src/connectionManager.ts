@@ -37,7 +37,7 @@ export class FingerprintMismatchError extends Error {
         public readonly storedFingerprint: string,
         public readonly serverFingerprint: string
     ) {
-        super(`Server certificate fingerprint has changed`);
+        super(`Server certificate fingerprint has changed: stored=${storedFingerprint} server=${serverFingerprint}`);
         this.name = 'FingerprintMismatchError';
     }
 }
@@ -183,16 +183,6 @@ export class ConnectionManager {
         if (this.activeConnection === id) {
             this.notifyActiveConnectionChanged();
         }
-    }
-
-    async saveFingerprint(connectionId: string, fingerprint: string): Promise<void> {
-        const connection = this.connections.get(connectionId);
-        if (!connection) {
-            throw new Error(`Connection ${connectionId} not found`);
-        }
-        connection.fingerprint = normalizeFingerprint(fingerprint);
-        this.connections.set(connectionId, connection);
-        await this.saveConnections();
     }
 
     async removeConnection(id: string): Promise<void> {
@@ -419,14 +409,18 @@ export class ConnectionManager {
             return new FingerprintRequiredError(tofuMatch[1].toUpperCase());
         }
         if (msg.includes('Server certificate fingerprint has changed')) {
-            // Try to reconstruct — the mismatch error message doesn't include both fingerprints in the base message,
-            // but the error object may be nested
+            // Try to reconstruct from the cause chain first
             const cause = (error as any)?.cause;
             if (cause instanceof FingerprintMismatchError) {
                 return cause;
             }
-            // Fallback: we know it's a mismatch but can't recover fingerprints from the message alone
-            return new FingerprintMismatchError('', '');
+            // Parse fingerprints from the error message
+            const mismatchMatch = msg.match(/stored=([A-Fa-f0-9]{64})\s+server=([A-Fa-f0-9]{64})/);
+            if (mismatchMatch) {
+                return new FingerprintMismatchError(mismatchMatch[1].toUpperCase(), mismatchMatch[2].toUpperCase());
+            }
+            // Last resort: fingerprints not recoverable
+            return new FingerprintMismatchError('unknown', 'unknown');
         }
         return null;
     }
@@ -434,8 +428,8 @@ export class ConnectionManager {
     /**
      * Build a WebSocket factory function that applies TLS settings based on the connection's tlsMode.
      *
-     * For "fingerprint" mode, validation is done by validateFingerprint() BEFORE
-     * creating the driver, so the factory just uses rejectUnauthorized: false.
+     * For "fingerprint" mode, validation is done by testConnection() before
+     * the connection is stored, so the factory just uses rejectUnauthorized: false.
      */
     private createWebSocketFactory(connection: StoredConnection): (url: string) => ExaWebsocket {
         const tlsMode = connection.tlsMode || 'off';
@@ -497,9 +491,9 @@ export class ConnectionManager {
         }
     }
 
+    // Fingerprint validation is performed by testConnection() during add/update,
+    // so createDriver() does not re-validate.
     private async createDriver(connection: StoredConnection): Promise<ExasolDriver> {
-        await this.validateFingerprint(connection);
-
         const [host, portStr] = connection.host.split(':');
         const port = portStr ? parseInt(portStr) : 8563;
 

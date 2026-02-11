@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionManager, FingerprintRequiredError, FingerprintMismatchError, normalizeFingerprint, TlsMode } from '../connectionManager';
+import { ConnectionManager, ExasolConnection, FingerprintRequiredError, FingerprintMismatchError, normalizeFingerprint, TlsMode } from '../connectionManager';
 
 export class ConnectionPanel {
     public static currentPanel: ConnectionPanel | undefined;
@@ -144,32 +144,12 @@ export class ConnectionPanel {
                     'Reject'
                 );
                 if (accept === 'Accept') {
-                    // Save fingerprint and retry
-                    connectionData.fingerprint = fpError.serverFingerprint;
-                    try {
-                        let id: string;
-                        if (this.existingConnection) {
-                            id = await this.connectionManager.updateConnection(this.existingConnection.id, connectionData);
-                        } else {
-                            id = await this.connectionManager.addConnection(connectionData);
-                        }
-                        this.outputChannel.appendLine(`✅ Fingerprint accepted, connection successful`);
-                        this.dispose();
-                        if (this._resolvePromise) {
-                            this._resolvePromise({ name, id });
-                        }
-                        return;
-                    } catch (retryError) {
-                        const retryMsg = String(retryError);
-                        this.outputChannel.appendLine(`❌ Retry after fingerprint accept failed: ${retryMsg}`);
-                        this._panel.webview.postMessage({ command: 'error', error: retryMsg });
-                        return;
-                    }
+                    await this.acceptFingerprintAndRetry(connectionData, name, fpError.serverFingerprint, 'Fingerprint accepted');
                 } else {
                     this.outputChannel.appendLine(`❌ Fingerprint rejected by user`);
                     this._panel.webview.postMessage({ command: 'error', error: 'Certificate fingerprint rejected.' });
-                    return;
                 }
+                return;
             }
 
             // Handle fingerprint mismatch
@@ -182,36 +162,47 @@ export class ConnectionPanel {
                     'Reject'
                 );
                 if (accept === 'Accept New') {
-                    connectionData.fingerprint = fpError.serverFingerprint;
-                    try {
-                        let id: string;
-                        if (this.existingConnection) {
-                            id = await this.connectionManager.updateConnection(this.existingConnection.id, connectionData);
-                        } else {
-                            id = await this.connectionManager.addConnection(connectionData);
-                        }
-                        this.outputChannel.appendLine(`✅ New fingerprint accepted, connection successful`);
-                        this.dispose();
-                        if (this._resolvePromise) {
-                            this._resolvePromise({ name, id });
-                        }
-                        return;
-                    } catch (retryError) {
-                        const retryMsg = String(retryError);
-                        this.outputChannel.appendLine(`❌ Retry after fingerprint update failed: ${retryMsg}`);
-                        this._panel.webview.postMessage({ command: 'error', error: retryMsg });
-                        return;
-                    }
+                    await this.acceptFingerprintAndRetry(connectionData, name, fpError.serverFingerprint, 'New fingerprint accepted');
                 } else {
                     this.outputChannel.appendLine(`❌ New fingerprint rejected by user`);
                     this._panel.webview.postMessage({ command: 'error', error: 'Certificate fingerprint change rejected.' });
-                    return;
                 }
+                return;
             }
 
             const errorMsg = String(error);
             this.outputChannel.appendLine(`❌ Connection test failed: ${errorMsg}`);
             this._panel.webview.postMessage({ command: 'error', error: errorMsg });
+        }
+    }
+
+    /**
+     * Save the accepted fingerprint on the connection data, persist, and close the panel.
+     * Shared by both the TOFU and mismatch-accept flows.
+     */
+    private async acceptFingerprintAndRetry(
+        connectionData: { fingerprint?: string } & ExasolConnection,
+        name: string,
+        fingerprint: string,
+        successLabel: string
+    ): Promise<void> {
+        connectionData.fingerprint = fingerprint;
+        try {
+            let id: string;
+            if (this.existingConnection) {
+                id = await this.connectionManager.updateConnection(this.existingConnection.id, connectionData);
+            } else {
+                id = await this.connectionManager.addConnection(connectionData);
+            }
+            this.outputChannel.appendLine(`✅ ${successLabel}, connection successful`);
+            this.dispose();
+            if (this._resolvePromise) {
+                this._resolvePromise({ name, id });
+            }
+        } catch (retryError) {
+            const retryMsg = String(retryError);
+            this.outputChannel.appendLine(`❌ Retry after fingerprint accept failed: ${retryMsg}`);
+            this._panel.webview.postMessage({ command: 'error', error: retryMsg });
         }
     }
 
