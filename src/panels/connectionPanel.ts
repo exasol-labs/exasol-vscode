@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionManager, ExasolConnection, FingerprintRequiredError, FingerprintMismatchError, normalizeFingerprint, TlsMode } from '../connectionManager';
+import { ConnectionManager, ExasolConnection, FingerprintRequiredError, FingerprintMismatchError, normalizeFingerprint, extractFingerprintError, TlsMode } from '../connectionManager';
 
 export class ConnectionPanel {
     public static currentPanel: ConnectionPanel | undefined;
@@ -90,22 +90,21 @@ export class ConnectionPanel {
         tlsMode: TlsMode; fingerprint: string;
     }) {
         const { name, host, port, user, password, tlsMode, fingerprint } = data;
+        const portNum = parseInt(port, 10);
 
         const action = this.existingConnection ? 'update' : 'add';
         this.outputChannel.appendLine(`📝 Attempting to ${action} connection '${name}'`);
         this.outputChannel.appendLine(`   Host: ${host}`);
-        this.outputChannel.appendLine(`   Port: ${port}`);
+        this.outputChannel.appendLine(`   Port: ${portNum}`);
         this.outputChannel.appendLine(`   User: ${user}`);
         this.outputChannel.appendLine(`   TLS mode: ${tlsMode}`);
-
-        // Combine host and port
-        const hostWithPort = `${host}:${port}`;
 
         const normalizedFp = fingerprint ? normalizeFingerprint(fingerprint) : undefined;
 
         const connectionData = {
             name,
-            host: hostWithPort,
+            host,
+            port: portNum,
             user,
             password,
             tlsMode,
@@ -116,7 +115,7 @@ export class ConnectionPanel {
             // Show testing state in webview
             this._panel.webview.postMessage({ command: 'testing' });
 
-            this.outputChannel.appendLine(`🔌 Testing connection to ${hostWithPort}...`);
+            this.outputChannel.appendLine(`🔌 Testing connection to ${host}:${portNum}...`);
 
             let id: string;
             if (this.existingConnection) {
@@ -134,7 +133,7 @@ export class ConnectionPanel {
             }
         } catch (error) {
             // Handle TOFU: fingerprint required (no stored fingerprint yet)
-            const fpError = ConnectionManager.extractFingerprintError(error);
+            const fpError = extractFingerprintError(error);
             if (fpError instanceof FingerprintRequiredError) {
                 this.outputChannel.appendLine(`🔑 Server fingerprint: ${fpError.serverFingerprint}`);
                 const accept = await vscode.window.showWarningMessage(
@@ -212,11 +211,10 @@ export class ConnectionPanel {
 
     private _getHtmlForWebview(): string {
         // Pre-fill values for edit mode
-        const [hostPart, portPart] = this.existingConnection?.host?.split(':') || ['', ''];
         const values = {
             name: this.existingConnection?.name || '',
-            host: hostPart || '',
-            port: portPart || '8563',
+            host: this.existingConnection?.host || '',
+            port: String(this.existingConnection?.port || 8563),
             user: this.existingConnection?.user || '',
             password: '',
             tlsMode: this.existingConnection?.tlsMode || 'off',
@@ -446,6 +444,7 @@ export class ConnectionPanel {
 
     <script>
         const vscode = acquireVsCodeApi();
+        const isEdit = ${isEdit};
 
         // Listen for messages from extension
         window.addEventListener('message', event => {
@@ -478,7 +477,7 @@ export class ConnectionPanel {
             const fingerprint = document.getElementById('fingerprint').value.trim();
 
             // Validate inputs
-            if (!name || !host || !port || !user || !password) {
+            if (!name || !host || !port || !user || (!isEdit && !password)) {
                 showError('All fields are required');
                 return;
             }

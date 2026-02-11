@@ -49,11 +49,12 @@ export class ConnectionItem extends vscode.TreeItem {
             this.iconPath = new vscode.ThemeIcon('database');
         }
 
-        this.description = isActive && connection.host
-            ? `${connection.host} • active`
-            : connection.host ?? '';
-        this.tooltip = connection.host
-            ? `${connection.name}\n${connection.host}${isActive ? '\nActive connection' : ''}`
+        const hostDisplay = connection.host ? `${connection.host}:${connection.port}` : '';
+        this.description = isActive && hostDisplay
+            ? `${hostDisplay} • active`
+            : hostDisplay;
+        this.tooltip = hostDisplay
+            ? `${connection.name}\n${hostDisplay}${isActive ? '\nActive connection' : ''}`
             : `${connection.name}${isActive ? '\nActive connection' : ''}`;
         this.command = {
             command: 'exasol.setActiveConnection',

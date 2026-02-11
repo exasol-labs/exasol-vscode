@@ -67,7 +67,8 @@ suite('ConnectionManager Test Suite', () => {
         // This should not throw
         await connectionManager.addConnection({
             name: 'Test Connection 2',
-            host: 'localhost:8563',
+            host: 'localhost',
+            port: 8563,
             user: 'sys',
             password: 'exasol'
         });
@@ -79,7 +80,8 @@ suite('ConnectionManager Test Suite', () => {
         try {
             await connectionManager.addConnection({
                 name: 'Invalid Connection',
-                host: 'localhost:8563',
+                host: 'localhost',
+                port: 8563,
                 user: 'invalid',
                 password: 'invalid'
             });

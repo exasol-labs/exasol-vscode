@@ -276,7 +276,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         const items = connections.map((conn: StoredConnection) => ({
             label: conn.name,
-            description: conn.host,
+            description: `${conn.host}:${conn.port}`,
             detail: connectionManager.getActiveConnection()?.id === conn.id ? '✓ Active' : '',
             connection: conn
         }));
