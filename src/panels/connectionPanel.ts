@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionManager } from '../connectionManager';
+import { ConnectionManager, ExasolConnection, FingerprintRequiredError, FingerprintMismatchError, normalizeFingerprint, TlsMode } from '../connectionManager';
 
 export class ConnectionPanel {
     public static currentPanel: ConnectionPanel | undefined;
@@ -85,17 +85,32 @@ export class ConnectionPanel {
         });
     }
 
-    private async handleSubmit(data: { name: string; host: string; port: string; user: string; password: string }) {
-        const { name, host, port, user, password } = data;
+    private async handleSubmit(data: {
+        name: string; host: string; port: string; user: string; password: string;
+        tlsMode: TlsMode; fingerprint: string;
+    }) {
+        const { name, host, port, user, password, tlsMode, fingerprint } = data;
 
         const action = this.existingConnection ? 'update' : 'add';
         this.outputChannel.appendLine(`📝 Attempting to ${action} connection '${name}'`);
         this.outputChannel.appendLine(`   Host: ${host}`);
         this.outputChannel.appendLine(`   Port: ${port}`);
         this.outputChannel.appendLine(`   User: ${user}`);
+        this.outputChannel.appendLine(`   TLS mode: ${tlsMode}`);
 
         // Combine host and port
         const hostWithPort = `${host}:${port}`;
+
+        const normalizedFp = fingerprint ? normalizeFingerprint(fingerprint) : undefined;
+
+        const connectionData = {
+            name,
+            host: hostWithPort,
+            user,
+            password,
+            tlsMode,
+            fingerprint: normalizedFp
+        };
 
         try {
             // Show testing state in webview
@@ -105,21 +120,9 @@ export class ConnectionPanel {
 
             let id: string;
             if (this.existingConnection) {
-                // Update existing connection
-                id = await this.connectionManager.updateConnection(this.existingConnection.id, {
-                    name,
-                    host: hostWithPort,
-                    user,
-                    password
-                });
+                id = await this.connectionManager.updateConnection(this.existingConnection.id, connectionData);
             } else {
-                // Add new connection
-                id = await this.connectionManager.addConnection({
-                    name,
-                    host: hostWithPort,
-                    user,
-                    password
-                });
+                id = await this.connectionManager.addConnection(connectionData);
             }
 
             this.outputChannel.appendLine(`✅ Connection test successful`);
@@ -130,14 +133,76 @@ export class ConnectionPanel {
                 this._resolvePromise({ name, id });
             }
         } catch (error) {
+            // Handle TOFU: fingerprint required (no stored fingerprint yet)
+            const fpError = ConnectionManager.extractFingerprintError(error);
+            if (fpError instanceof FingerprintRequiredError) {
+                this.outputChannel.appendLine(`🔑 Server fingerprint: ${fpError.serverFingerprint}`);
+                const accept = await vscode.window.showWarningMessage(
+                    `Trust this server certificate?\n\nSHA-256 fingerprint:\n${fpError.serverFingerprint}`,
+                    { modal: true },
+                    'Accept',
+                    'Reject'
+                );
+                if (accept === 'Accept') {
+                    await this.acceptFingerprintAndRetry(connectionData, name, fpError.serverFingerprint, 'Fingerprint accepted');
+                } else {
+                    this.outputChannel.appendLine(`❌ Fingerprint rejected by user`);
+                    this._panel.webview.postMessage({ command: 'error', error: 'Certificate fingerprint rejected.' });
+                }
+                return;
+            }
+
+            // Handle fingerprint mismatch
+            if (fpError instanceof FingerprintMismatchError) {
+                this.outputChannel.appendLine(`⚠️ Fingerprint mismatch! Stored: ${fpError.storedFingerprint}, Server: ${fpError.serverFingerprint}`);
+                const accept = await vscode.window.showWarningMessage(
+                    `Server certificate has changed!\n\nStored fingerprint:\n${fpError.storedFingerprint}\n\nNew fingerprint:\n${fpError.serverFingerprint}\n\nAccept the new certificate?`,
+                    { modal: true },
+                    'Accept New',
+                    'Reject'
+                );
+                if (accept === 'Accept New') {
+                    await this.acceptFingerprintAndRetry(connectionData, name, fpError.serverFingerprint, 'New fingerprint accepted');
+                } else {
+                    this.outputChannel.appendLine(`❌ New fingerprint rejected by user`);
+                    this._panel.webview.postMessage({ command: 'error', error: 'Certificate fingerprint change rejected.' });
+                }
+                return;
+            }
+
             const errorMsg = String(error);
             this.outputChannel.appendLine(`❌ Connection test failed: ${errorMsg}`);
+            this._panel.webview.postMessage({ command: 'error', error: errorMsg });
+        }
+    }
 
-            // Send error back to webview to display
-            this._panel.webview.postMessage({
-                command: 'error',
-                error: errorMsg
-            });
+    /**
+     * Save the accepted fingerprint on the connection data, persist, and close the panel.
+     * Shared by both the TOFU and mismatch-accept flows.
+     */
+    private async acceptFingerprintAndRetry(
+        connectionData: { fingerprint?: string } & ExasolConnection,
+        name: string,
+        fingerprint: string,
+        successLabel: string
+    ): Promise<void> {
+        connectionData.fingerprint = fingerprint;
+        try {
+            let id: string;
+            if (this.existingConnection) {
+                id = await this.connectionManager.updateConnection(this.existingConnection.id, connectionData);
+            } else {
+                id = await this.connectionManager.addConnection(connectionData);
+            }
+            this.outputChannel.appendLine(`✅ ${successLabel}, connection successful`);
+            this.dispose();
+            if (this._resolvePromise) {
+                this._resolvePromise({ name, id });
+            }
+        } catch (retryError) {
+            const retryMsg = String(retryError);
+            this.outputChannel.appendLine(`❌ Retry after fingerprint accept failed: ${retryMsg}`);
+            this._panel.webview.postMessage({ command: 'error', error: retryMsg });
         }
     }
 
@@ -153,7 +218,9 @@ export class ConnectionPanel {
             host: hostPart || '',
             port: portPart || '8563',
             user: this.existingConnection?.user || '',
-            password: ''
+            password: '',
+            tlsMode: this.existingConnection?.tlsMode || 'off',
+            fingerprint: this.existingConnection?.fingerprint || ''
         };
         const isEdit = !!this.existingConnection;
 
@@ -198,11 +265,21 @@ export class ConnectionPanel {
             font-size: 14px;
             box-sizing: border-box;
         }
-        input:focus {
+        input:focus, select:focus {
             outline: 1px solid var(--vscode-focusBorder);
         }
         input::placeholder {
             color: var(--vscode-input-placeholderForeground);
+        }
+        select {
+            width: 100%;
+            padding: 10px;
+            background-color: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 2px;
+            font-size: 14px;
+            box-sizing: border-box;
         }
         .hint {
             margin-top: 5px;
@@ -331,6 +408,31 @@ export class ConnectionPanel {
                 <div class="hint">${isEdit ? 'Leave blank to keep current password' : 'Password will be stored securely in VS Code'}</div>
             </div>
 
+            <div class="form-group">
+                <label for="tlsMode">
+                    <span class="icon">🛡️</span>TLS Certificate Validation
+                </label>
+                <select id="tlsMode" onchange="toggleFingerprint()">
+                    <option value="off" ${values.tlsMode === 'off' ? 'selected' : ''}>Off (no validation)</option>
+                    <option value="fingerprint" ${values.tlsMode === 'fingerprint' ? 'selected' : ''}>Fingerprint (pin certificate)</option>
+                    <option value="full" ${values.tlsMode === 'full' ? 'selected' : ''}>Full validation (trusted CA)</option>
+                </select>
+                <div class="hint">Off: accept any certificate. Fingerprint: pin to specific certificate. Full: require trusted CA.</div>
+            </div>
+
+            <div class="form-group" id="fingerprintGroup" style="display: ${values.tlsMode === 'fingerprint' ? 'block' : 'none'};">
+                <label for="fingerprint">
+                    <span class="icon">🔑</span>Certificate Fingerprint (SHA-256)
+                </label>
+                <input
+                    type="text"
+                    id="fingerprint"
+                    placeholder="e.g. AB:CD:EF:01:23... or ABCDEF0123..."
+                    value="${values.fingerprint}"
+                />
+                <div class="hint">64-character hex string (colons optional). Leave blank to accept on first connect (TOFU).</div>
+            </div>
+
             <div class="button-group">
                 <button type="button" class="secondary-button" onclick="cancel()">
                     Cancel
@@ -359,6 +461,11 @@ export class ConnectionPanel {
             }
         });
 
+        function toggleFingerprint() {
+            const tlsMode = document.getElementById('tlsMode').value;
+            document.getElementById('fingerprintGroup').style.display = tlsMode === 'fingerprint' ? 'block' : 'none';
+        }
+
         document.getElementById('connectionForm').addEventListener('submit', function(e) {
             e.preventDefault();
 
@@ -367,6 +474,8 @@ export class ConnectionPanel {
             const port = document.getElementById('port').value.trim();
             const user = document.getElementById('user').value.trim();
             const password = document.getElementById('password').value;
+            const tlsMode = document.getElementById('tlsMode').value;
+            const fingerprint = document.getElementById('fingerprint').value.trim();
 
             // Validate inputs
             if (!name || !host || !port || !user || !password) {
@@ -380,6 +489,15 @@ export class ConnectionPanel {
                 return;
             }
 
+            // Validate fingerprint if provided
+            if (tlsMode === 'fingerprint' && fingerprint) {
+                const normalized = fingerprint.replace(/[:\\s]/g, '').toUpperCase();
+                if (!/^[0-9A-F]{64}$/.test(normalized)) {
+                    showError('Fingerprint must be a 64-character hexadecimal string (SHA-256)');
+                    return;
+                }
+            }
+
             // Hide any previous errors
             document.getElementById('errorMessage').style.display = 'none';
 
@@ -391,7 +509,7 @@ export class ConnectionPanel {
             // Send data to extension
             vscode.postMessage({
                 command: 'submit',
-                data: { name, host, port, user, password }
+                data: { name, host, port, user, password, tlsMode, fingerprint }
             });
         });
 
@@ -407,7 +525,7 @@ export class ConnectionPanel {
             // Re-enable submit button
             const submitButton = document.getElementById('submitButton');
             submitButton.disabled = false;
-            submitButton.textContent = 'Test & Add Connection';
+            submitButton.textContent = 'Test & ${isEdit ? 'Update' : 'Add'} Connection';
         }
 
         // Focus on first input

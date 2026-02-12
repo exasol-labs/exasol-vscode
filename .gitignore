@@ -38,6 +38,12 @@ coverage/
 *.swo
 *~
 
+# Specs (local only)
+specs/
+
+# AI agent instructions (local only)
+CLAUDE.md
+
 # Temp files
 *.tmp
 .cache/

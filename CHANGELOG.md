@@ -2,6 +2,22 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.1.0] - 2026-02-06
+
+### Added
+- Per-connection TLS certificate validation with three modes:
+  - **Off**: Skip validation (default, preserves existing behavior)
+  - **Fingerprint**: SHA-256 certificate pinning with trust-on-first-use (TOFU)
+  - **Full validation**: Standard CA certificate verification
+- Trust-on-first-use (TOFU) prompt when connecting with Fingerprint mode and no stored fingerprint
+- Certificate change detection with old/new fingerprint comparison and accept/reject dialog
+- Manual fingerprint entry field in connection form (accepts colon-separated or plain hex)
+- TLS mode selector and fingerprint field in Add/Edit Connection form
+
+### Changed
+- Replaced hardcoded `rejectUnauthorized: false` with per-connection TLS settings
+- Fingerprint validation errors are no longer silently retried by `executeWithRetry`
+
 ## [1.0.2] - 2026-01-20
 
 ### Fixed
