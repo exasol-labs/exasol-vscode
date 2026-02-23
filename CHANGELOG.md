@@ -18,6 +18,9 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - "Full validation" TLS mode now shows meaningful error instead of generic `E-EDJS-1`
 - Edit connection button now correctly shows "Test & Update Connection" instead of "Test & Add Connection"
 - `executeWithRetry()` no longer double-stacks retries when `connectWithRetry()` already exhausted its attempts
+- Repository URL corrected from `exasol/` to `exasol-labs/` in package.json, README, and RELEASE.md
+- License corrected from ISC to MIT in README (matching LICENSE file); added `"license": "MIT"` to package.json
+- Removed hardcoded version numbers from README to avoid stale references on each release
 
 ### Changed
 - Separated `host` and `port` into distinct fields in connection model (old format auto-migrated)
