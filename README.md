@@ -350,7 +350,7 @@ Extensions → "Exasol" → Gear icon → Uninstall
 
 - **Issues**: [GitHub Issues](https://github.com/exasol/exasol-vscode/issues)
 - **Tests**: [src/test/README.md](src/test/README.md)
-- **AI Agents**: [.github/copilot-instructions.md](.github/copilot-instructions.md)
+- **AI Agents**: See [CLAUDE.md](CLAUDE.md) for AI coding agent instructions
 
 ---
 
@@ -362,6 +362,6 @@ Contributions welcome! Please submit issues or pull requests.
 
 ## License
 
-ISC
+MIT
 
 ---
