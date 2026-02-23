@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { splitIntoStatements } from '../utils';
+import { splitIntoStatements } from '../../utils';
 
 suite('splitIntoStatements', () => {
     test('should split simple multiple statements', () => {

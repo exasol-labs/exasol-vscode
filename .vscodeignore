@@ -11,7 +11,9 @@ vsc-extension-quickstart.md
 # Test files - exclude from package
 out/test/**
 # Development files
-node_modules/**/.vscode/**
+node_modules/**
+esbuild.mjs
+.github/**
 *.vsix
 .DS_Store
 CLAUDE.md

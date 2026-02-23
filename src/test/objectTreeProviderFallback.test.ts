@@ -55,7 +55,8 @@ suite('ObjectTreeProvider Metadata Fallback', () => {
         const connection: StoredConnection = {
             id: 'conn-1',
             name: 'Test Connection',
-            host: 'localhost:8563',
+            host: 'localhost',
+            port: 8563,
             user: 'sys',
             password: 'secret'
         };

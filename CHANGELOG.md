@@ -2,6 +2,48 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.1.1] - 2026-02-23
+
+### Added
+- Automatic reconnection with retry: up to 3 attempts with 2s delay and cancellable VS Code progress notification
+- Concurrent connection deduplication: tree provider, autocompletion, and query executor share a single reconnection attempt
+- WebSocket ping/pong keep-alive (every 30s) to detect dead connections proactively instead of hanging for 30-75s on stale TCP sockets
+- 28 unit tests for TLS validation logic (fingerprint normalization, error formatting, error extraction)
+
+### Fixed
+- Connection form now allows blank password when editing (keeps existing password)
+- Error messages no longer show `[object Object]` for authentication failures
+- Error messages no longer show empty text after "Connection failed:" on wrong port
+- Error codes (e.g. `ECONNREFUSED`) now surfaced when original error message is empty
+- "Full validation" TLS mode now shows meaningful error instead of generic `E-EDJS-1`
+- Edit connection button now correctly shows "Test & Update Connection" instead of "Test & Add Connection"
+- `executeWithRetry()` no longer double-stacks retries when `connectWithRetry()` already exhausted its attempts
+- Repository URL corrected from `exasol/` to `exasol-labs/` in package.json, README, and RELEASE.md
+- License corrected from ISC to MIT in README (matching LICENSE file); added `"license": "MIT"` to package.json
+- Removed hardcoded version numbers from README to avoid stale references on each release
+
+### Added
+- GitHub Actions CI: type check + unit tests on every PR
+- GitHub Actions Release: auto-builds VSIX and creates GitHub release on merge to main when version changes
+
+### Changed
+- Bundled extension with esbuild: single JS output file, faster activation, smaller VSIX
+- Separated `host` and `port` into distinct fields in connection model (old format auto-migrated)
+- Connection tree and picker now display `host:port` instead of just `host`
+- Added 10-second connection timeout to prevent indefinite hangs on unreachable hosts
+- Reduced TLS certificate probe timeout from 10s to 5s
+- Fingerprint is now re-validated on every reconnect, not just initial connection
+- `executeWithRetry()` delay increased from 100ms to 1s for connection stabilization
+- Extracted connection types and utilities into `connectionTypes.ts` for testability
+
+### Dependencies
+- `glob` 10 → 13 (drops 33 transitive deps, fixes CVE-2025-64756)
+- `mocha` 10 → 11
+- `@types/node` 24 → 22 (aligned with VS Code's Node 22 runtime)
+- `@types/vscode` 1.105 → 1.109, `engines.vscode` aligned
+- `@vscode/vsce` 3.6 → 3.7, `ws` 8.18 → 8.19
+- Transitive security fixes: qs, lodash, jws, node-forge
+
 ## [1.1.0] - 2026-02-06
 
 ### Added

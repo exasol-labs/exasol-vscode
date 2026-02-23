@@ -4,59 +4,55 @@ import * as tls from 'tls';
 import { ExasolDriver, ExaWebsocket } from '@exasol/exasol-driver-ts';
 import { WebSocket } from 'ws';
 import { getOutputChannel } from './extension';
+import {
+    TlsMode,
+    ExasolConnection,
+    StoredConnection,
+    FingerprintRequiredError,
+    FingerprintMismatchError,
+    normalizeFingerprint,
+    formatError,
+    extractFingerprintError
+} from './connectionTypes';
 
-export type TlsMode = 'off' | 'fingerprint' | 'full';
+// Re-export for existing consumers
+export {
+    TlsMode,
+    ExasolConnection,
+    StoredConnection,
+    FingerprintRequiredError,
+    FingerprintMismatchError,
+    normalizeFingerprint,
+    formatError,
+    extractFingerprintError
+};
 
-export interface ExasolConnection {
-    name: string;
-    host: string;
-    user: string;
-    password: string;
-    database?: string;
-    schema?: string;
-    tlsMode?: TlsMode;
-    fingerprint?: string;
-}
+/** Timeout in ms for establishing a new connection (WebSocket + TLS handshake + auth). */
+const CONNECTION_TIMEOUT_MS = 10_000;
+/** Timeout in ms for the TLS probe used to read the server certificate fingerprint. */
+const TLS_PROBE_TIMEOUT_MS = 5_000;
+/** Interval in ms between WebSocket ping probes to detect dead connections. */
+const PING_INTERVAL_MS = 30_000;
+/** Maximum number of attempts when (re)connecting to the server. */
+const RECONNECT_MAX_ATTEMPTS = 3;
+/** Delay in ms between reconnection attempts. */
+const RECONNECT_DELAY_MS = 2_000;
 
-/**
- * Custom error thrown when a fingerprint-mode connection has no stored fingerprint.
- * Contains the server's fingerprint so the caller can prompt the user (TOFU).
- */
-export class FingerprintRequiredError extends Error {
-    constructor(public readonly serverFingerprint: string) {
-        super(`Server fingerprint not yet accepted: ${serverFingerprint}`);
-        this.name = 'FingerprintRequiredError';
-    }
-}
-
-/**
- * Custom error thrown when the server's fingerprint doesn't match the stored one.
- */
-export class FingerprintMismatchError extends Error {
-    constructor(
-        public readonly storedFingerprint: string,
-        public readonly serverFingerprint: string
-    ) {
-        super(`Server certificate fingerprint has changed: stored=${storedFingerprint} server=${serverFingerprint}`);
-        this.name = 'FingerprintMismatchError';
-    }
-}
-
-/**
- * Normalize a fingerprint: strip colons/spaces, uppercase.
- */
-export function normalizeFingerprint(fp: string): string {
-    return fp.replace(/[:\s]/g, '').toUpperCase();
-}
-
-export interface StoredConnection extends ExasolConnection {
-    id: string;
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+    let timer: NodeJS.Timeout;
+    return Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(message)), ms);
+        })
+    ]).finally(() => clearTimeout(timer));
 }
 
 export class ConnectionManager {
     private connections: Map<string, StoredConnection> = new Map();
     private activeConnection: string | null = null;
     private drivers: Map<string, ExasolDriver> = new Map();
+    private connectingPromises: Map<string, Promise<ExasolDriver>> = new Map();
     private readonly connectionsChangedEmitter = new vscode.EventEmitter<void>();
     readonly onDidChangeConnections = this.connectionsChangedEmitter.event;
     private readonly activeConnectionChangedEmitter = new vscode.EventEmitter<StoredConnection | undefined>();
@@ -71,7 +67,18 @@ export class ConnectionManager {
 
     private async loadConnections() {
         const stored = this.context.globalState.get<Array<Omit<StoredConnection, 'password'>>>('exasol.connections', []);
+        let needsSave = false;
         for (const conn of stored) {
+            // Migrate old host:port format to separate fields
+            if (!conn.port && conn.host.includes(':')) {
+                const [host, portStr] = conn.host.split(':');
+                conn.host = host;
+                conn.port = parseInt(portStr, 10) || 8563;
+                needsSave = true;
+            } else if (!conn.port) {
+                conn.port = 8563;
+                needsSave = true;
+            }
             // Load password from secure storage
             const password = await this.context.secrets.get(`exasol.password.${conn.id}`);
             if (password) {
@@ -80,6 +87,9 @@ export class ConnectionManager {
                     password
                 });
             }
+        }
+        if (needsSave) {
+            await this.saveConnections();
         }
         // Do not auto-activate any connection - user must manually select
     }
@@ -250,6 +260,8 @@ export class ConnectionManager {
             throw new Error(`Connection ${id} not found`);
         }
 
+        let isReconnect = false;
+
         // Check if we have an existing driver
         if (this.drivers.has(id)) {
             const driver = this.drivers.get(id)!;
@@ -264,12 +276,69 @@ export class ConnectionManager {
             const outputChannel = getOutputChannel();
             outputChannel.appendLine(`Connection ${connection.name} appears stale, reconnecting...`);
             this.drivers.delete(id);
+            isReconnect = true;
         }
 
-        // Create new driver
-        const driver = await this.createDriver(connection);
-        this.drivers.set(id, driver);
-        return driver;
+        // Dedup: if already connecting, wait for that promise
+        if (this.connectingPromises.has(id)) {
+            return this.connectingPromises.get(id)!;
+        }
+
+        // Connect with retry + progress
+        const promise = this.connectWithRetry(connection, isReconnect);
+        this.connectingPromises.set(id, promise);
+        try {
+            const driver = await promise;
+            this.drivers.set(id, driver);
+            return driver;
+        } finally {
+            this.connectingPromises.delete(id);
+        }
+    }
+
+    private async connectWithRetry(connection: StoredConnection, isReconnect: boolean): Promise<ExasolDriver> {
+        const title = isReconnect
+            ? `Reconnecting to ${connection.name}...`
+            : `Connecting to ${connection.name}...`;
+
+        return await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title, cancellable: true },
+            async (_progress, token) => {
+                const outputChannel = getOutputChannel();
+                for (let attempt = 1; attempt <= RECONNECT_MAX_ATTEMPTS; attempt++) {
+                    if (token.isCancellationRequested) {
+                        throw new Error('Connection cancelled by user');
+                    }
+                    try {
+                        if (attempt > 1) {
+                            _progress.report({ message: `Attempt ${attempt}/${RECONNECT_MAX_ATTEMPTS}...` });
+                        }
+                        return await this.createDriver(connection);
+                    } catch (error) {
+                        // Fingerprint errors are never retriable — they require user action
+                        if (extractFingerprintError(error)) {
+                            throw error;
+                        }
+                        outputChannel.appendLine(
+                            `Connection attempt ${attempt}/${RECONNECT_MAX_ATTEMPTS} failed: ${formatError(error)}`
+                        );
+                        if (attempt === RECONNECT_MAX_ATTEMPTS) {
+                            throw error;
+                        }
+                        // Wait before next attempt
+                        await new Promise<void>((resolve) => {
+                            const timer = setTimeout(resolve, RECONNECT_DELAY_MS);
+                            token.onCancellationRequested(() => {
+                                clearTimeout(timer);
+                                resolve();
+                            });
+                        });
+                    }
+                }
+                // Unreachable, but satisfies TypeScript
+                throw new Error('Connection failed');
+            }
+        );
     }
 
     async resetDriver(connectionId?: string): Promise<void> {
@@ -294,7 +363,7 @@ export class ConnectionManager {
      */
     private isConnectionError(error: unknown): boolean {
         // Fingerprint errors are not retriable — they must be surfaced to the user
-        if (ConnectionManager.extractFingerprintError(error)) {
+        if (extractFingerprintError(error)) {
             return false;
         }
         const errorMsg = error instanceof Error ? error.message : String(error);
@@ -328,15 +397,19 @@ export class ConnectionManager {
             // Check if it's a connection-related error that requires reconnection
             if (this.isConnectionError(error)) {
                 const id = connectionId || this.activeConnection;
-                if (id) {
+                if (id && this.drivers.has(id)) {
+                    // Only retry if a driver existed — meaning the query itself failed
+                    // on an established connection. If no driver exists, getDriver()/
+                    // connectWithRetry() already exhausted its retries; retrying here
+                    // would just double-stack connection attempts.
                     const outputChannel = getOutputChannel();
                     outputChannel.appendLine(`Connection error detected, resetting driver and retrying...`);
 
                     // Reset driver and retry once
                     await this.resetDriver(id);
 
-                    // Wait a bit for the connection to stabilize
-                    await new Promise(resolve => setTimeout(resolve, 100));
+                    // Wait for the connection to stabilize before retry
+                    await new Promise(resolve => setTimeout(resolve, 1_000));
 
                     return await fn();
                 }
@@ -395,48 +468,45 @@ export class ConnectionManager {
     }
 
     /**
-     * Extract a FingerprintRequiredError or FingerprintMismatchError from a potentially wrapped error.
-     * The TLS/WebSocket layer may wrap our custom errors.
-     */
-    static extractFingerprintError(error: unknown): FingerprintRequiredError | FingerprintMismatchError | null {
-        if (error instanceof FingerprintRequiredError || error instanceof FingerprintMismatchError) {
-            return error;
-        }
-        // Check if the error message contains our custom error markers
-        const msg = error instanceof Error ? error.message : String(error);
-        const tofuMatch = msg.match(/Server fingerprint not yet accepted: ([A-Fa-f0-9]{64})/);
-        if (tofuMatch) {
-            return new FingerprintRequiredError(tofuMatch[1].toUpperCase());
-        }
-        if (msg.includes('Server certificate fingerprint has changed')) {
-            // Try to reconstruct from the cause chain first
-            const cause = (error as any)?.cause;
-            if (cause instanceof FingerprintMismatchError) {
-                return cause;
-            }
-            // Parse fingerprints from the error message
-            const mismatchMatch = msg.match(/stored=([A-Fa-f0-9]{64})\s+server=([A-Fa-f0-9]{64})/);
-            if (mismatchMatch) {
-                return new FingerprintMismatchError(mismatchMatch[1].toUpperCase(), mismatchMatch[2].toUpperCase());
-            }
-            // Last resort: fingerprints not recoverable
-            return new FingerprintMismatchError('unknown', 'unknown');
-        }
-        return null;
-    }
-
-    /**
      * Build a WebSocket factory function that applies TLS settings based on the connection's tlsMode.
      *
      * For "fingerprint" mode, validation is done by testConnection() before
      * the connection is stored, so the factory just uses rejectUnauthorized: false.
      */
-    private createWebSocketFactory(connection: StoredConnection): (url: string) => ExaWebsocket {
+    private createWebSocketFactory(connection: StoredConnection, errorHolder?: { lastError?: Error }): (url: string) => ExaWebsocket {
         const tlsMode = connection.tlsMode || 'off';
 
         return (url: string) => {
             const rejectUnauthorized = tlsMode === 'full';
-            return new WebSocket(url, { rejectUnauthorized }) as ExaWebsocket;
+            const ws = new WebSocket(url, { rejectUnauthorized });
+            if (errorHolder) {
+                ws.on('error', (err: Error) => {
+                    errorHolder.lastError = err;
+                });
+            }
+
+            // Ping/pong keep-alive to detect dead connections proactively
+            let alive = true;
+            ws.on('pong', () => { alive = true; });
+            ws.on('open', () => {
+                const interval = setInterval(() => {
+                    if (ws.readyState !== WebSocket.OPEN) {
+                        clearInterval(interval);
+                        return;
+                    }
+                    if (!alive) {
+                        ws.terminate();
+                        clearInterval(interval);
+                        return;
+                    }
+                    alive = false;
+                    ws.ping();
+                }, PING_INTERVAL_MS);
+
+                ws.on('close', () => clearInterval(interval));
+            });
+
+            return ws as ExaWebsocket;
         };
     }
 
@@ -460,7 +530,7 @@ export class ConnectionManager {
                 socket.destroy();
                 reject(err);
             });
-            socket.setTimeout(10000, () => {
+            socket.setTimeout(TLS_PROBE_TIMEOUT_MS, () => {
                 socket.destroy();
                 reject(new Error('TLS connection timeout while checking certificate'));
             });
@@ -477,10 +547,7 @@ export class ConnectionManager {
             return;
         }
 
-        const [host, portStr] = connection.host.split(':');
-        const port = portStr ? parseInt(portStr) : 8563;
-
-        const serverFp = await this.getServerCertificateFingerprint(host, port);
+        const serverFp = await this.getServerCertificateFingerprint(connection.host, connection.port);
         const storedFp = connection.fingerprint ? normalizeFingerprint(connection.fingerprint) : '';
 
         if (!storedFp) {
@@ -491,21 +558,28 @@ export class ConnectionManager {
         }
     }
 
-    // Fingerprint validation is performed by testConnection() during add/update,
-    // so createDriver() does not re-validate.
     private async createDriver(connection: StoredConnection): Promise<ExasolDriver> {
-        const [host, portStr] = connection.host.split(':');
-        const port = portStr ? parseInt(portStr) : 8563;
-
-        const driver = new ExasolDriver(this.createWebSocketFactory(connection), {
-            host,
-            port,
+        await this.validateFingerprint(connection);
+        const wsErrors: { lastError?: Error } = {};
+        const driver = new ExasolDriver(this.createWebSocketFactory(connection, wsErrors), {
+            host: connection.host,
+            port: connection.port,
             user: connection.user,
             password: connection.password,
             encryption: true
         });
 
-        await driver.connect();
+        try {
+            await withTimeout(
+                driver.connect(),
+                CONNECTION_TIMEOUT_MS,
+                `Connection to ${connection.host}:${connection.port} timed out after ${CONNECTION_TIMEOUT_MS / 1000}s`
+            );
+        } catch (error) {
+            const wsMsg = wsErrors.lastError ? formatError(wsErrors.lastError) : '';
+            const driverMsg = formatError(error);
+            throw new Error(`Connection failed: ${wsMsg || driverMsg}`);
+        }
         return driver;
     }
 
@@ -513,17 +587,15 @@ export class ConnectionManager {
         // Validate fingerprint before attempting the full connection
         await this.validateFingerprint(connection);
 
-        const [host, portStr] = connection.host.split(':');
-        const port = portStr ? parseInt(portStr) : 8563;
-
         const outputChannel = getOutputChannel();
-        outputChannel.appendLine(`   Creating driver for ${host}:${port}`);
+        outputChannel.appendLine(`   Creating driver for ${connection.host}:${connection.port}`);
         outputChannel.appendLine(`   User: ${connection.user}`);
         outputChannel.appendLine(`   TLS mode: ${connection.tlsMode || 'off'}`);
 
-        const driver = new ExasolDriver(this.createWebSocketFactory(connection), {
-            host,
-            port,
+        const wsErrors: { lastError?: Error } = {};
+        const driver = new ExasolDriver(this.createWebSocketFactory(connection, wsErrors), {
+            host: connection.host,
+            port: connection.port,
             user: connection.user,
             password: connection.password,
             encryption: true
@@ -531,17 +603,26 @@ export class ConnectionManager {
 
         try {
             outputChannel.appendLine(`   Attempting to connect...`);
-            await driver.connect();
+            await withTimeout(
+                driver.connect(),
+                CONNECTION_TIMEOUT_MS,
+                `Connection to ${connection.host}:${connection.port} timed out after ${CONNECTION_TIMEOUT_MS / 1000}s`
+            );
             outputChannel.appendLine(`   Connection successful, closing test connection`);
             await driver.close();
         } catch (error) {
-            outputChannel.appendLine(`   Connection failed: ${error}`);
+            const wsMsg = wsErrors.lastError ? formatError(wsErrors.lastError) : '';
+            const driverMsg = formatError(error);
+            outputChannel.appendLine(`   Connection failed: ${driverMsg}`);
+            if (wsMsg) {
+                outputChannel.appendLine(`   Original WebSocket error: ${wsMsg}`);
+            }
             // Re-throw fingerprint errors directly so callers can handle TOFU
-            const fpError = ConnectionManager.extractFingerprintError(error);
+            const fpError = extractFingerprintError(error);
             if (fpError) {
                 throw fpError;
             }
-            throw new Error(`Connection test failed: ${error}`);
+            throw new Error(`Connection failed: ${wsMsg || driverMsg}`);
         }
     }
 

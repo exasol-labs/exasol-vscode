@@ -6,7 +6,8 @@
 export const TEST_CONFIG = {
     connection: {
         name: 'Test Connection',
-        host: 'localhost:8563',
+        host: 'localhost',
+        port: 8563,
         user: 'sys',
         password: 'exasol'
     },

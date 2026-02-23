@@ -3,14 +3,15 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "publisher": "exasol",
+  "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/exasol/exasol-vscode"
+    "url": "https://github.com/exasol-labs/exasol-vscode"
   },
   "engines": {
-    "vscode": "^1.105.0"
+    "vscode": "^1.109.0"
   },
   "categories": [
     "Programming Languages",
@@ -380,24 +381,27 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "check-types": "tsc --noEmit",
+    "package": "npm run check-types && node esbuild.mjs --production",
     "pretest": "npm run compile && npm run lint",
     "lint": "echo 'Linting skipped'",
     "test": "node ./out/test/runTest.js",
-    "test:unit": "npm run compile && mocha --require ts-node/register 'src/test/**/*.test.ts'",
-    "test:watch": "npm run compile && mocha --require ts-node/register --watch 'src/test/**/*.test.ts'"
+    "test:unit": "mocha --ui tdd --require ts-node/register 'src/test/unit/**/*.test.ts'",
+    "test:watch": "mocha --ui tdd --require ts-node/register --watch 'src/test/unit/**/*.test.ts'"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "^24.7.2",
-    "@types/vscode": "^1.105.0",
+    "@types/node": "^22",
+    "@types/vscode": "^1.109.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
-    "@vscode/vsce": "^3.6.2",
-    "glob": "^10.5.0",
-    "mocha": "^10.8.2",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.25.1",
+    "glob": "^13.0.0",
+    "mocha": "^11.7.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "vscode-test": "^1.6.1"
@@ -405,6 +409,6 @@
   "dependencies": {
     "@exasol/exasol-driver-ts": "^0.3.1",
     "@types/ws": "^8.18.1",
-    "ws": "^8.18.3"
+    "ws": "^8.19.0"
   }
 }

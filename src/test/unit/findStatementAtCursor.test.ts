@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { findStatementAtCursor } from '../utils';
+import { findStatementAtCursor } from '../../utils';
 
 suite('findStatementAtCursor', () => {
     test('should find first statement in multi-statement file', () => {
