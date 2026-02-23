@@ -27,6 +27,7 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - GitHub Actions Release: auto-builds VSIX and creates GitHub release on merge to main when version changes
 
 ### Changed
+- Bundled extension with esbuild: single JS output file, faster activation, smaller VSIX
 - Separated `host` and `port` into distinct fields in connection model (old format auto-migrated)
 - Connection tree and picker now display `host:port` instead of just `host`
 - Added 10-second connection timeout to prevent indefinite hangs on unreachable hosts

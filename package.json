@@ -381,14 +381,16 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "check-types": "tsc --noEmit",
+    "package": "npm run check-types && node esbuild.mjs --production",
     "pretest": "npm run compile && npm run lint",
     "lint": "echo 'Linting skipped'",
     "test": "node ./out/test/runTest.js",
-    "test:unit": "npm run compile && mocha --require ts-node/register 'src/test/**/*.test.ts'",
-    "test:watch": "npm run compile && mocha --require ts-node/register --watch 'src/test/**/*.test.ts'"
+    "test:unit": "mocha --ui tdd --require ts-node/register 'src/test/**/*.test.ts'",
+    "test:watch": "mocha --ui tdd --require ts-node/register --watch 'src/test/**/*.test.ts'"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -397,6 +399,7 @@
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.25.1",
     "glob": "^13.0.0",
     "mocha": "^11.7.1",
     "ts-node": "^10.9.2",
