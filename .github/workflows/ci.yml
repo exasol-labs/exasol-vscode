@@ -27,3 +27,9 @@ jobs:
 
       - name: Build VSIX
         run: npx vsce package --no-git-tag-version
+
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: exasol-vscode-vsix
+          path: '*.vsix'
