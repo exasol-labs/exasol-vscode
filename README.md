@@ -7,7 +7,7 @@ A Visual Studio Code extension for working with Exasol databases. Provides compr
 ## Quickstart:Launch with packaged extension (easiest)
 ### Step 1: Download
 
-Download `exasol-vscode-1.0.1.vsix` from the [latest release](https://github.com/exasol-labs/exasol-vscode/releases)
+Download the latest `.vsix` file from the [releases page](https://github.com/exasol-labs/exasol-vscode/releases)
 
 ### Step 2: Install
 **Option A: VS Code UI**
@@ -20,7 +20,7 @@ Download `exasol-vscode-1.0.1.vsix` from the [latest release](https://github.com
 
 **Option B: Command Line**
 ```bash
-code --install-extension exasol-vscode-1.0.1.vsix
+code --install-extension exasol-vscode-*.vsix
 ```
 
 ### Step Connect to Exasol
@@ -150,13 +150,13 @@ Clone this repo to your local machine then run:
    vsce package
    ```
 
-   This creates: `exasol-vscode-2.0.0.vsix`
+   This creates `exasol-vscode-X.Y.Z.vsix`
 
 3. **Install the Package**
 
 #### Option A: Via Command Line
 ```bash
-code --install-extension exasol-vscode-2.0.0.vsix
+code --install-extension exasol-vscode-X.Y.Z.vsix
 ```
 
 #### Option B: Via VS Code UI
@@ -164,7 +164,7 @@ code --install-extension exasol-vscode-2.0.0.vsix
 2. Go to Extensions view (`Cmd+Shift+X` or `Ctrl+Shift+X`)
 3. Click the "..." menu in the top right
 4. Select "Install from VSIX..."
-5. Choose `exasol-vscode-2.0.0.vsix`
+5. Choose the `.vsix` file
 6. Reload VS Code when prompted
 
 ## Commands
@@ -319,7 +319,7 @@ exasol-vscode/
 
 ```bash
 vsce package
-# Upload exasol-vscode-0.1.6.vsix to GitHub release
+# Upload .vsix to GitHub release
 ```
 
 **⚠️ CRITICAL:** Always use `vsce package` (NOT `--no-dependencies`). Extension requires `@exasol/exasol-driver-ts` and `ws` at runtime (~1.07 MB, 198 files).
