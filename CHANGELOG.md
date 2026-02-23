@@ -22,6 +22,10 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - License corrected from ISC to MIT in README (matching LICENSE file); added `"license": "MIT"` to package.json
 - Removed hardcoded version numbers from README to avoid stale references on each release
 
+### Added
+- GitHub Actions CI: type check + unit tests on every PR
+- GitHub Actions Release: auto-builds VSIX and creates GitHub release on merge to main when version changes
+
 ### Changed
 - Separated `host` and `port` into distinct fields in connection model (old format auto-migrated)
 - Connection tree and picker now display `host:port` instead of just `host`
