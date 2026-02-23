@@ -7,7 +7,7 @@ A Visual Studio Code extension for working with Exasol databases. Provides compr
 ## Quickstart:Launch with packaged extension (easiest)
 ### Step 1: Download
 
-Download `exasol-vscode-1.0.1.vsix` from the [latest release](https://github.com/exasol/exasol-vscode/releases)
+Download `exasol-vscode-1.0.1.vsix` from the [latest release](https://github.com/exasol-labs/exasol-vscode/releases)
 
 ### Step 2: Install
 **Option A: VS Code UI**
@@ -348,7 +348,7 @@ Extensions → "Exasol" → Gear icon → Uninstall
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/exasol/exasol-vscode/issues)
+- **Issues**: [GitHub Issues](https://github.com/exasol-labs/exasol-vscode/issues)
 - **Tests**: [src/test/README.md](src/test/README.md)
 - **AI Agents**: See [CLAUDE.md](CLAUDE.md) for AI coding agent instructions
 

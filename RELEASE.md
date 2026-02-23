@@ -53,7 +53,7 @@ code --install-extension exasol-vscode-X.Y.Z.vsix
 ## Create GitHub Release
 
 1. **Go to GitHub Releases:**
-   - Navigate to: https://github.com/exasol/exasol-vscode/releases/new
+   - Navigate to: https://github.com/exasol-labs/exasol-vscode/releases/new
 
 2. **Fill in release details:**
    - Tag version: `vX.Y.Z` (e.g., `v1.0.1`)
