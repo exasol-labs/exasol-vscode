@@ -389,8 +389,8 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "echo 'Linting skipped'",
     "test": "node ./out/test/runTest.js",
-    "test:unit": "mocha --ui tdd --require ts-node/register 'src/test/**/*.test.ts'",
-    "test:watch": "mocha --ui tdd --require ts-node/register --watch 'src/test/**/*.test.ts'"
+    "test:unit": "mocha --ui tdd --require ts-node/register 'src/test/unit/**/*.test.ts'",
+    "test:watch": "mocha --ui tdd --require ts-node/register --watch 'src/test/unit/**/*.test.ts'"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

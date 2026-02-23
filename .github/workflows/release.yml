@@ -28,7 +28,7 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Unit tests
-        run: npx mocha --ui tdd --require ts-node/register 'src/test/tlsValidation.test.ts'
+        run: npm run test:unit
 
       - name: Read version from package.json
         id: version

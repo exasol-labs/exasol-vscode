@@ -5,7 +5,7 @@ import {
     FingerprintRequiredError,
     FingerprintMismatchError,
     extractFingerprintError
-} from '../connectionTypes';
+} from '../../connectionTypes';
 
 suite('normalizeFingerprint', () => {
     test('strips colons', () => {
