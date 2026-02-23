@@ -10,7 +10,7 @@
     "url": "https://github.com/exasol/exasol-vscode"
   },
   "engines": {
-    "vscode": "^1.105.0"
+    "vscode": "^1.109.0"
   },
   "categories": [
     "Programming Languages",
@@ -391,13 +391,13 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "^24.7.2",
-    "@types/vscode": "^1.105.0",
+    "@types/node": "^22",
+    "@types/vscode": "^1.109.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
-    "@vscode/vsce": "^3.6.2",
-    "glob": "^10.5.0",
-    "mocha": "^10.8.2",
+    "@vscode/vsce": "^3.7.1",
+    "glob": "^13.0.0",
+    "mocha": "^11.7.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "vscode-test": "^1.6.1"
@@ -405,6 +405,6 @@
   "dependencies": {
     "@exasol/exasol-driver-ts": "^0.3.1",
     "@types/ws": "^8.18.1",
-    "ws": "^8.18.3"
+    "ws": "^8.19.0"
   }
 }
