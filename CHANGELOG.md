@@ -20,6 +20,7 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - Extracted connection types and utilities into `connectionTypes.ts` for testability
 
 ### Added
+- WebSocket ping/pong keep-alive (every 30s) to detect dead connections proactively instead of hanging for 30-75s on stale TCP sockets
 - 28 unit tests for TLS validation logic (fingerprint normalization, error formatting, error extraction)
 
 ## [1.1.0] - 2026-02-06

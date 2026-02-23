@@ -31,6 +31,12 @@ export {
 const CONNECTION_TIMEOUT_MS = 10_000;
 /** Timeout in ms for the TLS probe used to read the server certificate fingerprint. */
 const TLS_PROBE_TIMEOUT_MS = 5_000;
+/** Interval in ms between WebSocket ping probes to detect dead connections. */
+const PING_INTERVAL_MS = 30_000;
+/** Maximum number of attempts when (re)connecting to the server. */
+const RECONNECT_MAX_ATTEMPTS = 3;
+/** Delay in ms between reconnection attempts. */
+const RECONNECT_DELAY_MS = 2_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
     let timer: NodeJS.Timeout;
@@ -46,6 +52,7 @@ export class ConnectionManager {
     private connections: Map<string, StoredConnection> = new Map();
     private activeConnection: string | null = null;
     private drivers: Map<string, ExasolDriver> = new Map();
+    private connectingPromises: Map<string, Promise<ExasolDriver>> = new Map();
     private readonly connectionsChangedEmitter = new vscode.EventEmitter<void>();
     readonly onDidChangeConnections = this.connectionsChangedEmitter.event;
     private readonly activeConnectionChangedEmitter = new vscode.EventEmitter<StoredConnection | undefined>();
@@ -253,6 +260,8 @@ export class ConnectionManager {
             throw new Error(`Connection ${id} not found`);
         }
 
+        let isReconnect = false;
+
         // Check if we have an existing driver
         if (this.drivers.has(id)) {
             const driver = this.drivers.get(id)!;
@@ -267,12 +276,69 @@ export class ConnectionManager {
             const outputChannel = getOutputChannel();
             outputChannel.appendLine(`Connection ${connection.name} appears stale, reconnecting...`);
             this.drivers.delete(id);
+            isReconnect = true;
         }
 
-        // Create new driver
-        const driver = await this.createDriver(connection);
-        this.drivers.set(id, driver);
-        return driver;
+        // Dedup: if already connecting, wait for that promise
+        if (this.connectingPromises.has(id)) {
+            return this.connectingPromises.get(id)!;
+        }
+
+        // Connect with retry + progress
+        const promise = this.connectWithRetry(connection, isReconnect);
+        this.connectingPromises.set(id, promise);
+        try {
+            const driver = await promise;
+            this.drivers.set(id, driver);
+            return driver;
+        } finally {
+            this.connectingPromises.delete(id);
+        }
+    }
+
+    private async connectWithRetry(connection: StoredConnection, isReconnect: boolean): Promise<ExasolDriver> {
+        const title = isReconnect
+            ? `Reconnecting to ${connection.name}...`
+            : `Connecting to ${connection.name}...`;
+
+        return await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title, cancellable: true },
+            async (_progress, token) => {
+                const outputChannel = getOutputChannel();
+                for (let attempt = 1; attempt <= RECONNECT_MAX_ATTEMPTS; attempt++) {
+                    if (token.isCancellationRequested) {
+                        throw new Error('Connection cancelled by user');
+                    }
+                    try {
+                        if (attempt > 1) {
+                            _progress.report({ message: `Attempt ${attempt}/${RECONNECT_MAX_ATTEMPTS}...` });
+                        }
+                        return await this.createDriver(connection);
+                    } catch (error) {
+                        // Fingerprint errors are never retriable — they require user action
+                        if (extractFingerprintError(error)) {
+                            throw error;
+                        }
+                        outputChannel.appendLine(
+                            `Connection attempt ${attempt}/${RECONNECT_MAX_ATTEMPTS} failed: ${formatError(error)}`
+                        );
+                        if (attempt === RECONNECT_MAX_ATTEMPTS) {
+                            throw error;
+                        }
+                        // Wait before next attempt
+                        await new Promise<void>((resolve) => {
+                            const timer = setTimeout(resolve, RECONNECT_DELAY_MS);
+                            token.onCancellationRequested(() => {
+                                clearTimeout(timer);
+                                resolve();
+                            });
+                        });
+                    }
+                }
+                // Unreachable, but satisfies TypeScript
+                throw new Error('Connection failed');
+            }
+        );
     }
 
     async resetDriver(connectionId?: string): Promise<void> {
@@ -331,15 +397,19 @@ export class ConnectionManager {
             // Check if it's a connection-related error that requires reconnection
             if (this.isConnectionError(error)) {
                 const id = connectionId || this.activeConnection;
-                if (id) {
+                if (id && this.drivers.has(id)) {
+                    // Only retry if a driver existed — meaning the query itself failed
+                    // on an established connection. If no driver exists, getDriver()/
+                    // connectWithRetry() already exhausted its retries; retrying here
+                    // would just double-stack connection attempts.
                     const outputChannel = getOutputChannel();
                     outputChannel.appendLine(`Connection error detected, resetting driver and retrying...`);
 
                     // Reset driver and retry once
                     await this.resetDriver(id);
 
-                    // Wait a bit for the connection to stabilize
-                    await new Promise(resolve => setTimeout(resolve, 100));
+                    // Wait for the connection to stabilize before retry
+                    await new Promise(resolve => setTimeout(resolve, 1_000));
 
                     return await fn();
                 }
@@ -414,6 +484,28 @@ export class ConnectionManager {
                     errorHolder.lastError = err;
                 });
             }
+
+            // Ping/pong keep-alive to detect dead connections proactively
+            let alive = true;
+            ws.on('pong', () => { alive = true; });
+            ws.on('open', () => {
+                const interval = setInterval(() => {
+                    if (ws.readyState !== WebSocket.OPEN) {
+                        clearInterval(interval);
+                        return;
+                    }
+                    if (!alive) {
+                        ws.terminate();
+                        clearInterval(interval);
+                        return;
+                    }
+                    alive = false;
+                    ws.ping();
+                }, PING_INTERVAL_MS);
+
+                ws.on('close', () => clearInterval(interval));
+            });
+
             return ws as ExaWebsocket;
         };
     }
