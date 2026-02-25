@@ -38,8 +38,10 @@ export class SessionManager {
         }
 
         try {
-            const driver = await this.connectionManager.getDriver();
-            await executeWithoutResult(driver, `OPEN SCHEMA ${schemaName}`);
+            await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver();
+                await executeWithoutResult(driver, `OPEN SCHEMA ${schemaName}`);
+            });
             this.currentSchema = schemaName;
             await this.saveSession();
             this._onDidChangeSession.fire();
@@ -61,9 +63,11 @@ export class SessionManager {
         }
 
         try {
-            const driver = await this.connectionManager.getDriver();
-            const result = await driver.query('SELECT CURRENT_SCHEMA');
-            const rows = getRowsFromResult(result);
+            const rows = await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver();
+                const result = await driver.query('SELECT CURRENT_SCHEMA');
+                return getRowsFromResult(result);
+            });
             if (rows.length > 0) {
                 this.currentSchema = rows[0].CURRENT_SCHEMA;
                 await this.saveSession();
