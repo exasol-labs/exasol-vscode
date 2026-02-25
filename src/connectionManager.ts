@@ -483,7 +483,7 @@ export class ConnectionManager {
      * Callers queue behind each other so only one query runs at a time,
      * preventing E-EDJS-8 "pool reached its limit" errors.
      */
-    runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
         const prev = this.queryMutex;
         let resolve!: () => void;
         this.queryMutex = new Promise<void>(r => { resolve = r; });

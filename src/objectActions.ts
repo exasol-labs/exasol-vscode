@@ -11,11 +11,6 @@ export class ObjectActions {
         private extensionUri: vscode.Uri
     ) {}
 
-    /** @deprecated Use connectionManager.executeWithRetry instead */
-    private async executeWithRetry<T>(fn: () => Promise<T>, connectionId: string): Promise<T> {
-        return this.connectionManager.executeWithRetry(fn, connectionId);
-    }
-
     private extractColumnMetadata(columnsMeta: any[]): ColumnMetadata[] {
         return columnsMeta.map((col: any) => {
             const name = col.name ?? col.COLUMN_NAME ?? col;
@@ -54,7 +49,7 @@ export class ObjectActions {
                     cancellable: false
                 },
                 async () => {
-                    const queryResult = await this.executeWithRetry(async () => {
+                    const queryResult = await this.connectionManager.executeWithRetry(async () => {
                         const query = `SELECT * FROM "${schemaName}"."${tableName}" LIMIT ${limit}`;
                         const driver = await this.connectionManager.getDriver(connection.id);
 
@@ -199,7 +194,7 @@ export class ObjectActions {
 
     async describeTable(connection: StoredConnection, schemaName: string, tableName: string) {
         try {
-            const queryResult = await this.executeWithRetry(async () => {
+            const queryResult = await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id);
 
                 const query = `

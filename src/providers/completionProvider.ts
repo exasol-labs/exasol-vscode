@@ -385,7 +385,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                     WHERE COLUMN_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
                     ORDER BY COLUMN_SCHEMA, COLUMN_TABLE, COLUMN_ORDINAL_POSITION
                 `;
-                let columnsByTable = new Map<string, string[]>();
+                const columnsByTable = new Map<string, string[]>();
                 try {
                     const colResult = await this.safeQuery(driver, allColumnsQuery);
                     const colRows = getRowsFromResult(colResult);
