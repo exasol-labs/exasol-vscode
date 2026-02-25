@@ -376,33 +376,36 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
                 const result = await this.safeQuery(driver, tablesQuery);
                 const tableRows = getRowsFromResult(result);
-                const objects: DatabaseObject[] = [];
 
-                for (const row of tableRows) {
-                    const obj: DatabaseObject = {
-                        schema: row.TABLE_SCHEMA,
-                        name: row.TABLE_NAME,
-                        type: row.OBJECT_TYPE === 'view' ? 'view' : 'table'
-                    };
-
-                    // Fetch columns for this object
-                    try {
-                        const columnsQuery = `
-                            SELECT COLUMN_NAME
-                            FROM SYS.EXA_ALL_COLUMNS
-                            WHERE COLUMN_SCHEMA = '${row.TABLE_SCHEMA}'
-                            AND COLUMN_TABLE = '${row.TABLE_NAME}'
-                            ORDER BY COLUMN_ORDINAL_POSITION
-                        `;
-                        const colResult = await this.safeQuery(driver, columnsQuery);
-                        const columnRows = getRowsFromResult(colResult);
-                        obj.columns = columnRows.map((r: any) => r.COLUMN_NAME);
-                    } catch (error) {
-                        console.error(`Failed to fetch columns for ${row.TABLE_NAME}:`, error);
+                // Fetch ALL columns in one bulk query instead of N per-table queries.
+                // This reduces mutex hold time from N+1 queries to just 2.
+                const allColumnsQuery = `
+                    SELECT COLUMN_SCHEMA, COLUMN_TABLE, COLUMN_NAME
+                    FROM SYS.EXA_ALL_COLUMNS
+                    WHERE COLUMN_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
+                    ORDER BY COLUMN_SCHEMA, COLUMN_TABLE, COLUMN_ORDINAL_POSITION
+                `;
+                let columnsByTable = new Map<string, string[]>();
+                try {
+                    const colResult = await this.safeQuery(driver, allColumnsQuery);
+                    const colRows = getRowsFromResult(colResult);
+                    for (const row of colRows) {
+                        const key = `${row.COLUMN_SCHEMA}.${row.COLUMN_TABLE}`;
+                        if (!columnsByTable.has(key)) {
+                            columnsByTable.set(key, []);
+                        }
+                        columnsByTable.get(key)!.push(row.COLUMN_NAME);
                     }
-
-                    objects.push(obj);
+                } catch (error) {
+                    console.error('Failed to bulk-fetch columns:', error);
                 }
+
+                const objects: DatabaseObject[] = tableRows.map((row: any) => ({
+                    schema: row.TABLE_SCHEMA,
+                    name: row.TABLE_NAME,
+                    type: row.OBJECT_TYPE === 'view' ? 'view' : 'table',
+                    columns: columnsByTable.get(`${row.TABLE_SCHEMA}.${row.TABLE_NAME}`)
+                }));
 
                 // Update cache
                 this.cache.set(connectionId, objects);

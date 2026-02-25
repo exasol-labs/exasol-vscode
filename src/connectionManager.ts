@@ -431,27 +431,27 @@ export class ConnectionManager {
             return result;
         } catch (error) {
             // Check if it's a connection-related error that requires reconnection
-            if (this.isConnectionError(error)) {
-                if (id && this.drivers.has(id)) {
-                    // Only retry if a driver existed — meaning the query itself failed
-                    // on an established connection. If no driver exists, getDriver()/
-                    // connectWithRetry() already exhausted its retries; retrying here
-                    // would just double-stack connection attempts.
-                    const outputChannel = getOutputChannel();
-                    outputChannel.appendLine(`Connection error detected, resetting driver and retrying...`);
+            if (this.isConnectionError(error) && id && this.drivers.has(id)) {
+                // Only retry if a driver existed — meaning the query itself failed
+                // on an established connection. If no driver exists, getDriver()/
+                // connectWithRetry() already exhausted its retries; retrying here
+                // would just double-stack connection attempts.
+                const outputChannel = getOutputChannel();
+                outputChannel.appendLine(`Connection error detected, retrying...`);
 
-                    // Reset driver and retry once
-                    await this.resetDriver(id);
+                // Clear stale caches so getDriver() validates properly on retry.
+                // We intentionally do NOT call resetDriver() here — we're outside
+                // the mutex, so another caller may have already reconnected. Calling
+                // resetDriver() would destroy that fresh connection. Instead, let
+                // getDriver() (inside fn) validate and reconnect if needed.
+                this.recentFailures.delete(id);
+                this.lastSuccessfulQuery.delete(id);
 
-                    // Wait for the connection to stabilize before retry
-                    await new Promise(resolve => setTimeout(resolve, 1_000));
-
-                    const result = await this.runExclusive(fn);
-                    if (id) {
-                        this.lastSuccessfulQuery.set(id, Date.now());
-                    }
-                    return result;
+                const result = await this.runExclusive(fn);
+                if (id) {
+                    this.lastSuccessfulQuery.set(id, Date.now());
                 }
+                return result;
             }
             throw error;
         }
