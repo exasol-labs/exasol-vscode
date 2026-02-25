@@ -7,6 +7,7 @@ All notable changes to the "Exasol" extension will be documented in this file.
 ### Fixed
 - Serialize driver access with a query mutex to prevent E-EDJS-8 pool exhaustion on concurrent calls
 - Close stale driver on validation failure instead of leaking WebSocket
+- Stale driver close now has a 2s timeout to prevent mutex deadlock when `pool.drain()` hangs on a dead WebSocket
 - Retry path no longer destroys a freshly-reconnected driver (race condition fix)
 - User-cancelled queries no longer trigger 5s failure cooldown
 

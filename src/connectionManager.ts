@@ -294,7 +294,7 @@ export class ConnectionManager {
             outputChannel.appendLine(`Connection ${connection.name} appears stale, reconnecting...`);
             this.drivers.delete(id);
             this.lastSuccessfulQuery.delete(id);
-            try { await driver.close(); } catch { /* ignore close errors */ }
+            try { await withTimeout(driver.close(), 2000, 'Driver close timeout'); } catch { /* ignore close errors */ }
             isReconnect = true;
         }
 
