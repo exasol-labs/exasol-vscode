@@ -2,6 +2,19 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.1.2] - 2026-02-25
+
+### Fixed
+- Serialize driver access with a query mutex to prevent E-EDJS-8 pool exhaustion on concurrent calls
+- Close stale driver on validation failure instead of leaking WebSocket
+- Stale driver close now has a 2s timeout to prevent mutex deadlock when `pool.drain()` hangs on a dead WebSocket
+- Retry path no longer destroys a freshly-reconnected driver (race condition fix)
+- User-cancelled queries no longer trigger 5s failure cooldown
+
+### Changed
+- Skip redundant `SELECT 1` validation when a query succeeded within the last 10s
+- Autocompletion loads all column metadata in a single bulk query instead of one per table
+
 ## [1.1.1] - 2026-02-23
 
 ### Added

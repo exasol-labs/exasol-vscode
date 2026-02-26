@@ -37,6 +37,10 @@ const PING_INTERVAL_MS = 30_000;
 const RECONNECT_MAX_ATTEMPTS = 3;
 /** Delay in ms between reconnection attempts. */
 const RECONNECT_DELAY_MS = 2_000;
+/** Cooldown in ms after a connection failure — subsequent callers get the cached error instead of spawning new attempts. */
+const FAILURE_COOLDOWN_MS = 5_000;
+/** Skip SELECT 1 validation if a query succeeded within this window (ms). */
+const VALIDATION_SKIP_MS = 10_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
     let timer: NodeJS.Timeout;
@@ -53,6 +57,12 @@ export class ConnectionManager {
     private activeConnection: string | null = null;
     private drivers: Map<string, ExasolDriver> = new Map();
     private connectingPromises: Map<string, Promise<ExasolDriver>> = new Map();
+    /** Tracks recent connection failures to prevent cascading reconnection attempts. */
+    private recentFailures: Map<string, { error: Error; timestamp: number }> = new Map();
+    /** Timestamp of the last successful driver.query() per connection, used to skip redundant validation. */
+    private lastSuccessfulQuery: Map<string, number> = new Map();
+    /** Serializes driver access (validation + query) to prevent pool exhaustion. */
+    private queryMutex: Promise<void> = Promise.resolve();
     private readonly connectionsChangedEmitter = new vscode.EventEmitter<void>();
     readonly onDidChangeConnections = this.connectionsChangedEmitter.event;
     private readonly activeConnectionChangedEmitter = new vscode.EventEmitter<StoredConnection | undefined>();
@@ -260,6 +270,13 @@ export class ConnectionManager {
             throw new Error(`Connection ${id} not found`);
         }
 
+        // If a recent connection attempt failed, re-throw the cached error
+        // instead of spawning another reconnection sequence
+        const recent = this.recentFailures.get(id);
+        if (recent && Date.now() - recent.timestamp < FAILURE_COOLDOWN_MS) {
+            throw recent.error;
+        }
+
         let isReconnect = false;
 
         // Check if we have an existing driver
@@ -272,10 +289,12 @@ export class ConnectionManager {
                 return driver;
             }
 
-            // Connection is stale, remove it and create a new one
+            // Connection is stale — close old driver to free the WebSocket, then reconnect
             const outputChannel = getOutputChannel();
             outputChannel.appendLine(`Connection ${connection.name} appears stale, reconnecting...`);
             this.drivers.delete(id);
+            this.lastSuccessfulQuery.delete(id);
+            try { await withTimeout(driver.close(), 2000, 'Driver close timeout'); } catch { /* ignore close errors */ }
             isReconnect = true;
         }
 
@@ -290,7 +309,15 @@ export class ConnectionManager {
         try {
             const driver = await promise;
             this.drivers.set(id, driver);
+            this.recentFailures.delete(id);
             return driver;
+        } catch (error) {
+            const err = error instanceof Error ? error : new Error(String(error));
+            // Don't cache intentional user cancellation — they should be able to retry immediately
+            if (!err.message.includes('cancelled by user')) {
+                this.recentFailures.set(id, { error: err, timestamp: Date.now() });
+            }
+            throw err;
         } finally {
             this.connectingPromises.delete(id);
         }
@@ -347,6 +374,9 @@ export class ConnectionManager {
             return;
         }
 
+        this.recentFailures.delete(id);
+        this.lastSuccessfulQuery.delete(id);
+
         const driver = this.drivers.get(id);
         if (driver) {
             try {
@@ -391,28 +421,37 @@ export class ConnectionManager {
      * @returns The result of the function
      */
     async executeWithRetry<T>(fn: () => Promise<T>, connectionId?: string): Promise<T> {
+        const id = connectionId || this.activeConnection;
         try {
-            return await fn();
+            const result = await this.runExclusive(fn);
+            // Track successful query so validateDriver can skip SELECT 1
+            if (id) {
+                this.lastSuccessfulQuery.set(id, Date.now());
+            }
+            return result;
         } catch (error) {
             // Check if it's a connection-related error that requires reconnection
-            if (this.isConnectionError(error)) {
-                const id = connectionId || this.activeConnection;
-                if (id && this.drivers.has(id)) {
-                    // Only retry if a driver existed — meaning the query itself failed
-                    // on an established connection. If no driver exists, getDriver()/
-                    // connectWithRetry() already exhausted its retries; retrying here
-                    // would just double-stack connection attempts.
-                    const outputChannel = getOutputChannel();
-                    outputChannel.appendLine(`Connection error detected, resetting driver and retrying...`);
+            if (this.isConnectionError(error) && id && this.drivers.has(id)) {
+                // Only retry if a driver existed — meaning the query itself failed
+                // on an established connection. If no driver exists, getDriver()/
+                // connectWithRetry() already exhausted its retries; retrying here
+                // would just double-stack connection attempts.
+                const outputChannel = getOutputChannel();
+                outputChannel.appendLine(`Connection error detected, retrying...`);
 
-                    // Reset driver and retry once
-                    await this.resetDriver(id);
+                // Clear stale caches so getDriver() validates properly on retry.
+                // We intentionally do NOT call resetDriver() here — we're outside
+                // the mutex, so another caller may have already reconnected. Calling
+                // resetDriver() would destroy that fresh connection. Instead, let
+                // getDriver() (inside fn) validate and reconnect if needed.
+                this.recentFailures.delete(id);
+                this.lastSuccessfulQuery.delete(id);
 
-                    // Wait for the connection to stabilize before retry
-                    await new Promise(resolve => setTimeout(resolve, 1_000));
-
-                    return await fn();
+                const result = await this.runExclusive(fn);
+                if (id) {
+                    this.lastSuccessfulQuery.set(id, Date.now());
                 }
+                return result;
             }
             throw error;
         }
@@ -439,28 +478,50 @@ export class ConnectionManager {
         }
     }
 
+    /**
+     * Serializes access to the driver's single-connection pool.
+     * Callers queue behind each other so only one query runs at a time,
+     * preventing E-EDJS-8 "pool reached its limit" errors.
+     */
+    private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+        const prev = this.queryMutex;
+        let resolve!: () => void;
+        this.queryMutex = new Promise<void>(r => { resolve = r; });
+        return prev.then(fn).finally(resolve);
+    }
+
     private async validateDriver(driver: ExasolDriver, connectionId: string): Promise<boolean> {
         try {
-            // FAST CHECK: First check WebSocket state for instant detection
+            // FAST CHECK: WebSocket state for instant detection of dead connections
             if (!this.isWebSocketHealthy(driver)) {
                 const outputChannel = getOutputChannel();
                 outputChannel.appendLine(`WebSocket is closed or closing - connection is stale`);
                 return false;
             }
 
+            // SKIP expensive SELECT 1 if a query succeeded recently.
+            // The ping/pong keep-alive (30s) terminates dead WebSockets proactively,
+            // so the fast check above catches most stale connections. The SELECT 1
+            // only helps detect server-side session expiry, which is rare within
+            // the skip window.
+            const lastSuccess = this.lastSuccessfulQuery.get(connectionId);
+            if (lastSuccess && Date.now() - lastSuccess < VALIDATION_SKIP_MS) {
+                return true;
+            }
+
             const config = vscode.workspace.getConfiguration('exasol');
-            const validationTimeout = config.get<number>('connectionValidationTimeout', 1) * 1000; // Convert to milliseconds
+            const validationTimeout = config.get<number>('connectionValidationTimeout', 1) * 1000;
 
-            // Run a simple query with a short timeout to check if connection is alive
-            const validationPromise = driver.query('SELECT 1');
-            const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => reject(new Error('Validation timeout')), validationTimeout);
-            });
-
-            await Promise.race([validationPromise, timeoutPromise]);
+            // No mutex here — callers (executeWithRetry) already hold the mutex,
+            // so this runs inside the exclusive section.
+            await withTimeout(
+                driver.query('SELECT 1'),
+                validationTimeout,
+                'Validation timeout'
+            );
+            this.lastSuccessfulQuery.set(connectionId, Date.now());
             return true;
         } catch (error) {
-            // Connection is not responsive, consider it stale
             const outputChannel = getOutputChannel();
             outputChannel.appendLine(`Connection validation failed: ${error}`);
             return false;
@@ -631,5 +692,7 @@ export class ConnectionManager {
             await driver.close();
         }
         this.drivers.clear();
+        this.recentFailures.clear();
+        this.lastSuccessfulQuery.clear();
     }
 }

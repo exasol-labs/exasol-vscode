@@ -11,22 +11,6 @@ export class ObjectActions {
         private extensionUri: vscode.Uri
     ) {}
 
-    private async executeWithRetry<T>(fn: () => Promise<T>, connectionId: string): Promise<T> {
-        try {
-            return await fn();
-        } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error);
-            if (errorMsg.includes('E-EDJS-8') || errorMsg.includes('pool reached its limit')) {
-                // Reset driver and retry once
-                await this.connectionManager.resetDriver(connectionId);
-                // Wait a bit for the pool to stabilize
-                await new Promise(resolve => setTimeout(resolve, 100));
-                return await fn();
-            }
-            throw error;
-        }
-    }
-
     private extractColumnMetadata(columnsMeta: any[]): ColumnMetadata[] {
         return columnsMeta.map((col: any) => {
             const name = col.name ?? col.COLUMN_NAME ?? col;
@@ -65,7 +49,7 @@ export class ObjectActions {
                     cancellable: false
                 },
                 async () => {
-                    const queryResult = await this.executeWithRetry(async () => {
+                    const queryResult = await this.connectionManager.executeWithRetry(async () => {
                         const query = `SELECT * FROM "${schemaName}"."${tableName}" LIMIT ${limit}`;
                         const driver = await this.connectionManager.getDriver(connection.id);
 
@@ -102,19 +86,18 @@ export class ObjectActions {
 
     async showTableDDL(connection: StoredConnection, schemaName: string, tableName: string) {
         try {
-            const driver = await this.connectionManager.getDriver(connection.id);
-
-            // Get table DDL using Exasol system tables
-            const query = `
-                SELECT COLUMN_NAME, COLUMN_TYPE, COLUMN_DEFAULT, COLUMN_IS_NULLABLE, COLUMN_COMMENT
-                FROM SYS.EXA_ALL_COLUMNS
-                WHERE COLUMN_SCHEMA = '${schemaName}'
-                AND COLUMN_TABLE = '${tableName}'
-                ORDER BY COLUMN_ORDINAL_POSITION
-            `;
-
-            const result = await driver.query(query);
-            const rows = getRowsFromResult(result);
+            const rows = await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connection.id);
+                const query = `
+                    SELECT COLUMN_NAME, COLUMN_TYPE, COLUMN_DEFAULT, COLUMN_IS_NULLABLE, COLUMN_COMMENT
+                    FROM SYS.EXA_ALL_COLUMNS
+                    WHERE COLUMN_SCHEMA = '${schemaName}'
+                    AND COLUMN_TABLE = '${tableName}'
+                    ORDER BY COLUMN_ORDINAL_POSITION
+                `;
+                const result = await driver.query(query);
+                return getRowsFromResult(result);
+            }, connection.id);
 
             // Build DDL
             let ddl = `CREATE TABLE "${schemaName}"."${tableName}" (\n`;
@@ -140,19 +123,17 @@ export class ObjectActions {
 
     async showViewDDL(connection: StoredConnection, schemaName: string, viewName: string) {
         try {
-            const driver = await this.connectionManager.getDriver(connection.id);
-
-            // Get view definition
-            const query = `
-                SELECT VIEW_TEXT
-                FROM SYS.EXA_ALL_VIEWS
-                WHERE VIEW_SCHEMA = '${schemaName}'
-                AND VIEW_NAME = '${viewName}'
-            `;
-
-            const result = await driver.query(query);
-
-            const rows = getRowsFromResult(result);
+            const rows = await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connection.id);
+                const query = `
+                    SELECT VIEW_TEXT
+                    FROM SYS.EXA_ALL_VIEWS
+                    WHERE VIEW_SCHEMA = '${schemaName}'
+                    AND VIEW_NAME = '${viewName}'
+                `;
+                const result = await driver.query(query);
+                return getRowsFromResult(result);
+            }, connection.id);
 
             if (rows.length > 0) {
                 const viewText = rows[0].VIEW_TEXT;
@@ -174,19 +155,19 @@ export class ObjectActions {
 
     async generateSelectStatement(connection: StoredConnection, schemaName: string, tableName: string, type: 'table' | 'view') {
         try {
-            const driver = await this.connectionManager.getDriver(connection.id);
+            const rows = await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connection.id);
+                const query = `
+                    SELECT COLUMN_NAME
+                    FROM SYS.EXA_ALL_COLUMNS
+                    WHERE COLUMN_SCHEMA = '${schemaName}'
+                    AND COLUMN_TABLE = '${tableName}'
+                    ORDER BY COLUMN_ORDINAL_POSITION
+                `;
+                const result = await driver.query(query);
+                return getRowsFromResult(result);
+            }, connection.id);
 
-            // Get columns
-            const query = `
-                SELECT COLUMN_NAME
-                FROM SYS.EXA_ALL_COLUMNS
-                WHERE COLUMN_SCHEMA = '${schemaName}'
-                AND COLUMN_TABLE = '${tableName}'
-                ORDER BY COLUMN_ORDINAL_POSITION
-            `;
-
-            const result = await driver.query(query);
-            const rows = getRowsFromResult(result);
             const columnNames = Array.from(new Set(rows.map((row: any) => row.COLUMN_NAME)));
             const columns = columnNames.map((name: string) => `    "${name}"`).join(',\n');
 
@@ -213,7 +194,7 @@ export class ObjectActions {
 
     async describeTable(connection: StoredConnection, schemaName: string, tableName: string) {
         try {
-            const queryResult = await this.executeWithRetry(async () => {
+            const queryResult = await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id);
 
                 const query = `
