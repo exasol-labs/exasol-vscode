@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionManager } from '../connectionManager';
+import { ConnectionManager, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
 import { getRowsFromResult } from '../utils';
 
@@ -162,7 +162,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                 const rows = getRowsFromResult(result);
                 this.reservedKeywords = new Set(rows.map((r: any) => r.KEYWORD.toUpperCase()));
                 this.reservedKeywordsLoaded = true;
-            }, connectionId, { timeoutMs: 30_000 });
+            }, connectionId, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
         } catch (error) {
             console.error('Failed to load reserved keywords:', error);
             // Fallback to common reserved keywords
@@ -371,7 +371,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                 // Cache schemas
                 this.schemasCache.set(connectionId, schemas);
                 return schemas;
-            }, connectionId, { timeoutMs: 30_000 });
+            }, connectionId, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
         } catch (error) {
             console.error('Failed to fetch schemas:', error);
             return [];
@@ -526,7 +526,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                 this.cacheExpiry.set(connectionId, Date.now() + this.CACHE_TTL);
 
                 return objects;
-            }, connectionId, { timeoutMs: 30_000 });
+            }, connectionId, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
         } catch (error) {
             console.error('Failed to fetch database objects:', error);
             return [];

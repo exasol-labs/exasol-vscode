@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionManager } from './connectionManager';
+import { ConnectionManager, BACKGROUND_QUERY_TIMEOUT_MS } from './connectionManager';
 import { executeWithoutResult, getRowsFromResult } from './utils';
 
 export class SessionManager {
@@ -41,7 +41,7 @@ export class SessionManager {
             await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver();
                 await executeWithoutResult(driver, `OPEN SCHEMA ${schemaName}`);
-            }, undefined, { timeoutMs: 30_000 });
+            }, undefined, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
             this.currentSchema = schemaName;
             await this.saveSession();
             this._onDidChangeSession.fire();
@@ -67,7 +67,7 @@ export class SessionManager {
                 const driver = await this.connectionManager.getDriver();
                 const result = await driver.query('SELECT CURRENT_SCHEMA');
                 return getRowsFromResult(result);
-            }, undefined, { timeoutMs: 30_000 });
+            }, undefined, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
             if (rows.length > 0) {
                 this.currentSchema = rows[0].CURRENT_SCHEMA;
                 await this.saveSession();

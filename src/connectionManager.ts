@@ -41,6 +41,8 @@ const RECONNECT_DELAY_MS = 2_000;
 const FAILURE_COOLDOWN_MS = 5_000;
 /** Skip SELECT 1 validation if a query succeeded within this window (ms). */
 const VALIDATION_SKIP_MS = 10_000;
+/** Timeout in ms for background operations (tree, completion, session) to prevent mutex deadlock. */
+export const BACKGROUND_QUERY_TIMEOUT_MS = 30_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
     let timer: NodeJS.Timeout;

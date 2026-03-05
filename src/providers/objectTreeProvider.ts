@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionManager, StoredConnection } from '../connectionManager';
+import { ConnectionManager, StoredConnection, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
 import { getRowsFromResult, escapeSqlString } from '../utils';
 import { ObjectTreeItemType, getNodeTypeConfig } from './objectTreeTypes';
@@ -675,7 +675,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 outputChannel?.appendLine(`   Schema query returned ${rows.length} rows`);
                 return rows.map((row: any) => ({ name: row.SCHEMA_NAME }));
             }
-            }, connection.id, { timeoutMs: 30_000 });
+            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
         } catch (error) {
             outputChannel?.appendLine(`   Error fetching schemas: ${error}`);
             throw new Error(`Failed to fetch schemas: ${error}`);
@@ -784,7 +784,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             }
 
                 throw lastError ?? new Error('Unknown error fetching tables');
-            }, connection.id, { timeoutMs: 30_000 });
+            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
         } catch (error) {
             outputChannel?.appendLine(`   Error in fetchTables: ${error}`);
             throw new Error(`Failed to fetch tables: ${error}`);
@@ -878,7 +878,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             }
 
                 throw lastError ?? new Error('Unknown error fetching views');
-            }, connection.id, { timeoutMs: 30_000 });
+            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
         } catch (error) {
             outputChannel?.appendLine(`   Error in fetchViews: ${error}`);
             outputChannel?.appendLine(`   Error stack: ${(error as Error).stack}`);
@@ -910,7 +910,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     type: row.COLUMN_TYPE,
                     nullable: row.COLUMN_IS_NULLABLE
                 }));
-            }, connection.id, { timeoutMs: 30_000 });
+            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
         } catch (error) {
             throw new Error(`Failed to fetch columns: ${error}`);
         }
