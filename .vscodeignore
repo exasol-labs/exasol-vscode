@@ -17,3 +17,5 @@ node_modules/**/.vscode/**
 CLAUDE.md
 .claude/**
 specs/**
+.serena/**
+vendor/**

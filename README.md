@@ -4,26 +4,24 @@ A Visual Studio Code extension for working with Exasol databases. Provides compr
 
 ⚠️ Note: this extension is currently a **community-supported prototype** and not officially supported by Exasol. Exasol cannot guarantee the functionality and performance of this extension. 
 
-## Quickstart:Launch with packaged extension (easiest)
-### Step 1: Download
+## Quickstart
 
-Download `exasol-vscode-1.0.1.vsix` from the [latest release](https://github.com/exasol/exasol-vscode/releases)
+### Step 1: Install
 
-### Step 2: Install
-**Option A: VS Code UI**
+**From the Marketplace (recommended)**
 1. Open VS Code
 2. Extensions view: `Cmd+Shift+X` (Mac) or `Ctrl+Shift+X` (Windows/Linux)
-3. Click "..." menu (top right)
-4. Select "Install from VSIX..."
-5. Choose the downloaded `.vsix` file
-6. Reload if/when prompted
+3. Search for "Exasol"
+4. Click **Install**
 
-**Option B: Command Line**
+**Or from VSIX**
+
+Download the latest `.vsix` from the [releases page](https://github.com/exasol-labs/exasol-vscode/releases), then:
 ```bash
-code --install-extension exasol-vscode-1.0.1.vsix
+code --install-extension exasol-vscode-<version>.vsix
 ```
 
-### Step Connect to Exasol
+### Step 3: Connect to Exasol
 
 1. **Add Connection**
    - Click the Exasol icon ("X") in the left sidebar under Extensions
@@ -150,22 +148,13 @@ Clone this repo to your local machine then run:
    vsce package
    ```
 
-   This creates: `exasol-vscode-2.0.0.vsix`
+   This creates `exasol-vscode-<version>.vsix`
 
 3. **Install the Package**
 
-#### Option A: Via Command Line
 ```bash
-code --install-extension exasol-vscode-2.0.0.vsix
+code --install-extension exasol-vscode-<version>.vsix
 ```
-
-#### Option B: Via VS Code UI
-1. Open VS Code
-2. Go to Extensions view (`Cmd+Shift+X` or `Ctrl+Shift+X`)
-3. Click the "..." menu in the top right
-4. Select "Install from VSIX..."
-5. Choose `exasol-vscode-2.0.0.vsix`
-6. Reload VS Code when prompted
 
 ## Commands
 
@@ -348,7 +337,7 @@ Extensions → "Exasol" → Gear icon → Uninstall
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/exasol/exasol-vscode/issues)
+- **Issues**: [GitHub Issues](https://github.com/exasol-labs/exasol-vscode/issues)
 - **Tests**: [src/test/README.md](src/test/README.md)
 - **AI Agents**: [.github/copilot-instructions.md](.github/copilot-instructions.md)
 
@@ -362,6 +351,6 @@ Contributions welcome! Please submit issues or pull requests.
 
 ## License
 
-ISC
+MIT
 
 ---
