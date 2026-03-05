@@ -90,6 +90,9 @@ export function activate(context: vscode.ExtensionContext) {
         statusBarItem.text = sessionManager.getStatusBarText();
     });
 
+    // Set initial context for active connection
+    vscode.commands.executeCommand('setContext', 'exasol.hasActiveConnection', !!connectionManager.getActiveConnection());
+
     // Register commands
     const addConnectionCmd = vscode.commands.registerCommand('exasol.addConnection', async () => {
         await addConnection(connectionManager, connectionTreeProvider, objectTreeProvider, context);
@@ -299,6 +302,7 @@ export function activate(context: vscode.ExtensionContext) {
     const activeConnectionChanged = connectionManager.onDidChangeActiveConnection(() => {
         connectionTreeProvider.refresh();
         objectTreeProvider.refresh();
+        vscode.commands.executeCommand('setContext', 'exasol.hasActiveConnection', !!connectionManager.getActiveConnection());
     });
 
     // Add all disposables to context
