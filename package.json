@@ -7,7 +7,7 @@
   "publisher": "exasol",
   "repository": {
     "type": "git",
-    "url": "https://github.com/exasol/exasol-vscode"
+    "url": "https://github.com/exasol-labs/exasol-vscode"
   },
   "engines": {
     "vscode": "^1.105.0"
@@ -141,6 +141,11 @@
         "command": "exasol.copyQualifiedName",
         "title": "Copy Name",
         "icon": "$(copy)"
+      },
+      {
+        "command": "exasol.importCsv",
+        "title": "Import CSV File",
+        "icon": "$(cloud-upload)"
       }
     ],
     "viewsContainers": {
@@ -203,6 +208,11 @@
         {
           "command": "exasol.refreshConnections",
           "when": "view == exasol.connections",
+          "group": "navigation"
+        },
+        {
+          "command": "exasol.importCsv",
+          "when": "view == exasol.objects",
           "group": "navigation"
         },
         {
@@ -330,6 +340,10 @@
         },
         {
           "command": "exasol.deleteConnection",
+          "when": "false"
+        },
+        {
+          "command": "exasol.importCsv",
           "when": "false"
         }
       ]

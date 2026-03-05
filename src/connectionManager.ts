@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import * as tls from 'tls';
-import { ExasolDriver, ExaWebsocket } from '@exasol/exasol-driver-ts';
+import { ExasolDriver, ExaWebsocket, CsvFormatOptions } from '@exasol/exasol-driver-ts';
 import { WebSocket } from 'ws';
 import { getOutputChannel } from './extension';
+import { getRowsFromResult } from './utils';
 
 export type TlsMode = 'off' | 'fingerprint' | 'full';
 
@@ -51,6 +52,10 @@ export function normalizeFingerprint(fp: string): string {
 
 export interface StoredConnection extends ExasolConnection {
     id: string;
+}
+
+function quoteIdentifier(name: string): string {
+    return `"${name.replace(/"/g, '""')}"`;
 }
 
 export class ConnectionManager {
@@ -343,6 +348,93 @@ export class ConnectionManager {
             }
             throw error;
         }
+    }
+
+    /**
+     * Import a CSV file into a new table with VARCHAR columns.
+     * Creates the table, streams data via importFromFile, and cleans up on failure.
+     */
+    async importCsvFile(
+        connectionId: string,
+        schema: string,
+        tableName: string,
+        filePath: string,
+        columnNames: string[],
+        csvOptions?: CsvFormatOptions
+    ): Promise<number> {
+        const qualifiedTable = `${quoteIdentifier(schema)}.${quoteIdentifier(tableName)}`;
+        const outputChannel = getOutputChannel();
+
+        return await this.executeWithRetry(async () => {
+            const driver = await this.getDriver(connectionId);
+
+            const columnDefs = columnNames
+                .map(col => `${quoteIdentifier(col)} VARCHAR(2000000)`)
+                .join(', ');
+
+            // DROP IF EXISTS makes the retry idempotent if a previous attempt created the table
+            await driver.execute(`DROP TABLE IF EXISTS ${qualifiedTable}`);
+            await driver.execute(`CREATE TABLE ${qualifiedTable} (${columnDefs})`);
+
+            try {
+                const rowCount = await driver.importFromFile(
+                    qualifiedTable,
+                    filePath,
+                    { skip: 1, ...csvOptions }
+                );
+                outputChannel.appendLine(`Imported ${rowCount} rows into ${qualifiedTable}`);
+                return rowCount;
+            } catch (importError) {
+                outputChannel.appendLine(`Import failed, dropping table ${qualifiedTable}: ${importError}`);
+                try {
+                    await driver.execute(`DROP TABLE ${qualifiedTable}`);
+                    outputChannel.appendLine(`Cleaned up table ${qualifiedTable}`);
+                } catch (dropError) {
+                    outputChannel.appendLine(`Failed to drop table during cleanup: ${dropError}`);
+                }
+                throw importError;
+            }
+        }, connectionId);
+    }
+
+    /**
+     * Check whether a table exists in the given schema.
+     */
+    async tableExists(connectionId: string, schema: string, tableName: string): Promise<boolean> {
+        return await this.executeWithRetry(async () => {
+            const driver = await this.getDriver(connectionId);
+            const safeSchema = schema.replace(/'/g, "''");
+            const safeTableName = tableName.replace(/'/g, "''");
+            const result = await driver.query(`
+                SELECT COUNT(*) AS TABLE_COUNT
+                FROM SYS.EXA_ALL_TABLES
+                WHERE TABLE_SCHEMA = '${safeSchema}'
+                AND TABLE_NAME = '${safeTableName}'
+            `);
+            const rows = getRowsFromResult(result);
+            if (rows.length === 0) {
+                return false;
+            }
+            const count = Number(rows[0].TABLE_COUNT);
+            return count > 0;
+        }, connectionId);
+    }
+
+    /**
+     * Fetch all non-system schema names for the given connection.
+     */
+    async fetchSchemaNames(connectionId: string): Promise<string[]> {
+        return await this.executeWithRetry(async () => {
+            const driver = await this.getDriver(connectionId);
+            const result = await driver.query(`
+                SELECT SCHEMA_NAME
+                FROM SYS.EXA_SCHEMAS
+                WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
+                ORDER BY SCHEMA_NAME
+            `);
+            const rows = getRowsFromResult(result);
+            return rows.map((row: any) => row.SCHEMA_NAME);
+        }, connectionId);
     }
 
     private isWebSocketHealthy(driver: ExasolDriver): boolean {

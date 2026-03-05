@@ -9,6 +9,7 @@ import { QueryExecutor } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
 import { QueryStatsPanel } from './panels/queryStatsPanel';
 import { ConnectionPanel } from './panels/connectionPanel';
+import { ImportPanel } from './panels/importPanel';
 import { SessionManager } from './sessionManager';
 import { ObjectActions } from './objectActions';
 import { findStatementAtCursor, splitIntoStatements } from './utils';
@@ -89,6 +90,9 @@ export function activate(context: vscode.ExtensionContext) {
     connectionManager.onDidChangeActiveConnection(() => {
         statusBarItem.text = sessionManager.getStatusBarText();
     });
+
+    // Set initial context for active connection
+    vscode.commands.executeCommand('setContext', 'exasol.hasActiveConnection', !!connectionManager.getActiveConnection());
 
     // Register commands
     const addConnectionCmd = vscode.commands.registerCommand('exasol.addConnection', async () => {
@@ -259,6 +263,15 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    const importCsvCmd = vscode.commands.registerCommand('exasol.importCsv', async () => {
+        ImportPanel.show(
+            connectionManager,
+            sessionManager,
+            outputChannel,
+            () => objectTreeProvider.refresh()
+        );
+    });
+
     const selectConnectionCmd = vscode.commands.registerCommand('exasol.selectConnection', async () => {
         const connections = connectionManager.getConnections();
 
@@ -299,6 +312,7 @@ export function activate(context: vscode.ExtensionContext) {
     const activeConnectionChanged = connectionManager.onDidChangeActiveConnection(() => {
         connectionTreeProvider.refresh();
         objectTreeProvider.refresh();
+        vscode.commands.executeCommand('setContext', 'exasol.hasActiveConnection', !!connectionManager.getActiveConnection());
     });
 
     // Add all disposables to context
@@ -325,6 +339,7 @@ export function activate(context: vscode.ExtensionContext) {
         setActiveConnectionCmd,
         copyQualifiedNameCmd,
         selectConnectionCmd,
+        importCsvCmd,
         completionDisposable,
         codeLensDisposable,
         connectionTreeView,
