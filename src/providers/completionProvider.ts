@@ -162,7 +162,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                 const rows = getRowsFromResult(result);
                 this.reservedKeywords = new Set(rows.map((r: any) => r.KEYWORD.toUpperCase()));
                 this.reservedKeywordsLoaded = true;
-            }, connectionId);
+            }, connectionId, { timeoutMs: 30_000 });
         } catch (error) {
             console.error('Failed to load reserved keywords:', error);
             // Fallback to common reserved keywords
@@ -371,7 +371,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                 // Cache schemas
                 this.schemasCache.set(connectionId, schemas);
                 return schemas;
-            }, connectionId);
+            }, connectionId, { timeoutMs: 30_000 });
         } catch (error) {
             console.error('Failed to fetch schemas:', error);
             return [];
@@ -526,7 +526,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                 this.cacheExpiry.set(connectionId, Date.now() + this.CACHE_TTL);
 
                 return objects;
-            }, connectionId);
+            }, connectionId, { timeoutMs: 30_000 });
         } catch (error) {
             console.error('Failed to fetch database objects:', error);
             return [];

@@ -41,7 +41,7 @@ export class SessionManager {
             await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver();
                 await executeWithoutResult(driver, `OPEN SCHEMA ${schemaName}`);
-            });
+            }, undefined, { timeoutMs: 30_000 });
             this.currentSchema = schemaName;
             await this.saveSession();
             this._onDidChangeSession.fire();
@@ -67,7 +67,7 @@ export class SessionManager {
                 const driver = await this.connectionManager.getDriver();
                 const result = await driver.query('SELECT CURRENT_SCHEMA');
                 return getRowsFromResult(result);
-            });
+            }, undefined, { timeoutMs: 30_000 });
             if (rows.length > 0) {
                 this.currentSchema = rows[0].CURRENT_SCHEMA;
                 await this.saveSession();

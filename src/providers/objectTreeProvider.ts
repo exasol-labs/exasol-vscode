@@ -675,7 +675,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 outputChannel?.appendLine(`   Schema query returned ${rows.length} rows`);
                 return rows.map((row: any) => ({ name: row.SCHEMA_NAME }));
             }
-            }, connection.id);
+            }, connection.id, { timeoutMs: 30_000 });
         } catch (error) {
             outputChannel?.appendLine(`   Error fetching schemas: ${error}`);
             throw new Error(`Failed to fetch schemas: ${error}`);
@@ -784,7 +784,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             }
 
                 throw lastError ?? new Error('Unknown error fetching tables');
-            }, connection.id);
+            }, connection.id, { timeoutMs: 30_000 });
         } catch (error) {
             outputChannel?.appendLine(`   Error in fetchTables: ${error}`);
             throw new Error(`Failed to fetch tables: ${error}`);
@@ -878,7 +878,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             }
 
                 throw lastError ?? new Error('Unknown error fetching views');
-            }, connection.id);
+            }, connection.id, { timeoutMs: 30_000 });
         } catch (error) {
             outputChannel?.appendLine(`   Error in fetchViews: ${error}`);
             outputChannel?.appendLine(`   Error stack: ${(error as Error).stack}`);
@@ -910,7 +910,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     type: row.COLUMN_TYPE,
                     nullable: row.COLUMN_IS_NULLABLE
                 }));
-            }, connection.id);
+            }, connection.id, { timeoutMs: 30_000 });
         } catch (error) {
             throw new Error(`Failed to fetch columns: ${error}`);
         }

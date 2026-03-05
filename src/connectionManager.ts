@@ -419,18 +419,78 @@ export class ConnectionManager {
      *
      * @param fn The function to execute
      * @param connectionId Optional connection ID (defaults to active connection)
+     * @param options Optional timeout and cancellation token
      * @returns The result of the function
      */
-    async executeWithRetry<T>(fn: () => Promise<T>, connectionId?: string): Promise<T> {
+    async executeWithRetry<T>(
+        fn: () => Promise<T>,
+        connectionId?: string,
+        options?: { timeoutMs?: number; cancellationToken?: vscode.CancellationToken }
+    ): Promise<T> {
         const id = connectionId || this.activeConnection;
+
+        // Wrap fn with timeout/cancellation racing
+        const raceable = (): Promise<T> => {
+            const fnPromise = fn();
+            if (!options?.timeoutMs && !options?.cancellationToken) {
+                return fnPromise;
+            }
+
+            const races: Promise<T>[] = [fnPromise];
+            const cleanups: (() => void)[] = [];
+
+            if (options.timeoutMs) {
+                let timer: ReturnType<typeof setTimeout>;
+                races.push(new Promise<T>((_, reject) => {
+                    timer = setTimeout(() => reject(new Error(
+                        `Operation timed out after ${options.timeoutMs! / 1000}s`
+                    )), options.timeoutMs);
+                }));
+                cleanups.push(() => clearTimeout(timer));
+            }
+
+            if (options.cancellationToken) {
+                let disposable: vscode.Disposable | undefined;
+                races.push(new Promise<T>((_, reject) => {
+                    if (options.cancellationToken!.isCancellationRequested) {
+                        reject(new Error('Operation cancelled'));
+                        return;
+                    }
+                    disposable = options.cancellationToken!.onCancellationRequested(() =>
+                        reject(new Error('Operation cancelled'))
+                    );
+                }));
+                cleanups.push(() => disposable?.dispose());
+            }
+
+            return Promise.race(races).finally(() => cleanups.forEach(c => c()));
+        };
+
         try {
-            const result = await this.runExclusive(fn);
+            const result = await this.runExclusive(raceable);
             // Track successful query so validateDriver can skip SELECT 1
             if (id) {
                 this.lastSuccessfulQuery.set(id, Date.now());
             }
             return result;
         } catch (error) {
+            const msg = error instanceof Error ? error.message : '';
+            const isAbort = msg.includes('timed out') || msg.includes('cancelled');
+
+            if (isAbort && id) {
+                // Timeout or cancellation: the driver call is still running in the
+                // background on the old pool connection. Invalidate the driver so the
+                // next caller creates a fresh connection instead of queuing behind it.
+                const staleDriver = this.drivers.get(id);
+                this.drivers.delete(id);
+                this.lastSuccessfulQuery.delete(id);
+                // Fire-and-forget close with timeout — don't block on it
+                if (staleDriver) {
+                    withTimeout(staleDriver.close(), 2000, 'close').catch(() => {});
+                }
+                throw error;
+            }
+
             // Check if it's a connection-related error that requires reconnection
             if (this.isConnectionError(error) && id && this.drivers.has(id)) {
                 // Only retry if a driver existed — meaning the query itself failed
@@ -448,7 +508,7 @@ export class ConnectionManager {
                 this.recentFailures.delete(id);
                 this.lastSuccessfulQuery.delete(id);
 
-                const result = await this.runExclusive(fn);
+                const result = await this.runExclusive(raceable);
                 if (id) {
                     this.lastSuccessfulQuery.set(id, Date.now());
                 }
