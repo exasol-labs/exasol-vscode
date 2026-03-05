@@ -34,14 +34,18 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - Extracted tab bar rendering into standalone `tabBarRenderer.ts` for testability
 - Tidied README — reduced from 357 to 72 lines
 
+## [1.1.3] - 2026-03-05
+
+### Fixed
+- Background operations (tree, completion, session) have a 30s timeout so a hanging query can't freeze the extension
+- User query cancellation now aborts in-flight driver calls instead of only checking between queries
+- Stale driver close has a 2s timeout to prevent mutex deadlock when `pool.drain()` hangs on a dead WebSocket
+
 ## [1.1.2] - 2026-02-25
 
 ### Fixed
 - Serialize driver access with a query mutex to prevent E-EDJS-8 pool exhaustion on concurrent calls
 - Close stale driver on validation failure instead of leaking WebSocket
-- Stale driver close now has a 2s timeout to prevent mutex deadlock when `pool.drain()` hangs on a dead WebSocket
-- Background operations (tree, completion, session) have a 30s timeout so a hanging query can't freeze the extension
-- User query cancellation now aborts in-flight driver calls instead of only checking between queries
 - Retry path no longer destroys a freshly-reconnected driver (race condition fix)
 - User-cancelled queries no longer trigger 5s failure cooldown
 
