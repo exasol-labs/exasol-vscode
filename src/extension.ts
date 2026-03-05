@@ -511,7 +511,7 @@ async function executeQuery(
         output.appendLine(`🔢 Found ${statements.length} statements to execute`);
     }
 
-    const cancellationTokenSource = new vscode.CancellationTokenSource();
+    let cancellationTokenSource = new vscode.CancellationTokenSource();
     queryExecutor.setCancellationToken(cancellationTokenSource);
 
     try {
@@ -524,7 +524,9 @@ async function executeQuery(
                 cancellable: true
             },
             async (progress, token) => {
+                let cancelled = false;
                 token.onCancellationRequested(() => {
+                    cancelled = true;
                     cancellationTokenSource.cancel();
                 });
 
@@ -537,7 +539,7 @@ async function executeQuery(
                     const query = statements[i];
                     const queryNum = i + 1;
 
-                    if (token.isCancellationRequested) {
+                    if (cancelled) {
                         output.appendLine(`⚠️ Execution cancelled after query ${i}/${statements.length}`);
                         break;
                     }
@@ -600,6 +602,14 @@ async function executeQuery(
                                     break;
                                 } else {
                                     output.appendLine(`   ⏩ Continuing with remaining queries...`);
+                                    // Reset cancellation state so the batch can continue
+                                    if (cancelled) {
+                                        cancelled = false;
+                                        cancellationTokenSource = new vscode.CancellationTokenSource();
+                                        cancellationTokenSource.token.onCancellationRequested(() => {
+                                            cancelled = true;
+                                        });
+                                    }
                                 }
                             }
                         } else {

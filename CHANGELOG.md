@@ -39,6 +39,7 @@ All notable changes to the "Exasol" extension will be documented in this file.
 ### Fixed
 - Background operations (tree, completion, session) have a 30s timeout so a hanging query can't freeze the extension
 - User query cancellation now aborts in-flight driver calls instead of only checking between queries
+- Clicking "Continue" after cancelling a batch query now properly resumes execution with a fresh cancellation token
 - Stale driver close has a 2s timeout to prevent mutex deadlock when `pool.drain()` hangs on a dead WebSocket
 
 ## [1.1.2] - 2026-02-25
