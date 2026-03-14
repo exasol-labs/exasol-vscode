@@ -5,6 +5,7 @@ import { ObjectTreeProvider } from './providers/objectTreeProvider';
 import { QueryHistoryProvider } from './providers/queryHistoryProvider';
 import { ExasolCompletionProvider } from './providers/completionProvider';
 import { ExasolCodeLensProvider } from './providers/codeLensProvider';
+import { FormattingProvider } from './providers/formattingProvider';
 import { QueryExecutor } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
 import { QueryStatsPanel } from './panels/queryStatsPanel';
@@ -54,6 +55,22 @@ export function activate(context: vscode.ExtensionContext) {
         { language: 'exasol-sql' },
         codeLensProvider
     );
+
+    // Register formatting provider
+    const formattingProvider = new FormattingProvider();
+    const formattingDisposable = vscode.languages.registerDocumentFormattingEditProvider(
+        'exasol-sql',
+        formattingProvider
+    );
+    const rangeFormattingDisposable = vscode.languages.registerDocumentRangeFormattingEditProvider(
+        'exasol-sql',
+        formattingProvider
+    );
+
+    // Register formatQuery command
+    const formatQueryCmd = vscode.commands.registerCommand('exasol.formatQuery', () => {
+        return vscode.commands.executeCommand('editor.action.formatDocument');
+    });
 
     // Register tree views
     const connectionTreeView = vscode.window.createTreeView('exasol.connections', {
@@ -331,6 +348,9 @@ export function activate(context: vscode.ExtensionContext) {
         selectConnectionCmd,
         completionDisposable,
         codeLensDisposable,
+        formattingDisposable,
+        rangeFormattingDisposable,
+        formatQueryCmd,
         connectionTreeView,
         objectTreeView,
         queryHistoryTreeView,

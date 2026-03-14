@@ -142,6 +142,10 @@
         "command": "exasol.copyQualifiedName",
         "title": "Copy Name",
         "icon": "$(copy)"
+      },
+      {
+        "command": "exasol.formatQuery",
+        "title": "Exasol: Format Query"
       }
     ],
     "viewsContainers": {
@@ -332,6 +336,10 @@
         {
           "command": "exasol.deleteConnection",
           "when": "false"
+        },
+        {
+          "command": "exasol.formatQuery",
+          "when": "editorLangId == exasol-sql"
         }
       ]
     },
@@ -362,6 +370,41 @@
           "type": "boolean",
           "default": true,
           "description": "Enable SQL auto-completion"
+        },
+        "exasol.formatter.keywordCase": {
+          "type": "string",
+          "enum": [
+            "upper",
+            "lower",
+            "preserve"
+          ],
+          "default": "upper",
+          "description": "Controls the case of SQL keywords when formatting"
+        },
+        "exasol.formatter.indentStyle": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "tabularLeft",
+            "tabularRight"
+          ],
+          "default": "standard",
+          "description": "Controls the indentation style for formatted SQL"
+        },
+        "exasol.formatter.tabWidth": {
+          "type": "number",
+          "default": 2,
+          "description": "Number of spaces per indentation level (when using spaces)"
+        },
+        "exasol.formatter.useTabs": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use tabs instead of spaces for indentation"
+        },
+        "exasol.formatter.linesBetweenQueries": {
+          "type": "number",
+          "default": 2,
+          "description": "Number of blank lines between SQL statements"
         }
       }
     },
@@ -409,6 +452,7 @@
   "dependencies": {
     "@exasol/exasol-driver-ts": "^0.3.1",
     "@types/ws": "^8.18.1",
+    "sql-formatter": "^15.7.2",
     "ws": "^8.19.0"
   }
 }
