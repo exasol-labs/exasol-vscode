@@ -11,6 +11,7 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - Tab bar with per-tab sort, filter, and scroll state preservation
 - Error results displayed in dedicated tabs with red indicator
 - Single-statement executions display without tab bar even when tabs mode is enabled
+- Close button on individual tabs (hover to reveal ×)
 - CSV export operates on the active tab's data
 - Local test harnesses: jsdom-based webview rendering tests and VS Code e2e tests
 
