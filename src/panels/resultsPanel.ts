@@ -262,8 +262,9 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         const tabStateJson = JSON.stringify(tabState);
         const filterId = `filter-${Date.now()}`;
 
+        const tabStateDeclaration = `const savedTabState = ${tabStateJson};`;
+
         const tabSwitchScript = `
-                const savedTabState = ${tabStateJson};
                 document.querySelectorAll('.tab').forEach(tab => {
                     tab.addEventListener('click', () => {
                         const tableContainer = document.getElementById('tableContainer');
@@ -323,6 +324,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
                 ${ResultsPanel.getGridHtmlStructure(result, filterId, '<button id="export">Export CSV</button>')}
             </div>
             <script>
+                ${tabStateDeclaration}
                 ${ResultsPanel.getSharedGridScript(dataJson, filterId, 'savedTabState.sortColumn', "savedTabState.sortDirection || 'asc'")}
                 ${tabSwitchScript}
                 ${tabStateRestoreScript}
