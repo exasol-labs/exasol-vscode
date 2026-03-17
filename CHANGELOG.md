@@ -2,6 +2,24 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.2.0] - 2026-03-16
+
+### Added
+- **Separate result tabs** — multi-statement executions can display each result in its own tab within the results panel
+- Toggle command "Exasol: Toggle Separate Result Tabs" with status bar indicator
+- `exasol.separateResultTabs` setting (default: false) to enable tabbed results
+- Tab bar with per-tab sort, filter, and scroll state preservation
+- Error results displayed in dedicated tabs with red indicator
+- Single-statement executions display without tab bar even when tabs mode is enabled
+- Close button on individual tabs (hover to reveal ×)
+- CSV export operates on the active tab's data
+- Local test harnesses: jsdom-based webview rendering tests and VS Code e2e tests
+
+### Changed
+- Extracted shared grid CSS/JS into reusable helpers to eliminate duplication between single and multi-tab renderers
+- Extracted tab bar rendering into standalone `tabBarRenderer.ts` for testability
+- Tidied README — reduced from 357 to 72 lines
+
 ## [1.1.2] - 2026-02-25
 
 ### Fixed

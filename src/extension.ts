@@ -5,9 +5,11 @@ import { ObjectTreeProvider } from './providers/objectTreeProvider';
 import { QueryHistoryProvider } from './providers/queryHistoryProvider';
 import { ExasolCompletionProvider } from './providers/completionProvider';
 import { ExasolCodeLensProvider } from './providers/codeLensProvider';
+import { FormattingProvider } from './providers/formattingProvider';
 import { QueryExecutor } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
 import { QueryStatsPanel } from './panels/queryStatsPanel';
+import { TabResultCollector } from './execution/tabResultCollector';
 import { ConnectionPanel } from './panels/connectionPanel';
 import { SessionManager } from './sessionManager';
 import { ObjectActions } from './objectActions';
@@ -55,6 +57,22 @@ export function activate(context: vscode.ExtensionContext) {
         codeLensProvider
     );
 
+    // Register formatting provider
+    const formattingProvider = new FormattingProvider();
+    const formattingDisposable = vscode.languages.registerDocumentFormattingEditProvider(
+        'exasol-sql',
+        formattingProvider
+    );
+    const rangeFormattingDisposable = vscode.languages.registerDocumentRangeFormattingEditProvider(
+        'exasol-sql',
+        formattingProvider
+    );
+
+    // Register formatQuery command
+    const formatQueryCmd = vscode.commands.registerCommand('exasol.formatQuery', () => {
+        return vscode.commands.executeCommand('editor.action.formatDocument');
+    });
+
     // Register tree views
     const connectionTreeView = vscode.window.createTreeView('exasol.connections', {
         treeDataProvider: connectionTreeProvider,
@@ -71,6 +89,32 @@ export function activate(context: vscode.ExtensionContext) {
     const queryHistoryTreeView = vscode.window.createTreeView('exasol.queryHistory', {
         treeDataProvider: queryHistoryProvider,
         showCollapseAll: true
+    });
+
+    // Create status bar item for result tabs mode
+    const resultTabsStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50);
+    resultTabsStatusBar.command = 'exasol.toggleSeparateResultTabs';
+
+    function updateResultTabsStatusBar() {
+        const enabled = vscode.workspace.getConfiguration('exasol').get<boolean>('separateResultTabs', false);
+        resultTabsStatusBar.text = enabled ? '$(split-horizontal) Tabs' : '$(split-horizontal) Single';
+        resultTabsStatusBar.tooltip = enabled
+            ? 'Result tabs: Separate (click to toggle)'
+            : 'Result tabs: Single (click to toggle)';
+    }
+    updateResultTabsStatusBar();
+    resultTabsStatusBar.show();
+
+    const toggleSeparateResultTabsCmd = vscode.commands.registerCommand('exasol.toggleSeparateResultTabs', async () => {
+        const config = vscode.workspace.getConfiguration('exasol');
+        const current = config.get<boolean>('separateResultTabs', false);
+        await config.update('separateResultTabs', !current, vscode.ConfigurationTarget.Global);
+    });
+
+    const resultTabsConfigListener = vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration('exasol.separateResultTabs')) {
+            updateResultTabsStatusBar();
+        }
     });
 
     // Create status bar item for session info
@@ -329,8 +373,14 @@ export function activate(context: vscode.ExtensionContext) {
         setActiveConnectionCmd,
         copyQualifiedNameCmd,
         selectConnectionCmd,
+        toggleSeparateResultTabsCmd,
+        resultTabsStatusBar,
+        resultTabsConfigListener,
         completionDisposable,
         codeLensDisposable,
+        formattingDisposable,
+        rangeFormattingDisposable,
+        formatQueryCmd,
         connectionTreeView,
         objectTreeView,
         queryHistoryTreeView,
@@ -440,12 +490,6 @@ async function executeQuery(
         return;
     }
 
-    // DEBUG: Log statement count and content
-    output.appendLine(`🐛 DEBUG: Split into ${statements.length} statements`);
-    statements.forEach((stmt, idx) => {
-        output.appendLine(`🐛 Statement ${idx + 1}: ${stmt.substring(0, 80).replace(/\n/g, ' ')}...`);
-    });
-
     const activeConnection = connectionManager.getActiveConnection();
     if (!activeConnection) {
         const message = 'No active connection. Please add a connection first.';
@@ -476,13 +520,14 @@ async function executeQuery(
                     cancellationTokenSource.cancel();
                 });
 
+                const separateTabs = vscode.workspace.getConfiguration('exasol').get<boolean>('separateResultTabs', false);
+                const useTabCollection = separateTabs && statements.length > 1;
+                const collector = useTabCollection ? new TabResultCollector() : null;
                 let lastResult = null;
 
                 for (let i = 0; i < statements.length; i++) {
                     const query = statements[i];
                     const queryNum = i + 1;
-
-                    output.appendLine(`🐛 DEBUG: Loop iteration ${i}, query ${queryNum}/${statements.length}`);
 
                     if (token.isCancellationRequested) {
                         output.appendLine(`⚠️ Execution cancelled after query ${i}/${statements.length}`);
@@ -498,10 +543,8 @@ async function executeQuery(
                         output.appendLine(`   ${query.substring(0, 100)}${query.length > 100 ? '...' : ''}`);
                     }
 
-                    output.appendLine(`🐛 DEBUG: About to call queryExecutor.execute()`);
                     try {
                         const result = await queryExecutor.execute(query, cancellationTokenSource.token);
-                        output.appendLine(`🐛 DEBUG: queryExecutor.execute() returned successfully`);
 
                         // Add to history
                         queryHistoryProvider.addQuery(query, result.rowCount);
@@ -515,9 +558,12 @@ async function executeQuery(
                             output.appendLine(`✅ Query executed successfully. ${result.rowCount} rows returned.`);
                         }
 
-                        // Show results for each query (last one will remain visible)
-                        await ResultsPanel.show(result);
-                        QueryStatsPanel.updateStats(query, result);
+                        if (collector) {
+                            collector.addResult(result);
+                        } else {
+                            await ResultsPanel.show(result);
+                            QueryStatsPanel.updateStats(query, result);
+                        }
 
                     } catch (error) {
                         const errorMsg = String(error);
@@ -528,29 +574,58 @@ async function executeQuery(
                             output.appendLine(`❌ Query failed: ${errorMsg}`);
                         }
 
-                        // Show error in results panel
-                        await ResultsPanel.showError(errorMsg);
-
                         queryHistoryProvider.addQuery(query, 0, errorMsg);
 
-                        // Ask user if they want to continue with remaining queries
-                        if (statements.length > 1 && i < statements.length - 1) {
-                            const continueExecution = await vscode.window.showErrorMessage(
-                                `Query ${queryNum}/${statements.length} failed. Continue with remaining queries?`,
-                                'Continue',
-                                'Stop'
-                            );
+                        if (collector) {
+                            collector.addError(errorMsg);
 
-                            if (continueExecution !== 'Continue') {
-                                output.appendLine(`⚠️ Execution stopped by user after query ${queryNum}/${statements.length}`);
-                                break;
-                            } else {
-                                output.appendLine(`   ⏩ Continuing with remaining queries...`);
+                            // Ask user if they want to continue with remaining queries
+                            if (i < statements.length - 1) {
+                                const continueExecution = await vscode.window.showErrorMessage(
+                                    `Query ${queryNum}/${statements.length} failed. Continue with remaining queries?`,
+                                    'Continue',
+                                    'Stop'
+                                );
+
+                                if (continueExecution !== 'Continue') {
+                                    output.appendLine(`⚠️ Execution stopped by user after query ${queryNum}/${statements.length}`);
+                                    break;
+                                } else {
+                                    output.appendLine(`   ⏩ Continuing with remaining queries...`);
+                                }
                             }
                         } else {
-                            // Single query or last query - just throw
-                            throw error;
+                            // Show error in results panel
+                            await ResultsPanel.showError(errorMsg);
+
+                            // Ask user if they want to continue with remaining queries
+                            if (statements.length > 1 && i < statements.length - 1) {
+                                const continueExecution = await vscode.window.showErrorMessage(
+                                    `Query ${queryNum}/${statements.length} failed. Continue with remaining queries?`,
+                                    'Continue',
+                                    'Stop'
+                                );
+
+                                if (continueExecution !== 'Continue') {
+                                    output.appendLine(`⚠️ Execution stopped by user after query ${queryNum}/${statements.length}`);
+                                    break;
+                                } else {
+                                    output.appendLine(`   ⏩ Continuing with remaining queries...`);
+                                }
+                            } else {
+                                // Single query or last query - just throw
+                                throw error;
+                            }
                         }
+                    }
+                }
+
+                if (collector && collector.hasResults()) {
+                    ResultsPanel.showMultiple(collector.getTabs());
+                    // Update stats for the first successful result
+                    const firstTab = collector.getTabs().find(t => t.result);
+                    if (firstTab?.result) {
+                        QueryStatsPanel.updateStats(statements[0], firstTab.result);
                     }
                 }
 
