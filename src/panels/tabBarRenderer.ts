@@ -13,7 +13,7 @@ export function buildTabBarHtml(tabs: TabResult[], activeIndex: number): string 
     const tabElements = tabs.map((tab, i) => {
         const activeClass = i === activeIndex ? ' active' : '';
         const errorClass = tab.error ? ' error' : '';
-        return `<div class="tab${activeClass}${errorClass}" data-index="${i}">${escapeHtml(tab.label)}</div>`;
+        return `<div class="tab${activeClass}${errorClass}" data-index="${i}"><span class="tab-label">${escapeHtml(tab.label)}</span><span class="tab-close" data-index="${i}">&times;</span></div>`;
     }).join('');
     return `<div class="tab-bar">${tabElements}</div>`;
 }
@@ -37,8 +37,25 @@ export function buildTabBarCss(): string {
                 color: var(--vscode-tab-inactiveForeground, var(--vscode-foreground));
                 background-color: var(--vscode-tab-inactiveBackground, transparent);
             }
+            .tab {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
             .tab:hover {
                 background-color: var(--vscode-tab-hoverBackground, var(--vscode-list-hoverBackground));
+            }
+            .tab-close {
+                font-size: 14px;
+                line-height: 1;
+                opacity: 0;
+                transition: opacity 0.1s;
+            }
+            .tab:hover .tab-close {
+                opacity: 0.6;
+            }
+            .tab-close:hover {
+                opacity: 1 !important;
             }
             .tab.active {
                 color: var(--vscode-tab-activeForeground, var(--vscode-foreground));

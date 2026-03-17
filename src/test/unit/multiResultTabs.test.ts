@@ -122,6 +122,47 @@ suite('TabManager', () => {
         });
     });
 
+    suite('removeTab', () => {
+        test('removes a tab by index', () => {
+            const manager = new TabManager();
+            manager.setTabs([makeTab(1), makeTab(2), makeTab(3)]);
+            manager.removeTab(1);
+
+            assert.strictEqual(manager.getTabs().length, 2);
+            assert.strictEqual(manager.getTabs()[0].label, 'Result 1');
+            assert.strictEqual(manager.getTabs()[1].label, 'Result 3');
+        });
+
+        test('adjusts active index when removing tab before it', () => {
+            const manager = new TabManager();
+            manager.setTabs([makeTab(1), makeTab(2), makeTab(3)]);
+            manager.switchTab(2);
+            manager.removeTab(0);
+
+            assert.strictEqual(manager.getActiveIndex(), 1);
+            assert.strictEqual(manager.getActiveTab()?.label, 'Result 3');
+        });
+
+        test('clamps active index when removing the last tab', () => {
+            const manager = new TabManager();
+            manager.setTabs([makeTab(1), makeTab(2)]);
+            manager.switchTab(1);
+            manager.removeTab(1);
+
+            assert.strictEqual(manager.getActiveIndex(), 0);
+            assert.strictEqual(manager.getActiveTab()?.label, 'Result 1');
+        });
+
+        test('removing the only tab leaves empty state', () => {
+            const manager = new TabManager();
+            manager.setTabs([makeTab(1)]);
+            manager.removeTab(0);
+
+            assert.strictEqual(manager.getTabs().length, 0);
+            assert.strictEqual(manager.shouldShowTabBar(), false);
+        });
+    });
+
     suite('clearTabs', () => {
         test('clearTabs removes all tabs', () => {
             const manager = new TabManager();

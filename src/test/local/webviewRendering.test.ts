@@ -236,9 +236,9 @@ suite('buildTabBarHtml', () => {
         const html = buildTabBarHtml(tabs, 0);
         const doc = parseDom(`<html><body>${html}</body></html>`);
 
-        const tabEls = doc.querySelectorAll('.tab');
-        assert.strictEqual(tabEls[0].textContent, 'Result 1');
-        assert.strictEqual(tabEls[1].textContent, 'Result 2');
+        const labels = doc.querySelectorAll('.tab-label');
+        assert.strictEqual(labels[0].textContent, 'Result 1');
+        assert.strictEqual(labels[1].textContent, 'Result 2');
     });
 
     test('escapes HTML in tab labels', () => {

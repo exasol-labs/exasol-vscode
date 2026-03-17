@@ -59,6 +59,21 @@ export class TabManager {
         return this.tabs.length > 1;
     }
 
+    removeTab(index: number): void {
+        if (index < 0 || index >= this.tabs.length) {
+            return;
+        }
+        this.tabs.splice(index, 1);
+        this.tabStates.splice(index, 1);
+        if (this.tabs.length === 0) {
+            this.activeIndex = 0;
+        } else if (this.activeIndex >= this.tabs.length) {
+            this.activeIndex = this.tabs.length - 1;
+        } else if (index < this.activeIndex) {
+            this.activeIndex--;
+        }
+    }
+
     clearTabs(): void {
         this.tabs = [];
         this.activeIndex = 0;

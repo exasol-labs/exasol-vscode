@@ -94,6 +94,13 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
                 this.tabManager.switchTab(message.index);
                 this.updateWebview();
                 this.updateStatsForActiveTab();
+            } else if (message.command === 'closeTab') {
+                this.tabManager.removeTab(message.index);
+                if (this.tabManager.getTabs().length === 0) {
+                    this.tabManager.clearTabs();
+                }
+                this.updateWebview();
+                this.updateStatsForActiveTab();
             } else if (message.command === 'copy') {
                 // Copy to clipboard
                 await vscode.env.clipboard.writeText(message.text);
@@ -237,6 +244,12 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
                 </div>
                 <script>
                     const vscode = acquireVsCodeApi();
+                    document.querySelectorAll('.tab-close').forEach(btn => {
+                        btn.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            vscode.postMessage({ command: 'closeTab', index: parseInt(btn.dataset.index) });
+                        });
+                    });
                     document.querySelectorAll('.tab').forEach(tab => {
                         tab.addEventListener('click', () => {
                             vscode.postMessage({ command: 'switchTab', index: parseInt(tab.dataset.index) });
@@ -265,6 +278,12 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         const tabStateDeclaration = `const savedTabState = ${tabStateJson};`;
 
         const tabSwitchScript = `
+                document.querySelectorAll('.tab-close').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        vscode.postMessage({ command: 'closeTab', index: parseInt(btn.dataset.index) });
+                    });
+                });
                 document.querySelectorAll('.tab').forEach(tab => {
                     tab.addEventListener('click', () => {
                         const tableContainer = document.getElementById('tableContainer');
