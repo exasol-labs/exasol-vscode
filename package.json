@@ -3,7 +3,7 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "publisher": "exasol",
   "license": "MIT",
   "repository": {
@@ -150,6 +150,11 @@
       {
         "command": "exasol.toggleSeparateResultTabs",
         "title": "Exasol: Toggle Separate Result Tabs"
+      },
+      {
+        "command": "exasol.findObject",
+        "title": "Exasol: Find Database Object",
+        "icon": "$(search)"
       }
     ],
     "viewsContainers": {
@@ -216,6 +221,11 @@
         },
         {
           "command": "exasol.refreshConnections",
+          "when": "view == exasol.objects",
+          "group": "navigation"
+        },
+        {
+          "command": "exasol.findObject",
           "when": "view == exasol.objects",
           "group": "navigation"
         },
@@ -344,6 +354,9 @@
         {
           "command": "exasol.formatQuery",
           "when": "editorLangId == exasol-sql"
+        },
+        {
+          "command": "exasol.findObject"
         }
       ]
     },
@@ -429,6 +442,12 @@
         "key": "ctrl+shift+enter",
         "mac": "cmd+shift+enter",
         "when": "editorTextFocus && editorLangId == exasol-sql"
+      },
+      {
+        "command": "exasol.findObject",
+        "key": "ctrl+shift+f",
+        "mac": "cmd+shift+f",
+        "when": "focusedView == exasol.objects"
       }
     ]
   },

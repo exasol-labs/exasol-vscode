@@ -2,6 +2,20 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.3.0] - 2026-03-18
+
+### Added
+- **Extended object tree** — browse UDF scripts, procedures, adapter scripts, scalar/aggregate functions, virtual schema tables, primary/foreign key constraints, and indices
+- **System schemas** — SYS and EXA_STATISTICS system tables browsable under a "System Schemas" folder, with column inspection
+- **Find Database Object** command (`Ctrl+Shift+F` / `Cmd+Shift+F`) — QuickPick search across all object types with type icons, schema context, and tree reveal on selection
+- Parent tracking on tree nodes enabling `TreeView.reveal()` for navigation
+- Enhanced IntelliSense with scripts, functions, virtual tables, and system tables
+- 70+ new unit tests for object tree types, parent chains, search, system schemas, scripts/functions, virtual schemas, and constraints/indices
+
+### Changed
+- Extracted node type configuration into `objectTreeTypes.ts` for maintainability
+- CompletionProvider error logging uses output channel instead of console
+
 ## [1.2.0] - 2026-03-16
 
 ### Added

@@ -13,6 +13,7 @@ import { TabResultCollector } from './execution/tabResultCollector';
 import { ConnectionPanel } from './panels/connectionPanel';
 import { SessionManager } from './sessionManager';
 import { ObjectActions } from './objectActions';
+import { ObjectSearchProvider } from './providers/objectSearchProvider';
 import { findStatementAtCursor, splitIntoStatements } from './utils';
 
 // Create output channel for logging
@@ -89,6 +90,12 @@ export function activate(context: vscode.ExtensionContext) {
     const queryHistoryTreeView = vscode.window.createTreeView('exasol.queryHistory', {
         treeDataProvider: queryHistoryProvider,
         showCollapseAll: true
+    });
+
+    // Initialize object search provider
+    const objectSearchProvider = new ObjectSearchProvider(connectionManager, objectTreeProvider, objectTreeView);
+    const findObjectCmd = vscode.commands.registerCommand('exasol.findObject', () => {
+        objectSearchProvider.showSearch();
     });
 
     // Create status bar item for result tabs mode
@@ -373,6 +380,7 @@ export function activate(context: vscode.ExtensionContext) {
         setActiveConnectionCmd,
         copyQualifiedNameCmd,
         selectConnectionCmd,
+        findObjectCmd,
         toggleSeparateResultTabsCmd,
         resultTabsStatusBar,
         resultTabsConfigListener,

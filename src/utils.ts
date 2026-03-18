@@ -4,6 +4,14 @@
 import type { ExasolDriver, SQLQueriesResponse, SQLQueryColumn, SQLResponse } from '@exasol/exasol-driver-ts';
 
 /**
+ * Escape a string value for safe interpolation into SQL single-quoted literals.
+ * Doubles all single-quote characters to prevent SQL injection.
+ */
+export function escapeSqlString(value: string): string {
+    return value.replace(/'/g, "''");
+}
+
+/**
  * Type guard for raw Exasol driver responses (responseType: 'raw')
  */
 function isRawResponse(result: unknown): result is SQLResponse<SQLQueriesResponse> {
