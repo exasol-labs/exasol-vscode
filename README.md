@@ -16,7 +16,7 @@ A Visual Studio Code extension for working with Exasol databases. Provides datab
 - **Query execution** — full file or selection, cancellable, automatic LIMIT, multi-statement support
 - **Separate result tabs** — toggle via Command Palette to view each statement's result in its own tab
 - **IntelliSense** — context-aware completions for keywords, functions, tables, views, and columns
-- **Object explorer** — browse schemas, tables, views, and columns with row counts and types
+- **Object explorer** — browse schemas, tables, views, columns, scripts, functions, virtual schemas, constraints, indices, and system tables
 - **Object actions** — right-click to preview data, show DDL, generate SELECT, describe table
 - **Results viewer** — sortable, filterable grid with CSV export and cell inspection
 - **Query history** — automatic tracking with execution time, row counts, and error indicators
@@ -29,6 +29,7 @@ A Visual Studio Code extension for working with Exasol databases. Provides datab
 |--------|---------------|-----|
 | Execute query | `Ctrl+Enter` | `Cmd+Enter` |
 | Execute selection | `Ctrl+Shift+Enter` | `Cmd+Shift+Enter` |
+| Find database object | `Ctrl+Shift+F` (objects view) | `Cmd+Shift+F` (objects view) |
 
 ## Configuration
 
@@ -56,7 +57,7 @@ Press `F5` to launch the Extension Development Host.
 
 ```bash
 npm run watch        # Auto-compile on changes
-npm run test:unit    # Unit tests (122 tests)
+npm run test:unit    # Unit tests (192 tests)
 npm run test:local   # Webview rendering tests (jsdom)
 npm run test:e2e     # E2E tests (requires compile first)
 ```
