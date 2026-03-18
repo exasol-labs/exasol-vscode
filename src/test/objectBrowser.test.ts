@@ -142,18 +142,28 @@ suite('Object Browser Test Suite', () => {
         assert.ok(getLabelText(idColumn).includes('('), 'Column label should include type');
     });
 
-    test('Should filter system schemas', async function() {
+    test('Should filter system schemas from user list and show System Schemas folder', async function() {
         this.timeout(30000);
 
         const schemas = await objectTreeProvider.getChildren();
 
+        // SYS and EXA_STATISTICS should NOT appear as top-level user schemas
         const systemSchemas = schemas.filter(s => {
             const label = getLabelText(s);
             return label === 'SYS' || label === 'EXA_STATISTICS';
-        }
-        );
+        });
+        assert.strictEqual(systemSchemas.length, 0, 'Should filter out system schemas from user schema list');
 
-        assert.strictEqual(systemSchemas.length, 0, 'Should filter out system schemas');
+        // A "System Schemas" folder should appear at root level (after user and virtual schemas)
+        const systemSchemasFolder = schemas.find(s => getLabelText(s) === 'System Schemas');
+        assert.ok(systemSchemasFolder, 'Should have a "System Schemas" folder at root level');
+
+        // The "System Schemas" folder should be the last item
+        const lastItem = schemas[schemas.length - 1];
+        assert.strictEqual(
+            getLabelText(lastItem), 'System Schemas',
+            'System Schemas folder should appear after user and virtual schemas'
+        );
     });
 
     suiteTeardown(async function() {

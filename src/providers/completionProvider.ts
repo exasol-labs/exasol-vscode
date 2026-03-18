@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { ConnectionManager } from '../connectionManager';
+import { getOutputChannel } from '../extension';
 import { getRowsFromResult } from '../utils';
 
 interface DatabaseObject {
     schema: string;
     name: string;
-    type: 'table' | 'view';
+    type: 'table' | 'view' | 'script' | 'function' | 'virtual-table' | 'system-table';
     columns?: string[];
 }
 
@@ -282,13 +283,32 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
     private getObjectCompletions(objects: DatabaseObject[], skipQuoting = false): vscode.CompletionItem[] {
         return objects.map(obj => {
-            const kind = obj.type === 'table'
-                ? vscode.CompletionItemKind.Class
-                : vscode.CompletionItemKind.Interface;
+            let kind: vscode.CompletionItemKind;
+            switch (obj.type) {
+                case 'table':
+                case 'virtual-table':
+                case 'system-table':
+                    kind = vscode.CompletionItemKind.Class;
+                    break;
+                case 'view':
+                    kind = vscode.CompletionItemKind.Interface;
+                    break;
+                case 'script':
+                    kind = vscode.CompletionItemKind.Method;
+                    break;
+                case 'function':
+                    kind = vscode.CompletionItemKind.Function;
+                    break;
+                default:
+                    kind = vscode.CompletionItemKind.Class;
+            }
 
             const displayName = obj.name.toLowerCase();
             const item = new vscode.CompletionItem(displayName, kind);
-            item.detail = `${obj.type} in ${obj.schema.toLowerCase()}`;
+            const typeLabel = obj.type === 'virtual-table' ? 'virtual table'
+                : obj.type === 'system-table' ? 'system table'
+                : obj.type;
+            item.detail = `${typeLabel} in ${obj.schema.toLowerCase()}`;
             item.insertText = skipQuoting ? displayName : this.quoteIdentifier(obj.name);
             item.sortText = `1_${displayName}`;
 
@@ -332,6 +352,21 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                 const result = await this.safeQuery(driver, schemasQuery);
                 const rows = getRowsFromResult(result);
                 const schemas = rows.map((r: any) => r.SCHEMA_NAME);
+
+                schemas.push('SYS', 'EXA_STATISTICS');
+
+                try {
+                    const vsResult = await this.safeQuery(driver, 'SELECT SCHEMA_NAME FROM SYS.EXA_ALL_VIRTUAL_SCHEMAS ORDER BY SCHEMA_NAME');
+                    const vsRows = getRowsFromResult(vsResult);
+                    for (const row of vsRows) {
+                        if (!schemas.includes(row.SCHEMA_NAME)) {
+                            schemas.push(row.SCHEMA_NAME);
+                        }
+                    }
+                    schemas.sort();
+                } catch (error) {
+                    console.error('Failed to fetch virtual schemas for completions:', error);
+                }
 
                 // Cache schemas
                 this.schemasCache.set(connectionId, schemas);
@@ -397,15 +432,94 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                         columnsByTable.get(key)!.push(row.COLUMN_NAME);
                     }
                 } catch (error) {
-                    console.error('Failed to bulk-fetch columns:', error);
+                    getOutputChannel()?.appendLine(`Completions: Failed to bulk-fetch columns: ${error}`);
                 }
 
                 const objects: DatabaseObject[] = tableRows.map((row: any) => ({
                     schema: row.TABLE_SCHEMA,
                     name: row.TABLE_NAME,
-                    type: row.OBJECT_TYPE === 'view' ? 'view' : 'table',
+                    type: row.OBJECT_TYPE === 'view' ? 'view' as const : 'table' as const,
                     columns: columnsByTable.get(`${row.TABLE_SCHEMA}.${row.TABLE_NAME}`)
                 }));
+
+                try {
+                    const scriptsQuery = `
+                        SELECT SCRIPT_SCHEMA, SCRIPT_NAME
+                        FROM SYS.EXA_ALL_SCRIPTS
+                        WHERE SCRIPT_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
+                        ORDER BY SCRIPT_SCHEMA, SCRIPT_NAME
+                    `;
+                    const scriptResult = await this.safeQuery(driver, scriptsQuery);
+                    const scriptRows = getRowsFromResult(scriptResult);
+                    for (const row of scriptRows) {
+                        objects.push({
+                            schema: row.SCRIPT_SCHEMA,
+                            name: row.SCRIPT_NAME,
+                            type: 'script'
+                        });
+                    }
+                } catch (error) {
+                    getOutputChannel()?.appendLine(`Completions: Failed to fetch scripts: ${error}`);
+                }
+
+                try {
+                    const functionsQuery = `
+                        SELECT FUNCTION_SCHEMA, FUNCTION_NAME
+                        FROM SYS.EXA_ALL_FUNCTIONS
+                        WHERE FUNCTION_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
+                        ORDER BY FUNCTION_SCHEMA, FUNCTION_NAME
+                    `;
+                    const funcResult = await this.safeQuery(driver, functionsQuery);
+                    const funcRows = getRowsFromResult(funcResult);
+                    for (const row of funcRows) {
+                        objects.push({
+                            schema: row.FUNCTION_SCHEMA,
+                            name: row.FUNCTION_NAME,
+                            type: 'function'
+                        });
+                    }
+                } catch (error) {
+                    getOutputChannel()?.appendLine(`Completions: Failed to fetch functions: ${error}`);
+                }
+
+                try {
+                    const virtualTablesQuery = `
+                        SELECT TABLE_SCHEMA, TABLE_NAME
+                        FROM SYS.EXA_ALL_VIRTUAL_TABLES
+                        ORDER BY TABLE_SCHEMA, TABLE_NAME
+                    `;
+                    const vtResult = await this.safeQuery(driver, virtualTablesQuery);
+                    const vtRows = getRowsFromResult(vtResult);
+                    for (const row of vtRows) {
+                        objects.push({
+                            schema: row.TABLE_SCHEMA,
+                            name: row.TABLE_NAME,
+                            type: 'virtual-table'
+                        });
+                    }
+                } catch (error) {
+                    getOutputChannel()?.appendLine(`Completions: Failed to fetch virtual tables: ${error}`);
+                }
+
+                try {
+                    const systemTablesQuery = `
+                        SELECT SCHEMA_NAME AS TABLE_SCHEMA, OBJECT_NAME AS TABLE_NAME
+                        FROM SYS.EXA_SYSCAT
+                        WHERE SCHEMA_NAME IN ('SYS', 'EXA_STATISTICS')
+                        ORDER BY SCHEMA_NAME, OBJECT_NAME
+                    `;
+                    const stResult = await this.safeQuery(driver, systemTablesQuery);
+                    const stRows = getRowsFromResult(stResult);
+                    for (const row of stRows) {
+                        objects.push({
+                            schema: row.TABLE_SCHEMA,
+                            name: row.TABLE_NAME,
+                            type: 'system-table'
+                        });
+                    }
+                } catch (error) {
+                    getOutputChannel()?.appendLine(`Completions: Failed to fetch system tables: ${error}`);
+                }
 
                 // Update cache
                 this.cache.set(connectionId, objects);
