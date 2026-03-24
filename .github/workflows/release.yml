@@ -62,3 +62,15 @@ jobs:
             --notes-file release-notes.md
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Publish to VS Marketplace
+        if: steps.check.outputs.exists == 'false'
+        run: npx vsce publish --packagePath exasol-vscode-${{ steps.version.outputs.version }}.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Publish to Open VSX
+        if: steps.check.outputs.exists == 'false'
+        run: npx ovsx publish exasol-vscode-${{ steps.version.outputs.version }}.vsix
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
