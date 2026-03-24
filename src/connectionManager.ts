@@ -41,6 +41,8 @@ const RECONNECT_DELAY_MS = 2_000;
 const FAILURE_COOLDOWN_MS = 5_000;
 /** Skip SELECT 1 validation if a query succeeded within this window (ms). */
 const VALIDATION_SKIP_MS = 10_000;
+/** Timeout in ms for background operations (tree, completion, session) to prevent mutex deadlock. */
+export const BACKGROUND_QUERY_TIMEOUT_MS = 30_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
     let timer: NodeJS.Timeout;
@@ -53,27 +55,37 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 }
 
 
+export type DriverRole = 'user' | 'background';
+
 export class ConnectionManager {
     private connections: Map<string, StoredConnection> = new Map();
     private activeConnection: string | null = null;
-    private drivers: Map<string, ExasolDriver> = new Map();
-    private connectingPromises: Map<string, Promise<ExasolDriver>> = new Map();
+    private drivers: Map<string, Map<DriverRole, ExasolDriver>> = new Map();
+    private connectingPromises: Map<string, Map<DriverRole, Promise<ExasolDriver>>> = new Map();
     /** Tracks recent connection failures to prevent cascading reconnection attempts. */
-    private recentFailures: Map<string, { error: Error; timestamp: number }> = new Map();
-    /** Timestamp of the last successful driver.query() per connection, used to skip redundant validation. */
-    private lastSuccessfulQuery: Map<string, number> = new Map();
-    /** Serializes driver access (validation + query) to prevent pool exhaustion. */
-    private queryMutex: Promise<void> = Promise.resolve();
+    private recentFailures: Map<string, Map<DriverRole, { error: Error; timestamp: number }>> = new Map();
+    /** Timestamp of the last successful driver.query() per connection+role, used to skip redundant validation. */
+    private lastSuccessfulQuery: Map<string, Map<DriverRole, number>> = new Map();
+    /** Serializes driver access per role to prevent pool exhaustion. */
+    private userMutex: Promise<void> = Promise.resolve();
+    private backgroundMutex: Promise<void> = Promise.resolve();
+    /** Timer for deferred cleanup of old connection drivers on switch. */
+    private switchCleanupTimer: ReturnType<typeof setTimeout> | undefined;
+    /** Tracks last use of background drivers for idle cleanup. */
+    private backgroundLastUsed: Map<string, number> = new Map();
+    /** Interval timer for background driver idle cleanup. */
+    private backgroundIdleTimer: ReturnType<typeof setInterval> | undefined;
     private readonly connectionsChangedEmitter = new vscode.EventEmitter<void>();
     readonly onDidChangeConnections = this.connectionsChangedEmitter.event;
     private readonly activeConnectionChangedEmitter = new vscode.EventEmitter<StoredConnection | undefined>();
     readonly onDidChangeActiveConnection = this.activeConnectionChangedEmitter.event;
 
-    constructor(private context: vscode.ExtensionContext) {
+    constructor(private context: vscode.ExtensionContext, private extensionVersion: string = '0.0.0') {
         void this.loadConnections().then(() => {
             this.notifyConnectionsChanged();
             this.notifyActiveConnectionChanged();
         });
+        this.startBackgroundIdleCleanup();
     }
 
     private async loadConnections() {
@@ -164,12 +176,8 @@ export class ConnectionManager {
         // Test connection
         await this.testConnection(updated);
 
-        // Close existing driver if any
-        const driver = this.drivers.get(id);
-        if (driver) {
-            await driver.close();
-            this.drivers.delete(id);
-        }
+        // Close existing drivers (both roles)
+        await this.resetDriver(id);
 
         // Update connection
         this.connections.set(id, updated);
@@ -212,12 +220,8 @@ export class ConnectionManager {
         // Remove password from secure storage
         await this.context.secrets.delete(`exasol.password.${id}`);
 
-        // Close driver if exists
-        const driver = this.drivers.get(id);
-        if (driver) {
-            await driver.close();
-            this.drivers.delete(id);
-        }
+        // Close all drivers for this connection (both roles)
+        await this.resetDriver(id);
 
         const wasActive = this.activeConnection === id;
 
@@ -248,8 +252,30 @@ export class ConnectionManager {
         if (!this.connections.has(id)) {
             throw new Error(`Connection ${id} not found`);
         }
+
+        const oldId = this.activeConnection;
+
+        // Cancel any pending cleanup timer (e.g. user switching back)
+        if (this.switchCleanupTimer) {
+            clearTimeout(this.switchCleanupTimer);
+            this.switchCleanupTimer = undefined;
+        }
+
         this.activeConnection = id;
         this.notifyActiveConnectionChanged();
+
+        // Schedule deferred cleanup of old connection's drivers (2 minutes)
+        if (oldId && oldId !== id && this.drivers.has(oldId)) {
+            const SWITCH_CLEANUP_MS = 2 * 60 * 1000;
+            this.switchCleanupTimer = setTimeout(async () => {
+                if (this.activeConnection !== oldId) {
+                    const outputChannel = getOutputChannel();
+                    outputChannel.appendLine(`Closing idle drivers for previous connection '${this.connections.get(oldId)?.name}'`);
+                    await this.resetDriver(oldId);
+                }
+                this.switchCleanupTimer = undefined;
+            }, SWITCH_CLEANUP_MS);
+        }
     }
 
     getActiveConnection(): StoredConnection | undefined {
@@ -259,7 +285,7 @@ export class ConnectionManager {
         return this.connections.get(this.activeConnection);
     }
 
-    async getDriver(connectionId?: string): Promise<ExasolDriver> {
+    async getDriver(connectionId?: string, role: DriverRole = 'user'): Promise<ExasolDriver> {
         const id = connectionId || this.activeConnection;
 
         if (!id) {
@@ -273,58 +299,71 @@ export class ConnectionManager {
 
         // If a recent connection attempt failed, re-throw the cached error
         // instead of spawning another reconnection sequence
-        const recent = this.recentFailures.get(id);
+        const recentMap = this.recentFailures.get(id);
+        const recent = recentMap?.get(role);
         if (recent && Date.now() - recent.timestamp < FAILURE_COOLDOWN_MS) {
             throw recent.error;
         }
 
         let isReconnect = false;
 
-        // Check if we have an existing driver
-        if (this.drivers.has(id)) {
-            const driver = this.drivers.get(id)!;
+        // Check if we have an existing driver for this role
+        const roleMap = this.drivers.get(id);
+        if (roleMap?.has(role)) {
+            const driver = roleMap.get(role)!;
 
             // Validate the connection is still alive
-            const isValid = await this.validateDriver(driver, id);
+            const isValid = await this.validateDriver(driver, id, role);
             if (isValid) {
                 return driver;
             }
 
             // Connection is stale — close old driver to free the WebSocket, then reconnect
             const outputChannel = getOutputChannel();
-            outputChannel.appendLine(`Connection ${connection.name} appears stale, reconnecting...`);
-            this.drivers.delete(id);
-            this.lastSuccessfulQuery.delete(id);
+            outputChannel.appendLine(`Connection ${connection.name} (${role}) appears stale, reconnecting...`);
+            roleMap.delete(role);
+            this.lastSuccessfulQuery.get(id)?.delete(role);
             try { await withTimeout(driver.close(), 2000, 'Driver close timeout'); } catch { /* ignore close errors */ }
             isReconnect = true;
         }
 
-        // Dedup: if already connecting, wait for that promise
-        if (this.connectingPromises.has(id)) {
-            return this.connectingPromises.get(id)!;
+        // Dedup: if already connecting for this role, wait for that promise
+        const connectingMap = this.connectingPromises.get(id);
+        if (connectingMap?.has(role)) {
+            return connectingMap.get(role)!;
         }
 
         // Connect with retry + progress
-        const promise = this.connectWithRetry(connection, isReconnect);
-        this.connectingPromises.set(id, promise);
+        const promise = this.connectWithRetry(connection, isReconnect, role);
+        if (!this.connectingPromises.has(id)) {
+            this.connectingPromises.set(id, new Map());
+        }
+        this.connectingPromises.get(id)!.set(role, promise);
         try {
             const driver = await promise;
-            this.drivers.set(id, driver);
-            this.recentFailures.delete(id);
+            if (!this.drivers.has(id)) {
+                this.drivers.set(id, new Map());
+            }
+            this.drivers.get(id)!.set(role, driver);
+            // Clear failure cache on success
+            this.recentFailures.get(id)?.delete(role);
             return driver;
         } catch (error) {
             const err = error instanceof Error ? error : new Error(String(error));
             // Don't cache intentional user cancellation — they should be able to retry immediately
             if (!err.message.includes('cancelled by user')) {
-                this.recentFailures.set(id, { error: err, timestamp: Date.now() });
+                if (!this.recentFailures.has(id)) {
+                    this.recentFailures.set(id, new Map());
+                }
+                this.recentFailures.get(id)!.set(role, { error: err, timestamp: Date.now() });
             }
             throw err;
         } finally {
-            this.connectingPromises.delete(id);
+            this.connectingPromises.get(id)?.delete(role);
         }
     }
 
-    private async connectWithRetry(connection: StoredConnection, isReconnect: boolean): Promise<ExasolDriver> {
+    private async connectWithRetry(connection: StoredConnection, isReconnect: boolean, role: DriverRole = 'user'): Promise<ExasolDriver> {
         const title = isReconnect
             ? `Reconnecting to ${connection.name}...`
             : `Connecting to ${connection.name}...`;
@@ -341,7 +380,7 @@ export class ConnectionManager {
                         if (attempt > 1) {
                             _progress.report({ message: `Attempt ${attempt}/${RECONNECT_MAX_ATTEMPTS}...` });
                         }
-                        return await this.createDriver(connection);
+                        return await this.createDriver(connection, role);
                     } catch (error) {
                         // Fingerprint errors are never retriable — they require user action
                         if (extractFingerprintError(error)) {
@@ -369,23 +408,34 @@ export class ConnectionManager {
         );
     }
 
-    async resetDriver(connectionId?: string): Promise<void> {
+    async resetDriver(connectionId?: string, role?: DriverRole): Promise<void> {
         const id = connectionId || this.activeConnection;
         if (!id) {
             return;
         }
 
-        this.recentFailures.delete(id);
-        this.lastSuccessfulQuery.delete(id);
-
-        const driver = this.drivers.get(id);
-        if (driver) {
-            try {
-                await driver.close();
-            } catch (error) {
-                // Ignore errors when closing
+        if (role) {
+            // Reset a specific role only
+            this.recentFailures.get(id)?.delete(role);
+            this.lastSuccessfulQuery.get(id)?.delete(role);
+            const roleMap = this.drivers.get(id);
+            const driver = roleMap?.get(role);
+            if (driver) {
+                try { await driver.close(); } catch { /* ignore */ }
+                roleMap!.delete(role);
             }
-            this.drivers.delete(id);
+        } else {
+            // Reset all roles
+            this.recentFailures.delete(id);
+            this.lastSuccessfulQuery.delete(id);
+            this.backgroundLastUsed.delete(id);
+            const roleMap = this.drivers.get(id);
+            if (roleMap) {
+                for (const driver of roleMap.values()) {
+                    try { await driver.close(); } catch { /* ignore */ }
+                }
+                this.drivers.delete(id);
+            }
         }
     }
 
@@ -419,38 +469,108 @@ export class ConnectionManager {
      *
      * @param fn The function to execute
      * @param connectionId Optional connection ID (defaults to active connection)
+     * @param options Optional timeout and cancellation token
      * @returns The result of the function
      */
-    async executeWithRetry<T>(fn: () => Promise<T>, connectionId?: string): Promise<T> {
+    async executeWithRetry<T>(
+        fn: () => Promise<T>,
+        connectionId?: string,
+        options?: { timeoutMs?: number; cancellationToken?: vscode.CancellationToken; role?: DriverRole }
+    ): Promise<T> {
         const id = connectionId || this.activeConnection;
+        const role = options?.role ?? 'user';
+
+        // Wrap fn with timeout/cancellation racing
+        const raceable = (): Promise<T> => {
+            const fnPromise = fn();
+            if (!options?.timeoutMs && !options?.cancellationToken) {
+                return fnPromise;
+            }
+
+            const races: Promise<T>[] = [fnPromise];
+            const cleanups: (() => void)[] = [];
+
+            if (options.timeoutMs) {
+                let timer: ReturnType<typeof setTimeout>;
+                races.push(new Promise<T>((_, reject) => {
+                    timer = setTimeout(() => reject(new Error(
+                        `Operation timed out after ${options.timeoutMs! / 1000}s`
+                    )), options.timeoutMs);
+                }));
+                cleanups.push(() => clearTimeout(timer));
+            }
+
+            if (options.cancellationToken) {
+                let disposable: vscode.Disposable | undefined;
+                races.push(new Promise<T>((_, reject) => {
+                    if (options.cancellationToken!.isCancellationRequested) {
+                        reject(new Error('Operation cancelled'));
+                        return;
+                    }
+                    disposable = options.cancellationToken!.onCancellationRequested(() =>
+                        reject(new Error('Operation cancelled'))
+                    );
+                }));
+                cleanups.push(() => disposable?.dispose());
+            }
+
+            return Promise.race(races).finally(() => cleanups.forEach(c => c()));
+        };
+
         try {
-            const result = await this.runExclusive(fn);
+            const result = await this.runExclusive(raceable, role);
             // Track successful query so validateDriver can skip SELECT 1
             if (id) {
-                this.lastSuccessfulQuery.set(id, Date.now());
+                if (!this.lastSuccessfulQuery.has(id)) {
+                    this.lastSuccessfulQuery.set(id, new Map());
+                }
+                this.lastSuccessfulQuery.get(id)!.set(role, Date.now());
+                if (role === 'background') {
+                    this.backgroundLastUsed.set(id, Date.now());
+                }
             }
             return result;
         } catch (error) {
+            const msg = error instanceof Error ? error.message : '';
+            const isAbort = msg.includes('timed out') || msg.includes('cancelled');
+
+            if (isAbort && id) {
+                // Timeout or cancellation: the driver call is still running in the
+                // background on the old pool connection. Invalidate the driver so the
+                // next caller creates a fresh connection instead of queuing behind it.
+                const roleMap = this.drivers.get(id);
+                const staleDriver = roleMap?.get(role);
+                roleMap?.delete(role);
+                this.lastSuccessfulQuery.get(id)?.delete(role);
+                // Fire-and-forget close with timeout — don't block on it
+                if (staleDriver) {
+                    withTimeout(staleDriver.close(), 2000, 'close').catch(() => {});
+                }
+                throw error;
+            }
+
             // Check if it's a connection-related error that requires reconnection
-            if (this.isConnectionError(error) && id && this.drivers.has(id)) {
+            if (this.isConnectionError(error) && id && this.drivers.get(id)?.has(role)) {
                 // Only retry if a driver existed — meaning the query itself failed
                 // on an established connection. If no driver exists, getDriver()/
                 // connectWithRetry() already exhausted its retries; retrying here
                 // would just double-stack connection attempts.
                 const outputChannel = getOutputChannel();
-                outputChannel.appendLine(`Connection error detected, retrying...`);
+                outputChannel.appendLine(`Connection error detected (${role}), retrying...`);
 
                 // Clear stale caches so getDriver() validates properly on retry.
-                // We intentionally do NOT call resetDriver() here — we're outside
-                // the mutex, so another caller may have already reconnected. Calling
-                // resetDriver() would destroy that fresh connection. Instead, let
-                // getDriver() (inside fn) validate and reconnect if needed.
-                this.recentFailures.delete(id);
-                this.lastSuccessfulQuery.delete(id);
+                this.recentFailures.get(id)?.delete(role);
+                this.lastSuccessfulQuery.get(id)?.delete(role);
 
-                const result = await this.runExclusive(fn);
+                const result = await this.runExclusive(raceable, role);
                 if (id) {
-                    this.lastSuccessfulQuery.set(id, Date.now());
+                    if (!this.lastSuccessfulQuery.has(id)) {
+                        this.lastSuccessfulQuery.set(id, new Map());
+                    }
+                    this.lastSuccessfulQuery.get(id)!.set(role, Date.now());
+                    if (role === 'background') {
+                        this.backgroundLastUsed.set(id, Date.now());
+                    }
                 }
                 return result;
             }
@@ -484,28 +604,31 @@ export class ConnectionManager {
      * Callers queue behind each other so only one query runs at a time,
      * preventing E-EDJS-8 "pool reached its limit" errors.
      */
-    private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-        const prev = this.queryMutex;
-        let resolve!: () => void;
-        this.queryMutex = new Promise<void>(r => { resolve = r; });
-        return prev.then(fn).finally(resolve);
+    private runExclusive<T>(fn: () => Promise<T>, role: DriverRole = 'user'): Promise<T> {
+        if (role === 'background') {
+            const prev = this.backgroundMutex;
+            let resolve!: () => void;
+            this.backgroundMutex = new Promise<void>(r => { resolve = r; });
+            return prev.then(fn).finally(resolve);
+        } else {
+            const prev = this.userMutex;
+            let resolve!: () => void;
+            this.userMutex = new Promise<void>(r => { resolve = r; });
+            return prev.then(fn).finally(resolve);
+        }
     }
 
-    private async validateDriver(driver: ExasolDriver, connectionId: string): Promise<boolean> {
+    private async validateDriver(driver: ExasolDriver, connectionId: string, role: DriverRole = 'user'): Promise<boolean> {
         try {
             // FAST CHECK: WebSocket state for instant detection of dead connections
             if (!this.isWebSocketHealthy(driver)) {
                 const outputChannel = getOutputChannel();
-                outputChannel.appendLine(`WebSocket is closed or closing - connection is stale`);
+                outputChannel.appendLine(`WebSocket is closed or closing - connection is stale (${role})`);
                 return false;
             }
 
             // SKIP expensive SELECT 1 if a query succeeded recently.
-            // The ping/pong keep-alive (30s) terminates dead WebSockets proactively,
-            // so the fast check above catches most stale connections. The SELECT 1
-            // only helps detect server-side session expiry, which is rare within
-            // the skip window.
-            const lastSuccess = this.lastSuccessfulQuery.get(connectionId);
+            const lastSuccess = this.lastSuccessfulQuery.get(connectionId)?.get(role);
             if (lastSuccess && Date.now() - lastSuccess < VALIDATION_SKIP_MS) {
                 return true;
             }
@@ -520,11 +643,14 @@ export class ConnectionManager {
                 validationTimeout,
                 'Validation timeout'
             );
-            this.lastSuccessfulQuery.set(connectionId, Date.now());
+            if (!this.lastSuccessfulQuery.has(connectionId)) {
+                this.lastSuccessfulQuery.set(connectionId, new Map());
+            }
+            this.lastSuccessfulQuery.get(connectionId)!.set(role, Date.now());
             return true;
         } catch (error) {
             const outputChannel = getOutputChannel();
-            outputChannel.appendLine(`Connection validation failed: ${error}`);
+            outputChannel.appendLine(`Connection validation failed (${role}): ${error}`);
             return false;
         }
     }
@@ -620,15 +746,18 @@ export class ConnectionManager {
         }
     }
 
-    private async createDriver(connection: StoredConnection): Promise<ExasolDriver> {
+    private async createDriver(connection: StoredConnection, role: DriverRole = 'user'): Promise<ExasolDriver> {
         await this.validateFingerprint(connection);
         const wsErrors: { lastError?: Error } = {};
+        const clientName = role === 'background' ? 'VSCode Exasol (background)' : 'VSCode Exasol';
         const driver = new ExasolDriver(this.createWebSocketFactory(connection, wsErrors), {
             host: connection.host,
             port: connection.port,
             user: connection.user,
             password: connection.password,
-            encryption: true
+            encryption: true,
+            clientName,
+            clientVersion: this.extensionVersion
         });
 
         try {
@@ -660,7 +789,9 @@ export class ConnectionManager {
             port: connection.port,
             user: connection.user,
             password: connection.password,
-            encryption: true
+            encryption: true,
+            clientName: 'VSCode Exasol',
+            clientVersion: this.extensionVersion
         });
 
         try {
@@ -688,12 +819,63 @@ export class ConnectionManager {
         }
     }
 
+    async disconnectConnection(connectionId?: string): Promise<void> {
+        const id = connectionId || this.activeConnection;
+        if (!id) {
+            return;
+        }
+
+        await this.resetDriver(id);
+
+        if (this.activeConnection === id) {
+            this.activeConnection = null;
+            this.notifyActiveConnectionChanged();
+        }
+    }
+
+    isConnected(connectionId: string): boolean {
+        const roleMap = this.drivers.get(connectionId);
+        return !!roleMap && roleMap.size > 0;
+    }
+
+    private startBackgroundIdleCleanup(): void {
+        const BACKGROUND_IDLE_MS = 5 * 60 * 1000; // 5 minutes
+        this.backgroundIdleTimer = setInterval(() => {
+            const now = Date.now();
+            for (const [connId, roleMap] of this.drivers) {
+                if (!roleMap.has('background')) {
+                    continue;
+                }
+                const lastUsed = this.backgroundLastUsed.get(connId) ?? 0;
+                if (now - lastUsed > BACKGROUND_IDLE_MS) {
+                    const driver = roleMap.get('background')!;
+                    roleMap.delete('background');
+                    driver.close().catch(() => {});
+                    this.backgroundLastUsed.delete(connId);
+                    const outputChannel = getOutputChannel();
+                    outputChannel.appendLine(`Closed idle background driver for '${this.connections.get(connId)?.name}'`);
+                }
+            }
+        }, 60_000);
+    }
+
     async closeAll(): Promise<void> {
-        for (const driver of this.drivers.values()) {
-            await driver.close();
+        if (this.switchCleanupTimer) {
+            clearTimeout(this.switchCleanupTimer);
+            this.switchCleanupTimer = undefined;
+        }
+        if (this.backgroundIdleTimer) {
+            clearInterval(this.backgroundIdleTimer);
+            this.backgroundIdleTimer = undefined;
+        }
+        for (const roleMap of this.drivers.values()) {
+            for (const driver of roleMap.values()) {
+                try { await driver.close(); } catch { /* ignore */ }
+            }
         }
         this.drivers.clear();
         this.recentFailures.clear();
         this.lastSuccessfulQuery.clear();
+        this.backgroundLastUsed.clear();
     }
 }

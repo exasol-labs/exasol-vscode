@@ -70,10 +70,6 @@ export class QueryExecutor {
         return await this.connectionManager.executeWithRetry(async () => {
             const driver = await this.connectionManager.getDriver();
 
-            if (cancellationToken?.isCancellationRequested) {
-                throw new Error('Query execution was cancelled');
-            }
-
             // Classify the query to determine which driver method to use
             const isResultSet = this.isResultSetQuery(finalQuery);
 
@@ -95,10 +91,6 @@ export class QueryExecutor {
                     }
                 }
 
-                if (cancellationToken?.isCancellationRequested) {
-                    throw new Error('Query execution was cancelled');
-                }
-
                 const executionTime = Date.now() - startTime;
                 const columnsMeta = getColumnsFromResult(result);
                 const rows = getRowsFromResult(result);
@@ -115,10 +107,6 @@ export class QueryExecutor {
             } else {
                 // Non-result-set commands (CREATE, ALTER, DROP, RENAME, INSERT, etc.) - use execute()
                 const rawExecuteResult = await driver.execute(finalQuery, undefined, undefined, 'raw');
-
-                if (cancellationToken?.isCancellationRequested) {
-                    throw new Error('Query execution was cancelled');
-                }
 
                 const executionTime = Date.now() - startTime;
                 const columnsMeta = getColumnsFromResult(rawExecuteResult);
@@ -138,7 +126,7 @@ export class QueryExecutor {
                     executionTime
                 };
             }
-        });
+        }, undefined, cancellationToken ? { cancellationToken } : undefined);
     }
 
     setCancellationToken(token: vscode.CancellationTokenSource) {
