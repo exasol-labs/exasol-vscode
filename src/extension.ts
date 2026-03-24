@@ -645,6 +645,7 @@ async function executeQuery(
                                     // Reset cancellation state so the batch can continue
                                     if (cancelled) {
                                         cancelled = false;
+                                        cancellationTokenSource.dispose();
                                         cancellationTokenSource = new vscode.CancellationTokenSource();
                                         cancellationTokenSource.token.onCancellationRequested(() => {
                                             cancelled = true;
@@ -669,6 +670,15 @@ async function executeQuery(
                                     break;
                                 } else {
                                     output.appendLine(`   ⏩ Continuing with remaining queries...`);
+                                    // Reset cancellation state so the batch can continue
+                                    if (cancelled) {
+                                        cancelled = false;
+                                        cancellationTokenSource.dispose();
+                                        cancellationTokenSource = new vscode.CancellationTokenSource();
+                                        cancellationTokenSource.token.onCancellationRequested(() => {
+                                            cancelled = true;
+                                        });
+                                    }
                                 }
                             } else {
                                 // Single query or last query - just throw

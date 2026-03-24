@@ -38,10 +38,18 @@ export class SessionManager {
         }
 
         try {
-            await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(undefined, 'background');
-                await executeWithoutResult(driver, `OPEN SCHEMA ${schemaName}`);
-            }, undefined, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
+            // Open schema on both connections so user queries and background operations
+            // (tree, completions) both see the correct schema context
+            await Promise.all([
+                this.connectionManager.executeWithRetry(async () => {
+                    const driver = await this.connectionManager.getDriver();
+                    await executeWithoutResult(driver, `OPEN SCHEMA ${schemaName}`);
+                }),
+                this.connectionManager.executeWithRetry(async () => {
+                    const driver = await this.connectionManager.getDriver(undefined, 'background');
+                    await executeWithoutResult(driver, `OPEN SCHEMA ${schemaName}`);
+                }, undefined, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' }),
+            ]);
             this.currentSchema = schemaName;
             await this.saveSession();
             this._onDidChangeSession.fire();
