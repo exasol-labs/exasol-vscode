@@ -2,6 +2,11 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.3.2] - 2026-03-24
+
+### Changed
+- Release workflow now automatically publishes to the VS Marketplace
+
 ## [1.3.0] - 2026-03-18
 
 ### Added
