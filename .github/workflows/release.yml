@@ -70,7 +70,7 @@ jobs:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
       - name: Publish to Open VSX
-        if: steps.check.outputs.exists == 'false' && secrets.OVSX_PAT != ''
+        if: steps.check.outputs.exists == 'false' && env.OVSX_PAT != ''
         run: npx ovsx publish exasol-vscode-${{ steps.version.outputs.version }}.vsix
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
