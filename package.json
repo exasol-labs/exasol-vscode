@@ -82,6 +82,11 @@
         "title": "Exasol: Execute Selected Query"
       },
       {
+        "command": "exasol.executeScript",
+        "title": "Exasol: Execute Script",
+        "icon": "$(run-all)"
+      },
+      {
         "command": "exasol.showQueryHistory",
         "title": "Exasol: Show Query History",
         "icon": "$(history)"
@@ -133,6 +138,11 @@
       {
         "command": "exasol.setActiveConnection",
         "title": "Exasol: Set Active Connection"
+      },
+      {
+        "command": "exasol.disconnectConnection",
+        "title": "Exasol: Disconnect",
+        "icon": "$(debug-disconnect)"
       },
       {
         "command": "exasol.openObject",
@@ -287,26 +297,36 @@
           "group": "connection@0"
         },
         {
-          "command": "exasol.editConnection",
+          "command": "exasol.disconnectConnection",
           "when": "view == exasol.connections && viewItem == connection",
           "group": "connection@1"
         },
         {
-          "command": "exasol.deleteConnection",
+          "command": "exasol.editConnection",
           "when": "view == exasol.connections && viewItem == connection",
           "group": "connection@2"
         },
         {
-          "command": "exasol.renameConnection",
+          "command": "exasol.deleteConnection",
           "when": "view == exasol.connections && viewItem == connection",
           "group": "connection@3"
+        },
+        {
+          "command": "exasol.renameConnection",
+          "when": "view == exasol.connections && viewItem == connection",
+          "group": "connection@4"
         }
       ],
       "editor/context": [
         {
           "command": "exasol.executeSelectedQuery",
           "when": "editorLangId == exasol-sql",
-          "group": "exasol"
+          "group": "exasol@1"
+        },
+        {
+          "command": "exasol.executeScript",
+          "when": "editorLangId == exasol-sql",
+          "group": "exasol@2"
         }
       ],
       "commandPalette": [
@@ -315,6 +335,9 @@
         },
         {
           "command": "exasol.executeSelectedQuery"
+        },
+        {
+          "command": "exasol.executeScript"
         },
         {
           "command": "exasol.clearCache"
@@ -357,6 +380,9 @@
         },
         {
           "command": "exasol.findObject"
+        },
+        {
+          "command": "exasol.disconnectConnection"
         }
       ]
     },
@@ -444,6 +470,12 @@
         "when": "editorTextFocus && editorLangId == exasol-sql"
       },
       {
+        "command": "exasol.executeScript",
+        "key": "ctrl+alt+enter",
+        "mac": "cmd+alt+enter",
+        "when": "editorLangId == exasol-sql"
+      },
+      {
         "command": "exasol.findObject",
         "key": "ctrl+shift+f",
         "mac": "cmd+shift+f",
@@ -486,5 +518,9 @@
     "@types/ws": "^8.18.1",
     "sql-formatter": "^15.7.2",
     "ws": "^8.19.0"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.3",
+    "@tootallnate/once": "^3.0.1"
   }
 }

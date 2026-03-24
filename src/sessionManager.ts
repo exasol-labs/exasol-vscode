@@ -39,9 +39,9 @@ export class SessionManager {
 
         try {
             await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver();
+                const driver = await this.connectionManager.getDriver(undefined, 'background');
                 await executeWithoutResult(driver, `OPEN SCHEMA ${schemaName}`);
-            }, undefined, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
+            }, undefined, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
             this.currentSchema = schemaName;
             await this.saveSession();
             this._onDidChangeSession.fire();
@@ -64,10 +64,10 @@ export class SessionManager {
 
         try {
             const rows = await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver();
+                const driver = await this.connectionManager.getDriver(undefined, 'background');
                 const result = await driver.query('SELECT CURRENT_SCHEMA');
                 return getRowsFromResult(result);
-            }, undefined, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
+            }, undefined, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
             if (rows.length > 0) {
                 this.currentSchema = rows[0].CURRENT_SCHEMA;
                 await this.saveSession();

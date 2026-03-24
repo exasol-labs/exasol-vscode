@@ -36,10 +36,22 @@ All notable changes to the "Exasol" extension will be documented in this file.
 
 ## [1.3.1] - 2026-03-24
 
+### Added
+- **Separate background connection** — object tree, autocompletion, and session queries use a dedicated connection so long-running user queries no longer block the sidebar (fixes #27)
+- **Disconnect command** — right-click a connection or use the command palette to close all sessions without removing the profile
+- **Execute Script command** (`Cmd+Alt+Enter` / `Ctrl+Alt+Enter`) — runs all statements in the current file regardless of cursor position or selection (fixes #26)
+- **Application name in sessions** — connections identify as "VSCode Exasol" in `EXA_*_SESSIONS.CLIENT` instead of the generic "Javascript client"
+- Idle connection cleanup: background drivers close after 5 minutes of inactivity; old connections close 2 minutes after switching away
+- Proper shutdown: `deactivate()` now closes all database sessions on extension exit
+
 ### Fixed
+- Editor no longer loses focus when query results are displayed (fixes #25)
 - Background operations (tree, completion, session) have a 30s timeout so a hanging query can't freeze the extension
 - User query cancellation now aborts in-flight driver calls instead of only checking between queries
 - Clicking "Continue" after cancelling a batch query now properly resumes execution with a fresh cancellation token
+
+### Security
+- Resolved 4 Dependabot alerts (3 high, 1 low) in dev dependencies via dependency updates and overrides
 
 ## [1.1.2] - 2026-02-25
 

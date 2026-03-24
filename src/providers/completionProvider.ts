@@ -157,12 +157,12 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
     private async loadReservedKeywords(connectionId: string): Promise<void> {
         try {
             await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connectionId);
+                const driver = await this.connectionManager.getDriver(connectionId, 'background');
                 const result = await this.safeQuery(driver, 'SELECT keyword FROM sys.exa_sql_keywords WHERE reserved');
                 const rows = getRowsFromResult(result);
                 this.reservedKeywords = new Set(rows.map((r: any) => r.KEYWORD.toUpperCase()));
                 this.reservedKeywordsLoaded = true;
-            }, connectionId, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
+            }, connectionId, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
         } catch (error) {
             console.error('Failed to load reserved keywords:', error);
             // Fallback to common reserved keywords
@@ -342,7 +342,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connectionId);
+                const driver = await this.connectionManager.getDriver(connectionId, 'background');
                 const schemasQuery = `
                     SELECT SCHEMA_NAME
                     FROM SYS.EXA_SCHEMAS
@@ -371,7 +371,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                 // Cache schemas
                 this.schemasCache.set(connectionId, schemas);
                 return schemas;
-            }, connectionId, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
+            }, connectionId, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
         } catch (error) {
             console.error('Failed to fetch schemas:', error);
             return [];
@@ -389,7 +389,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connectionId);
+                const driver = await this.connectionManager.getDriver(connectionId, 'background');
 
                 // Fetch tables and views with their schemas
                 const tablesQuery = `
@@ -526,7 +526,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                 this.cacheExpiry.set(connectionId, Date.now() + this.CACHE_TTL);
 
                 return objects;
-            }, connectionId, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
+            }, connectionId, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
         } catch (error) {
             console.error('Failed to fetch database objects:', error);
             return [];

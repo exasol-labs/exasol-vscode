@@ -19,6 +19,7 @@ import { findStatementAtCursor, splitIntoStatements } from './utils';
 // Create output channel for logging
 let outputChannel: vscode.OutputChannel;
 let extensionContext: vscode.ExtensionContext | undefined;
+let extensionConnectionManager: ConnectionManager | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     extensionContext = context;
@@ -29,7 +30,9 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('Exasol extension is now active');
 
     // Initialize managers
-    const connectionManager = new ConnectionManager(context);
+    const extensionVersion = context.extension.packageJSON.version ?? '0.0.0';
+    const connectionManager = new ConnectionManager(context, extensionVersion);
+    extensionConnectionManager = connectionManager;
     const queryExecutor = new QueryExecutor(connectionManager);
     const sessionManager = new SessionManager(connectionManager, context);
     const objectActions = new ObjectActions(connectionManager, queryExecutor, context.extensionUri);
@@ -160,6 +163,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     const executeSelectedQueryCmd = vscode.commands.registerCommand('exasol.executeSelectedQuery', async () => {
         await executeQuery(queryExecutor, queryHistoryProvider, context, true, connectionManager);
+    });
+
+    const executeScriptCmd = vscode.commands.registerCommand('exasol.executeScript', async () => {
+        await executeQuery(queryExecutor, queryHistoryProvider, context, false, connectionManager, true);
     });
 
     const executeStatementCmd = vscode.commands.registerCommand('exasol.executeStatement', async (document: vscode.TextDocument, range: vscode.Range) => {
@@ -296,6 +303,32 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    const disconnectConnectionCmd = vscode.commands.registerCommand('exasol.disconnectConnection', async (item: any) => {
+        const connection: StoredConnection | undefined = item?.connection;
+        const output = getOutputChannel();
+        let name: string;
+
+        if (connection) {
+            name = connection.name;
+            await connectionManager.disconnectConnection(connection.id);
+        } else {
+            const active = connectionManager.getActiveConnection();
+            if (!active) {
+                vscode.window.showWarningMessage('No active connection to disconnect.');
+                return;
+            }
+            name = active.name;
+            await connectionManager.disconnectConnection(active.id);
+        }
+
+        // Clear session state and refresh UI
+        await sessionManager.clearSession();
+        connectionTreeProvider.refresh();
+        objectTreeProvider.refresh();
+        output.appendLine(`Disconnected from '${name}'`);
+        vscode.window.setStatusBarMessage(`Exasol: Disconnected from '${name}'`, 3000);
+    });
+
     const copyQualifiedNameCmd = vscode.commands.registerCommand('exasol.copyQualifiedName', async (item: any) => {
         let qualifiedName: string | undefined;
 
@@ -362,6 +395,7 @@ export function activate(context: vscode.ExtensionContext) {
         refreshConnectionsCmd,
         executeQueryCmd,
         executeSelectedQueryCmd,
+        executeScriptCmd,
         executeStatementCmd,
         showQueryHistoryCmd,
         exportResultsCmd,
@@ -378,6 +412,7 @@ export function activate(context: vscode.ExtensionContext) {
         deleteConnectionCmd,
         renameConnectionCmd,
         setActiveConnectionCmd,
+        disconnectConnectionCmd,
         copyQualifiedNameCmd,
         selectConnectionCmd,
         findObjectCmd,
@@ -443,7 +478,8 @@ async function executeQuery(
     queryHistoryProvider: QueryHistoryProvider,
     context: vscode.ExtensionContext,
     selectedOnly: boolean,
-    connectionManager: ConnectionManager
+    connectionManager: ConnectionManager,
+    fullFile: boolean = false
 ) {
     const output = getOutputChannel();
     const editor = vscode.window.activeTextEditor;
@@ -462,7 +498,11 @@ async function executeQuery(
     const selection = editor.selection;
     const hasSelection = !selection.isEmpty;
 
-    if (selectedOnly || hasSelection) {
+    if (fullFile) {
+        // Execute entire file regardless of selection or cursor
+        queryText = editor.document.getText();
+        output.appendLine('📄 Executing entire script');
+    } else if (selectedOnly || hasSelection) {
         // Execute selected text if explicitly requested OR if there's a selection
         queryText = editor.document.getText(selection);
         if (hasSelection) {
@@ -805,6 +845,9 @@ async function executeStatement(
     }
 }
 
-export function deactivate() {
+export async function deactivate() {
     console.log('Exasol extension is now deactivated');
+    if (extensionConnectionManager) {
+        await extensionConnectionManager.closeAll();
+    }
 }

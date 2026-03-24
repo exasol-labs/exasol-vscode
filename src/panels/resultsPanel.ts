@@ -46,7 +46,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         ResultsPanel.currentError = undefined;
         ResultsPanel.instance.tabManager.clearTabs();
         ResultsPanel.instance.updateWebview();
-        vscode.commands.executeCommand('exasol.results.focus');
+        ResultsPanel.instance.revealWithoutFocus();
     }
 
     public static showError(error: string) {
@@ -57,7 +57,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         ResultsPanel.currentResult = undefined;
         ResultsPanel.instance.tabManager.clearTabs();
         ResultsPanel.instance.updateWebview();
-        vscode.commands.executeCommand('exasol.results.focus');
+        ResultsPanel.instance.revealWithoutFocus();
     }
 
     public static showMultiple(tabs: TabResult[]) {
@@ -68,11 +68,17 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         ResultsPanel.currentError = undefined;
         ResultsPanel.instance.tabManager.setTabs(tabs);
         ResultsPanel.instance.updateWebview();
-        vscode.commands.executeCommand('exasol.results.focus');
+        ResultsPanel.instance.revealWithoutFocus();
     }
 
     public static async exportCurrentToCSV() {
         await ResultsPanel.instance?.exportToCSV();
+    }
+
+    private revealWithoutFocus(): void {
+        if (this.view) {
+            this.view.show(true); // preserveFocus = true
+        }
     }
 
     resolveWebviewView(webviewView: vscode.WebviewView): void | Thenable<void> {

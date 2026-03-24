@@ -629,7 +629,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 outputChannel?.appendLine(`   Getting driver for connection ID: ${connection.id}`);
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 outputChannel?.appendLine(`   Driver obtained, running schema query with object counts...`);
 
             // Try to get schema counts in a single query
@@ -675,7 +675,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 outputChannel?.appendLine(`   Schema query returned ${rows.length} rows`);
                 return rows.map((row: any) => ({ name: row.SCHEMA_NAME }));
             }
-            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
+            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`   Error fetching schemas: ${error}`);
             throw new Error(`Failed to fetch schemas: ${error}`);
@@ -689,7 +689,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const attempts: Array<{
                 description: string;
                 sql: string;
@@ -784,7 +784,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             }
 
                 throw lastError ?? new Error('Unknown error fetching tables');
-            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
+            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`   Error in fetchTables: ${error}`);
             throw new Error(`Failed to fetch tables: ${error}`);
@@ -796,7 +796,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 outputChannel?.appendLine(`   Running views query for schema '${schemaName}'`);
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
 
                 const attempts: Array<{
                 description: string;
@@ -878,7 +878,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             }
 
                 throw lastError ?? new Error('Unknown error fetching views');
-            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
+            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`   Error in fetchViews: ${error}`);
             outputChannel?.appendLine(`   Error stack: ${(error as Error).stack}`);
@@ -893,7 +893,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
     ): Promise<Array<{ name: string; type: string; nullable: boolean }>> {
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT
                         COLUMN_NAME,
@@ -910,7 +910,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     type: row.COLUMN_TYPE,
                     nullable: row.COLUMN_IS_NULLABLE
                 }));
-            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS });
+            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
         } catch (error) {
             throw new Error(`Failed to fetch columns: ${error}`);
         }
@@ -923,7 +923,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT SCRIPT_TYPE, COUNT(*) AS SCRIPT_COUNT
                     FROM SYS.EXA_ALL_SCRIPTS
@@ -940,7 +940,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     }
                 }
                 return counts;
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch script counts for '${schemaName}': ${error}`);
             return new Map();
@@ -954,7 +954,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT COUNT(*) AS FUNCTION_COUNT
                     FROM SYS.EXA_ALL_FUNCTIONS
@@ -965,7 +965,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     return this.parseRowCount(rows[0].FUNCTION_COUNT) ?? 0;
                 }
                 return 0;
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch function count for '${schemaName}': ${error}`);
             return 0;
@@ -980,7 +980,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT
                         SCRIPT_NAME,
@@ -999,7 +999,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     inputType: row.SCRIPT_INPUT_TYPE ?? null,
                     scriptType: row.SCRIPT_TYPE
                 }));
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch scripts (${scriptType}) for '${schemaName}': ${error}`);
             return [];
@@ -1013,7 +1013,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT FUNCTION_NAME
                     FROM SYS.EXA_ALL_FUNCTIONS
@@ -1024,7 +1024,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 return rows.map((row: any) => ({
                     name: row.FUNCTION_NAME
                 }));
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch functions for '${schemaName}': ${error}`);
             return [];
@@ -1039,7 +1039,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT COUNT(*) AS CONSTRAINT_COUNT
                     FROM SYS.EXA_ALL_CONSTRAINTS
@@ -1051,7 +1051,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     return this.parseRowCount(rows[0].CONSTRAINT_COUNT) ?? 0;
                 }
                 return 0;
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch constraint count for '${schemaName}'.'${tableName}': ${error}`);
             return 0;
@@ -1066,7 +1066,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT COUNT(*) AS INDEX_COUNT
                     FROM SYS.EXA_ALL_INDICES
@@ -1078,7 +1078,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     return this.parseRowCount(rows[0].INDEX_COUNT) ?? 0;
                 }
                 return 0;
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch index count for '${schemaName}'.'${tableName}': ${error}`);
             return 0;
@@ -1093,7 +1093,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
                     FROM SYS.EXA_ALL_CONSTRAINTS
@@ -1106,7 +1106,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     name: row.CONSTRAINT_NAME,
                     type: row.CONSTRAINT_TYPE
                 }));
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch constraints for '${schemaName}'.'${tableName}': ${error}`);
             return [];
@@ -1122,7 +1122,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT COLUMN_NAME, ORDINAL_POSITION
                     FROM SYS.EXA_ALL_CONSTRAINT_COLUMNS
@@ -1135,7 +1135,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 return rows.map((row: any) => ({
                     name: row.COLUMN_NAME
                 }));
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch constraint columns for '${constraintName}': ${error}`);
             return [];
@@ -1150,7 +1150,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT INDEX_NAME, INDEX_TYPE, INDEX_COLUMNS
                     FROM SYS.EXA_ALL_INDICES
@@ -1163,7 +1163,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     name: row.INDEX_NAME ?? row.INDEX_TYPE ?? 'INDEX',
                     columns: row.INDEX_COLUMNS ?? ''
                 }));
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch indices for '${schemaName}'.'${tableName}': ${error}`);
             return [];
@@ -1176,7 +1176,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT
                         SCHEMA_NAME,
@@ -1194,7 +1194,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     lastRefresh: row.LAST_REFRESH ?? undefined,
                     lastRefreshBy: row.LAST_REFRESH_BY ?? undefined
                 }));
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch virtual schemas: ${error}`);
             return [];
@@ -1208,7 +1208,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT TABLE_NAME
                     FROM SYS.EXA_ALL_VIRTUAL_TABLES
@@ -1219,7 +1219,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 return rows.map((row: any) => ({
                     name: row.TABLE_NAME
                 }));
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch virtual tables for '${virtualSchemaName}': ${error}`);
             return [];
@@ -1234,7 +1234,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT COLUMN_NAME, COLUMN_TYPE
                     FROM SYS.EXA_ALL_VIRTUAL_COLUMNS
@@ -1247,7 +1247,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     name: row.COLUMN_NAME,
                     type: row.COLUMN_TYPE
                 }));
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch virtual columns for '${virtualSchemaName}'.'${tableName}': ${error}`);
             return [];
@@ -1261,7 +1261,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     SELECT OBJECT_NAME
                     FROM SYS.EXA_SYSCAT
@@ -1272,7 +1272,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 return rows.map((row: any) => ({
                     name: row.OBJECT_NAME
                 }));
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch system tables for '${schemaName}': ${error}`);
             return [];
@@ -1287,7 +1287,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         const outputChannel = getOutputChannel();
         try {
             return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+                const driver = await this.connectionManager.getDriver(connection.id, 'background');
                 const result = await driver.query(`
                     DESCRIBE "${escapeSqlString(schemaName)}"."${escapeSqlString(tableName)}"
                 `, undefined, undefined, 'raw');
@@ -1296,7 +1296,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     name: row.COLUMN_NAME,
                     type: row.SQL_TYPE ?? 'UNKNOWN'
                 }));
-            }, connection.id);
+            }, connection.id, { role: 'background' });
         } catch (error) {
             outputChannel?.appendLine(`Failed to fetch system table columns for '${schemaName}'.'${tableName}': ${error}`);
             return [];

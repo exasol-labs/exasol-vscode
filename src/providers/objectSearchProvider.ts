@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionManager } from '../connectionManager';
+import { ConnectionManager, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
 import { getRowsFromResult } from '../utils';
 import { ObjectTreeProvider, ObjectTreeItem, ObjectNode } from './objectTreeProvider';
@@ -70,7 +70,7 @@ export class ObjectSearchProvider {
 
     private async fetchAllObjects(connectionId: string): Promise<SearchableObject[]> {
         return await this.connectionManager.executeWithRetry(async () => {
-            const driver = await this.connectionManager.getDriver(connectionId);
+            const driver = await this.connectionManager.getDriver(connectionId, 'background');
             const objects: SearchableObject[] = [];
 
             const tablesResult = await driver.query(`
@@ -181,7 +181,7 @@ export class ObjectSearchProvider {
             }
 
             return objects;
-        }, connectionId);
+        }, connectionId, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
     }
 
     private toQuickPickItem(obj: SearchableObject): vscode.QuickPickItem {
