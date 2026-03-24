@@ -3,7 +3,7 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "1.3.3",
+  "version": "1.4.0",
   "publisher": "exasol",
   "license": "MIT",
   "repository": {
@@ -59,6 +59,15 @@
         "language": "exasol-sql",
         "scopeName": "source.exasol.sql",
         "path": "./syntaxes/exasol-sql.tmLanguage.json"
+      }
+    ],
+    "notebooks": [
+      {
+        "type": "exasol-sql-notebook",
+        "displayName": "Exasol SQL Notebook",
+        "selector": [
+          { "filenamePattern": "*.exabook" }
+        ]
       }
     ],
     "commands": [
@@ -511,8 +520,7 @@
     "mocha": "^11.7.1",
     "ovsx": "^0.10.9",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3",
-    "vscode-test": "^1.6.1"
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "@exasol/exasol-driver-ts": "^0.3.1",

@@ -1,0 +1,32 @@
+[
+  {
+    "kind": 1,
+    "language": "markdown",
+    "value": "# Exasol SQL Notebook Demo\n\nThis notebook demonstrates interactive SQL execution against Exasol.\nMake sure you have an active connection before running cells."
+  },
+  {
+    "kind": 2,
+    "language": "exasol-sql",
+    "value": "SELECT CURRENT_TIMESTAMP, CURRENT_USER, CURRENT_SCHEMA"
+  },
+  {
+    "kind": 1,
+    "language": "markdown",
+    "value": "## Browse schemas"
+  },
+  {
+    "kind": 2,
+    "language": "exasol-sql",
+    "value": "SELECT SCHEMA_NAME, SCHEMA_OWNER\nFROM SYS.EXA_SCHEMAS\nORDER BY SCHEMA_NAME"
+  },
+  {
+    "kind": 1,
+    "language": "markdown",
+    "value": "## Check active sessions"
+  },
+  {
+    "kind": 2,
+    "language": "exasol-sql",
+    "value": "SELECT SESSION_ID, USER_NAME, STATUS, CLIENT\nFROM EXA_ALL_SESSIONS\nORDER BY SESSION_ID"
+  }
+]

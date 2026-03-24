@@ -19,5 +19,6 @@ esbuild.mjs
 CLAUDE.md
 .claude/**
 specs/**
+examples/**
 .serena/**
 vendor/**

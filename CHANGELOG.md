@@ -2,11 +2,19 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.4.0] - 2026-03-31
+
+### Added
+- **SQL Notebooks** — interactive `.exabook` notebooks with SQL code cells, inline HTML result tables, markdown documentation cells, execution order tracking, and cancellation support
+- CodeLens "Execute" links are now hidden in notebook cells (notebooks have their own run buttons)
+
+### Changed
+- Removed deprecated `vscode-test` dependency (replaced by `@vscode/test-electron`)
+
 ## [1.3.3] - 2026-03-31
 
 ### Changed
-- Show individual list of errors instead of `AggregateError` when multiple error occur
-
+- Show individual list of errors instead of `AggregateError` when multiple errors occur
 
 ## [1.3.2] - 2026-03-24
 
