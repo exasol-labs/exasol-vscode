@@ -11,6 +11,10 @@ export type TlsMode = 'off' | 'fingerprint' | 'full';
  * instead of Error instances.
  */
 export function formatError(error: unknown): string {
+    if (error instanceof AggregateError && error.errors?.length) {
+        const inner = error.errors.map(e => formatError(e)).join('; ');
+        return error.message ? `${error.message}: ${inner}` : inner;
+    }
     if (error instanceof Error) {
         // Some errors (e.g. from ws/Node.js net) have an empty message but a useful .code
         const code = (error as any).code;
