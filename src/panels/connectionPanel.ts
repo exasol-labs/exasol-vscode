@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionManager, ExasolConnection, FingerprintRequiredError, FingerprintMismatchError, normalizeFingerprint, extractFingerprintError, TlsMode } from '../connectionManager';
+import { ConnectionManager, ExasolConnection, FingerprintRequiredError, FingerprintMismatchError, normalizeFingerprint, extractFingerprintError, TlsMode, formatError } from '../connectionManager';
 
 export class ConnectionPanel {
     public static currentPanel: ConnectionPanel | undefined;
@@ -169,7 +169,7 @@ export class ConnectionPanel {
                 return;
             }
 
-            const errorMsg = String(error);
+            const errorMsg = formatError(error);
             this.outputChannel.appendLine(`❌ Connection test failed: ${errorMsg}`);
             this._panel.webview.postMessage({ command: 'error', error: errorMsg });
         }

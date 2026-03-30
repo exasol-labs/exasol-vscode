@@ -15,6 +15,7 @@ import { SessionManager } from './sessionManager';
 import { ObjectActions } from './objectActions';
 import { ObjectSearchProvider } from './providers/objectSearchProvider';
 import { findStatementAtCursor, splitIntoStatements } from './utils';
+import { formatError } from './connectionTypes';
 
 // Create output channel for logging
 let outputChannel: vscode.OutputChannel;
@@ -616,7 +617,7 @@ async function executeQuery(
                         }
 
                     } catch (error) {
-                        const errorMsg = String(error);
+                        const errorMsg = formatError(error);
 
                         if (statements.length > 1) {
                             output.appendLine(`   ❌ Query ${queryNum} failed: ${errorMsg}`);
@@ -843,7 +844,7 @@ async function executeStatement(
             }
         );
     } catch (error) {
-        const errorMsg = String(error);
+        const errorMsg = formatError(error);
         output.appendLine(`❌ Query failed: ${errorMsg}`);
 
         // Show error in results panel

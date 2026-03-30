@@ -100,6 +100,22 @@ suite('formatError', () => {
     test('handles numbers', () => {
         assert.strictEqual(formatError(42), '42');
     });
+
+    test('unpacks AggregateError inner errors', () => {
+        const inner1 = new Error('connect ECONNREFUSED 10.0.0.1:8563');
+        const inner2 = new Error('connect ETIMEDOUT 10.0.0.2:8563');
+        const agg = new AggregateError([inner1, inner2], 'All connection attempts failed');
+        assert.strictEqual(
+            formatError(agg),
+            'All connection attempts failed: connect ECONNREFUSED 10.0.0.1:8563; connect ETIMEDOUT 10.0.0.2:8563'
+        );
+    });
+
+    test('unpacks AggregateError with no message', () => {
+        const inner = new Error('ECONNREFUSED');
+        const agg = new AggregateError([inner]);
+        assert.strictEqual(formatError(agg), 'ECONNREFUSED');
+    });
 });
 
 suite('FingerprintRequiredError', () => {
