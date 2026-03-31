@@ -5,8 +5,11 @@ All notable changes to the "Exasol" extension will be documented in this file.
 ## [1.3.3] - 2026-03-31
 
 ### Changed
-- Show individual list of errors instead of `AggregateError` when multiple error occur
+- Show individual list of errors instead of `AggregateError` when multiple errors occur
 
+### Fixed
+- Fixed TypeError crash ("Cannot read properties of undefined reading 'numResults'") when database returns error responses during queries, object tree browsing, search, and autocomplete
+- SQL error messages now include the error code (e.g., `SQL Error [42000]: object not found`)
 
 ## [1.3.2] - 2026-03-24
 
