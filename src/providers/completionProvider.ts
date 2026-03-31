@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
-import { getRowsFromResult } from '../utils';
+import { getRowsFromResult, rawQuery } from '../utils';
 
 interface DatabaseObject {
     schema: string;
@@ -158,7 +158,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         try {
             await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connectionId, 'background');
-                const result = await this.safeQuery(driver, 'SELECT keyword FROM sys.exa_sql_keywords WHERE reserved');
+                const result = await rawQuery(driver, 'SELECT keyword FROM sys.exa_sql_keywords WHERE reserved');
                 const rows = getRowsFromResult(result);
                 this.reservedKeywords = new Set(rows.map((r: any) => r.KEYWORD.toUpperCase()));
                 this.reservedKeywordsLoaded = true;
@@ -349,14 +349,14 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                     WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
                     ORDER BY SCHEMA_NAME
                 `;
-                const result = await this.safeQuery(driver, schemasQuery);
+                const result = await rawQuery(driver, schemasQuery);
                 const rows = getRowsFromResult(result);
                 const schemas = rows.map((r: any) => r.SCHEMA_NAME);
 
                 schemas.push('SYS', 'EXA_STATISTICS');
 
                 try {
-                    const vsResult = await this.safeQuery(driver, 'SELECT SCHEMA_NAME FROM SYS.EXA_ALL_VIRTUAL_SCHEMAS ORDER BY SCHEMA_NAME');
+                    const vsResult = await rawQuery(driver, 'SELECT SCHEMA_NAME FROM SYS.EXA_ALL_VIRTUAL_SCHEMAS ORDER BY SCHEMA_NAME');
                     const vsRows = getRowsFromResult(vsResult);
                     for (const row of vsRows) {
                         if (!schemas.includes(row.SCHEMA_NAME)) {
@@ -409,7 +409,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                     ORDER BY 1, 2
                 `;
 
-                const result = await this.safeQuery(driver, tablesQuery);
+                const result = await rawQuery(driver, tablesQuery);
                 const tableRows = getRowsFromResult(result);
 
                 // Fetch ALL columns in one bulk query instead of N per-table queries.
@@ -422,7 +422,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                 `;
                 const columnsByTable = new Map<string, string[]>();
                 try {
-                    const colResult = await this.safeQuery(driver, allColumnsQuery);
+                    const colResult = await rawQuery(driver, allColumnsQuery);
                     const colRows = getRowsFromResult(colResult);
                     for (const row of colRows) {
                         const key = `${row.COLUMN_SCHEMA}.${row.COLUMN_TABLE}`;
@@ -449,7 +449,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                         WHERE SCRIPT_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
                         ORDER BY SCRIPT_SCHEMA, SCRIPT_NAME
                     `;
-                    const scriptResult = await this.safeQuery(driver, scriptsQuery);
+                    const scriptResult = await rawQuery(driver, scriptsQuery);
                     const scriptRows = getRowsFromResult(scriptResult);
                     for (const row of scriptRows) {
                         objects.push({
@@ -469,7 +469,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                         WHERE FUNCTION_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
                         ORDER BY FUNCTION_SCHEMA, FUNCTION_NAME
                     `;
-                    const funcResult = await this.safeQuery(driver, functionsQuery);
+                    const funcResult = await rawQuery(driver, functionsQuery);
                     const funcRows = getRowsFromResult(funcResult);
                     for (const row of funcRows) {
                         objects.push({
@@ -488,7 +488,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                         FROM SYS.EXA_ALL_VIRTUAL_TABLES
                         ORDER BY TABLE_SCHEMA, TABLE_NAME
                     `;
-                    const vtResult = await this.safeQuery(driver, virtualTablesQuery);
+                    const vtResult = await rawQuery(driver, virtualTablesQuery);
                     const vtRows = getRowsFromResult(vtResult);
                     for (const row of vtRows) {
                         objects.push({
@@ -508,7 +508,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                         WHERE SCHEMA_NAME IN ('SYS', 'EXA_STATISTICS')
                         ORDER BY SCHEMA_NAME, OBJECT_NAME
                     `;
-                    const stResult = await this.safeQuery(driver, systemTablesQuery);
+                    const stResult = await rawQuery(driver, systemTablesQuery);
                     const stRows = getRowsFromResult(stResult);
                     for (const row of stRows) {
                         objects.push({
@@ -547,15 +547,4 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         }
     }
 
-    private async safeQuery(driver: any, sql: string): Promise<any> {
-        try {
-            return await driver.query(sql);
-        } catch (error) {
-            const message = (error instanceof Error ? error.message : String(error ?? '')).toUpperCase();
-            if (message.includes('INVALID RESULT TYPE') || message.includes('MALFORMED RESULT')) {
-                return await driver.query(sql, undefined, undefined, 'raw');
-            }
-            throw error;
-        }
-    }
 }

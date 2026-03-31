@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { QueryExecutor, QueryResult, ColumnMetadata } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
-import { getColumnsFromResult, getRowsFromResult } from './utils';
+import { getColumnsFromResult, getRowsFromResult, rawQuery } from './utils';
 
 export class ObjectActions {
     constructor(
@@ -54,7 +54,7 @@ export class ObjectActions {
                         const driver = await this.connectionManager.getDriver(connection.id);
 
                         const startTime = Date.now();
-                        const result = await driver.query(query);
+                        const result = await rawQuery(driver, query);
                         const executionTime = Date.now() - startTime;
 
                         const columnsMeta = getColumnsFromResult(result);
@@ -95,7 +95,7 @@ export class ObjectActions {
                     AND COLUMN_TABLE = '${tableName}'
                     ORDER BY COLUMN_ORDINAL_POSITION
                 `;
-                const result = await driver.query(query);
+                const result = await rawQuery(driver, query);
                 return getRowsFromResult(result);
             }, connection.id);
 
@@ -131,7 +131,7 @@ export class ObjectActions {
                     WHERE VIEW_SCHEMA = '${schemaName}'
                     AND VIEW_NAME = '${viewName}'
                 `;
-                const result = await driver.query(query);
+                const result = await rawQuery(driver, query);
                 return getRowsFromResult(result);
             }, connection.id);
 
@@ -164,7 +164,7 @@ export class ObjectActions {
                     AND COLUMN_TABLE = '${tableName}'
                     ORDER BY COLUMN_ORDINAL_POSITION
                 `;
-                const result = await driver.query(query);
+                const result = await rawQuery(driver, query);
                 return getRowsFromResult(result);
             }, connection.id);
 
@@ -211,7 +211,7 @@ export class ObjectActions {
                 `;
 
                 const startTime = Date.now();
-                const result = await driver.query(query);
+                const result = await rawQuery(driver, query);
                 const executionTime = Date.now() - startTime;
 
                 const columnsMeta = getColumnsFromResult(result);
