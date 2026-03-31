@@ -2,6 +2,12 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.3.3] - 2026-03-31
+
+### Changed
+- Show individual list of errors instead of `AggregateError` when multiple error occur
+
+
 ## [1.3.2] - 2026-03-24
 
 ### Changed
