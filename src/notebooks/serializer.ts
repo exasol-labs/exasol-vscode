@@ -15,14 +15,22 @@ export class ExasolNotebookSerializer implements vscode.NotebookSerializer {
         try {
             raw = text.trim() ? JSON.parse(text) : [];
         } catch {
+            vscode.window.showWarningMessage('Failed to parse .exabook file — opening as empty notebook.');
             raw = [];
         }
 
-        const cells = raw.map(cell => new vscode.NotebookCellData(
-            cell.kind === 1 ? vscode.NotebookCellKind.Markup : vscode.NotebookCellKind.Code,
-            cell.value,
-            cell.language
-        ));
+        if (!Array.isArray(raw)) {
+            vscode.window.showWarningMessage('Invalid .exabook format — expected an array of cells.');
+            raw = [];
+        }
+
+        const cells = raw
+            .filter(cell => typeof cell.value === 'string')
+            .map(cell => new vscode.NotebookCellData(
+                cell.kind === 1 ? vscode.NotebookCellKind.Markup : vscode.NotebookCellKind.Code,
+                cell.value,
+                typeof cell.language === 'string' ? cell.language : 'exasol-sql'
+            ));
 
         return new vscode.NotebookData(cells);
     }
