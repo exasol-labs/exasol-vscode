@@ -20,6 +20,7 @@ A Visual Studio Code extension for working with Exasol databases. Provides datab
 - **Object actions** — right-click to preview data, show DDL, generate SELECT, describe table
 - **Results viewer** — sortable, filterable grid with CSV export and cell inspection
 - **Query history** — automatic tracking with execution time, row counts, and error indicators
+- **SQL Notebooks** — interactive `.exabook` notebooks with SQL cells, inline results, and markdown documentation
 - **SQL formatting** — configurable keyword case, indentation, and statement spacing
 - **Session management** — active schema tracking, persistent state across restarts
 
@@ -29,6 +30,7 @@ A Visual Studio Code extension for working with Exasol databases. Provides datab
 |--------|---------------|-----|
 | Execute query | `Ctrl+Enter` | `Cmd+Enter` |
 | Execute selection | `Ctrl+Shift+Enter` | `Cmd+Shift+Enter` |
+| Execute entire script | `Ctrl+Alt+Enter` | `Cmd+Alt+Enter` |
 | Find database object | `Ctrl+Shift+F` (objects view) | `Cmd+Shift+F` (objects view) |
 
 ## Configuration

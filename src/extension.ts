@@ -15,6 +15,8 @@ import { SessionManager } from './sessionManager';
 import { ObjectActions } from './objectActions';
 import { ObjectSearchProvider } from './providers/objectSearchProvider';
 import { findStatementAtCursor, splitIntoStatements } from './utils';
+import { ExasolNotebookSerializer } from './notebooks/serializer';
+import { ExasolNotebookController } from './notebooks/controller';
 import { formatError } from './connectionTypes';
 
 // Create output channel for logging
@@ -46,6 +48,14 @@ export function activate(context: vscode.ExtensionContext) {
     // Register panel views
     ResultsPanel.register(context);
     QueryStatsPanel.register(context);
+
+    // Register notebook support
+    const notebookSerializer = vscode.workspace.registerNotebookSerializer(
+        'exasol-sql-notebook',
+        new ExasolNotebookSerializer(),
+        { transientOutputs: true }
+    );
+    const notebookController = new ExasolNotebookController(connectionManager, queryExecutor);
 
     // Register completion provider
     const completionProvider = new ExasolCompletionProvider(connectionManager);
@@ -431,7 +441,9 @@ export function activate(context: vscode.ExtensionContext) {
         statusBarItem,
         outputChannel,
         connectionsChanged,
-        activeConnectionChanged
+        activeConnectionChanged,
+        notebookSerializer,
+        notebookController
     );
 
     return {
