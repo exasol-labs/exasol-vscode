@@ -1,42 +1,26 @@
 import * as vscode from 'vscode';
-
-interface RawNotebookCell {
-    kind: number; // 1 = Markup, 2 = Code
-    language: string;
-    value: string;
-}
+import { parseExabookCells } from './notebookUtils';
 
 export class ExasolNotebookSerializer implements vscode.NotebookSerializer {
 
     deserializeNotebook(content: Uint8Array, _token: vscode.CancellationToken): vscode.NotebookData {
-        const text = new TextDecoder().decode(content);
-        let raw: RawNotebookCell[];
+        const { cells, warnings } = parseExabookCells(new TextDecoder().decode(content));
 
-        try {
-            raw = text.trim() ? JSON.parse(text) : [];
-        } catch {
-            vscode.window.showWarningMessage('Failed to parse .exabook file — opening as empty notebook.');
-            raw = [];
+        for (const w of warnings) {
+            vscode.window.showWarningMessage(w);
         }
 
-        if (!Array.isArray(raw)) {
-            vscode.window.showWarningMessage('Invalid .exabook format — expected an array of cells.');
-            raw = [];
-        }
+        const notebookCells = cells.map(cell => new vscode.NotebookCellData(
+            cell.kind === 1 ? vscode.NotebookCellKind.Markup : vscode.NotebookCellKind.Code,
+            cell.value,
+            cell.language,
+        ));
 
-        const cells = raw
-            .filter(cell => cell != null && typeof cell.value === 'string')
-            .map(cell => new vscode.NotebookCellData(
-                cell.kind === 1 ? vscode.NotebookCellKind.Markup : vscode.NotebookCellKind.Code,
-                cell.value,
-                typeof cell.language === 'string' ? cell.language : 'exasol-sql'
-            ));
-
-        return new vscode.NotebookData(cells);
+        return new vscode.NotebookData(notebookCells);
     }
 
     serializeNotebook(data: vscode.NotebookData, _token: vscode.CancellationToken): Uint8Array {
-        const raw: RawNotebookCell[] = data.cells.map(cell => ({
+        const raw = data.cells.map(cell => ({
             kind: cell.kind === vscode.NotebookCellKind.Markup ? 1 : 2,
             language: cell.languageId,
             value: cell.value
