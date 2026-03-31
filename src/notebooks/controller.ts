@@ -2,10 +2,12 @@ import * as vscode from 'vscode';
 import { ConnectionManager } from '../connectionManager';
 import { QueryExecutor, QueryResult } from '../queryExecutor';
 import { getOutputChannel } from '../extension';
+import { formatError } from '../connectionTypes';
 
 export class ExasolNotebookController {
     private readonly controller: vscode.NotebookController;
     private executionOrder = 0;
+    private interrupted = false;
 
     constructor(
         private connectionManager: ConnectionManager,
@@ -28,7 +30,11 @@ export class ExasolNotebookController {
     }
 
     private async executeCells(cells: vscode.NotebookCell[]): Promise<void> {
+        this.interrupted = false;
         for (const cell of cells) {
+            if (this.interrupted) {
+                break;
+            }
             await this.executeCell(cell);
         }
     }
@@ -68,7 +74,7 @@ export class ExasolNotebookController {
 
         try {
             const result = await this.queryExecutor.execute(sql, cancellationTokenSource.token);
-            const html = this.renderResult(result, sql);
+            const html = this.renderResult(result);
 
             execution.replaceOutput([
                 new vscode.NotebookCellOutput([
@@ -77,7 +83,7 @@ export class ExasolNotebookController {
             ]);
             execution.end(true, Date.now());
         } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
+            const msg = formatError(error);
             output.appendLine(`Notebook cell error: ${msg}`);
             execution.replaceOutput([
                 new vscode.NotebookCellOutput([
@@ -91,10 +97,10 @@ export class ExasolNotebookController {
     }
 
     private interrupt(): void {
-        // Cancellation is handled per-cell via execution.token
+        this.interrupted = true;
     }
 
-    private renderResult(result: QueryResult, sql: string): string {
+    private renderResult(result: QueryResult): string {
         const { columns, rows, rowCount, executionTime } = result;
 
         // Non-result-set queries (CREATE, INSERT, etc.)
@@ -106,11 +112,7 @@ export class ExasolNotebookController {
             </div>`;
         }
 
-        // Result-set queries — render HTML table
-        const maxDisplay = 500;
-        const truncated = rows.length > maxDisplay;
-        const displayRows = truncated ? rows.slice(0, maxDisplay) : rows;
-
+        // Result-set queries — render HTML table (row count already capped by maxResultRows setting)
         let html = `<style>
             .exasol-nb-table { border-collapse:collapse; font-family:var(--vscode-editor-font-family); font-size:var(--vscode-editor-font-size); }
             .exasol-nb-table th { background:var(--vscode-editor-selectionBackground); color:var(--vscode-editor-foreground); padding:4px 8px; text-align:left; border:1px solid var(--vscode-panel-border); position:sticky; top:0; }
@@ -120,7 +122,7 @@ export class ExasolNotebookController {
             .exasol-nb-meta { font-family:var(--vscode-editor-font-family); font-size:var(--vscode-editor-font-size); color:var(--vscode-descriptionForeground); padding:4px 0; }
         </style>`;
 
-        html += `<div class="exasol-nb-meta">${rows.length} row(s) — ${executionTime}ms${truncated ? ` (showing first ${maxDisplay})` : ''}</div>`;
+        html += `<div class="exasol-nb-meta">${rows.length} row(s) — ${executionTime}ms</div>`;
         html += '<table class="exasol-nb-table"><thead><tr>';
 
         for (const col of columns) {
@@ -128,7 +130,7 @@ export class ExasolNotebookController {
         }
         html += '</tr></thead><tbody>';
 
-        for (const row of displayRows) {
+        for (const row of rows) {
             html += '<tr>';
             for (const col of columns) {
                 const val = row[col];

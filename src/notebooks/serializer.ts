@@ -25,7 +25,7 @@ export class ExasolNotebookSerializer implements vscode.NotebookSerializer {
         }
 
         const cells = raw
-            .filter(cell => typeof cell.value === 'string')
+            .filter(cell => cell != null && typeof cell.value === 'string')
             .map(cell => new vscode.NotebookCellData(
                 cell.kind === 1 ? vscode.NotebookCellKind.Markup : vscode.NotebookCellKind.Code,
                 cell.value,
