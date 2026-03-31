@@ -15,6 +15,12 @@ export class ExasolCodeLensProvider implements vscode.CodeLensProvider {
         token: vscode.CancellationToken
     ): vscode.CodeLens[] | Thenable<vscode.CodeLens[]> {
         const codeLenses: vscode.CodeLens[] = [];
+
+        // Skip CodeLens in notebook cells — they have their own execute button
+        if (document.uri.scheme === 'vscode-notebook-cell') {
+            return codeLenses;
+        }
+
         const text = document.getText();
         const lines = text.split('\n');
 
