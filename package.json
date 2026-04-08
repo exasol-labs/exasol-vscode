@@ -423,6 +423,11 @@
           "default": true,
           "description": "Enable SQL auto-completion"
         },
+        "exasol.showQueryNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show toast notifications after query execution with success/failure status, duration, and row count"
+        },
         "exasol.formatter.keywordCase": {
           "type": "string",
           "enum": [

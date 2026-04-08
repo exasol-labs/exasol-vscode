@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { performance } from 'perf_hooks';
 import { ConnectionManager } from './connectionManager';
 import { executeWithoutResult, getColumnsFromResult, getRowsFromResult } from './utils';
 
@@ -56,7 +57,7 @@ export class QueryExecutor {
         const maxRows = config.get<number>('maxResultRows', 10000);
         const timeout = config.get<number>('queryTimeout', 300);
 
-        const startTime = Date.now();
+        const startTime = performance.now();
 
         // Clean the query - remove trailing semicolons and trim
         let finalQuery = query.trim().replace(/;+\s*$/, '').trim();
@@ -91,7 +92,7 @@ export class QueryExecutor {
                     }
                 }
 
-                const executionTime = Date.now() - startTime;
+                const executionTime = performance.now() - startTime;
                 const columnsMeta = getColumnsFromResult(result);
                 const rows = getRowsFromResult(result);
                 const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
@@ -108,7 +109,7 @@ export class QueryExecutor {
                 // Non-result-set commands (CREATE, ALTER, DROP, RENAME, INSERT, etc.) - use execute()
                 const rawExecuteResult = await driver.execute(finalQuery, undefined, undefined, 'raw');
 
-                const executionTime = Date.now() - startTime;
+                const executionTime = performance.now() - startTime;
                 const columnsMeta = getColumnsFromResult(rawExecuteResult);
                 const rows = getRowsFromResult(rawExecuteResult);
                 const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
@@ -144,13 +145,13 @@ export class QueryExecutor {
         const config = vscode.workspace.getConfiguration('exasol');
         const maxRows = limit || config.get<number>('maxResultRows', 10000);
 
-        const startTime = Date.now();
+        const startTime = performance.now();
 
         // Use centralized retry logic from ConnectionManager
         return await this.connectionManager.executeWithRetry(async () => {
             const driver = await this.connectionManager.getDriver();
             const result = await driver.query(query);
-            const executionTime = Date.now() - startTime;
+            const executionTime = performance.now() - startTime;
 
             const columnsMeta = getColumnsFromResult(result);
             const rows = getRowsFromResult(result).slice(0, maxRows);

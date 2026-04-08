@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { performance } from 'perf_hooks';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { ConnectionTreeProvider } from './providers/connectionTreeProvider';
 import { ObjectTreeProvider } from './providers/objectTreeProvider';
@@ -14,7 +15,7 @@ import { ConnectionPanel } from './panels/connectionPanel';
 import { SessionManager } from './sessionManager';
 import { ObjectActions } from './objectActions';
 import { ObjectSearchProvider } from './providers/objectSearchProvider';
-import { findStatementAtCursor, splitIntoStatements } from './utils';
+import { findStatementAtCursor, formatDuration, splitIntoStatements } from './utils';
 import { ExasolNotebookSerializer } from './notebooks/serializer';
 import { ExasolNotebookController } from './notebooks/controller';
 import { formatError } from './connectionTypes';
@@ -23,6 +24,16 @@ import { formatError } from './connectionTypes';
 let outputChannel: vscode.OutputChannel;
 let extensionContext: vscode.ExtensionContext | undefined;
 let extensionConnectionManager: ConnectionManager | undefined;
+
+function showTimedNotification(message: string, timeoutMs: number = 2000): void {
+    vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, cancellable: false },
+        (progress) => {
+            progress.report({ message });
+            return new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
+        }
+    );
+}
 
 export function activate(context: vscode.ExtensionContext) {
     extensionContext = context;
@@ -588,6 +599,10 @@ async function executeQuery(
                 const collector = useTabCollection ? new TabResultCollector() : null;
                 let lastResult = null;
 
+                const batchStartTime = performance.now();
+                let successCount = 0;
+                let failCount = 0;
+
                 for (let i = 0; i < statements.length; i++) {
                     const query = statements[i];
                     const queryNum = i + 1;
@@ -614,6 +629,7 @@ async function executeQuery(
 
                         // Keep track of the last result to show in the panel
                         lastResult = result;
+                        successCount++;
 
                         if (statements.length > 1) {
                             output.appendLine(`   ✅ Query ${queryNum} completed. ${result.rowCount} rows affected.`);
@@ -630,6 +646,7 @@ async function executeQuery(
 
                     } catch (error) {
                         const errorMsg = formatError(error);
+                        failCount++;
 
                         if (statements.length > 1) {
                             output.appendLine(`   ❌ Query ${queryNum} failed: ${errorMsg}`);
@@ -713,10 +730,36 @@ async function executeQuery(
                 if (statements.length > 1) {
                     output.appendLine(`\n🎉 Completed executing ${statements.length} queries`);
                 }
+
+                // Show query notifications
+                const showNotifications = vscode.workspace.getConfiguration('exasol').get<boolean>('showQueryNotifications', true);
+                if (showNotifications) {
+                    const totalDuration = formatDuration(performance.now() - batchStartTime);
+
+                    if (statements.length === 1 && lastResult) {
+                        // Single query success in executeQueries path
+                        showTimedNotification(`Query executed in ${formatDuration(lastResult.executionTime)} — ${lastResult.rowCount} rows returned`);
+                    } else if (statements.length > 1) {
+                        // Batch summary
+                        if (failCount === 0) {
+                            showTimedNotification(`${successCount}/${statements.length} queries executed in ${totalDuration}`);
+                        } else {
+                            vscode.window.showWarningMessage(`${successCount}/${statements.length} queries executed (${failCount} failed) in ${totalDuration}`);
+                        }
+                    }
+                }
             }
         );
     } catch (error) {
-        // Error already handled in the loop
+        // Error already handled in the loop — but show failure notification for single-query case
+        const showNotifications = vscode.workspace.getConfiguration('exasol').get<boolean>('showQueryNotifications', true);
+        if (showNotifications && statements.length === 1) {
+            const errorMsg = formatError(error);
+            const action = await vscode.window.showErrorMessage(`Query failed: ${errorMsg}`, 'Show Details');
+            if (action === 'Show Details') {
+                output.show();
+            }
+        }
     } finally {
         cancellationTokenSource.dispose();
     }
@@ -853,6 +896,12 @@ async function executeStatement(
                 QueryStatsPanel.updateStats(query, result);
 
                 output.appendLine(`✅ Query executed successfully. ${result.rowCount} rows returned.`);
+
+                // Show success notification
+                const showNotifications = vscode.workspace.getConfiguration('exasol').get<boolean>('showQueryNotifications', true);
+                if (showNotifications) {
+                    showTimedNotification(`Query executed in ${formatDuration(result.executionTime)} — ${result.rowCount} rows returned`);
+                }
             }
         );
     } catch (error) {
@@ -863,6 +912,15 @@ async function executeStatement(
         await ResultsPanel.showError(errorMsg);
 
         queryHistoryProvider.addQuery(query, 0, errorMsg);
+
+        // Show failure notification
+        const showNotifications = vscode.workspace.getConfiguration('exasol').get<boolean>('showQueryNotifications', true);
+        if (showNotifications) {
+            const action = await vscode.window.showErrorMessage(`Query failed: ${errorMsg}`, 'Show Details');
+            if (action === 'Show Details') {
+                output.show();
+            }
+        }
     } finally {
         cancellationTokenSource.dispose();
     }

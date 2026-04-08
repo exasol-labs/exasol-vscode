@@ -4,6 +4,26 @@
 import type { ExasolDriver, SQLQueriesResponse, SQLQueryColumn, SQLResponse } from '@exasol/exasol-driver-ts';
 
 /**
+ * Format a duration in milliseconds into a human-readable string.
+ * Adapts the unit based on magnitude: ms, seconds, or minutes+seconds.
+ */
+export function formatDuration(ms: number): string {
+    const rounded = Math.round(ms);
+    if (rounded < 1) {
+        return '<1ms';
+    }
+    if (rounded < 1000) {
+        return `${rounded}ms`;
+    }
+    if (ms < 60000) {
+        return `${(ms / 1000).toFixed(1)}s`;
+    }
+    const minutes = Math.floor(ms / 60000);
+    const seconds = Math.round((ms % 60000) / 1000);
+    return `${minutes}m ${seconds}s`;
+}
+
+/**
  * Escape a string value for safe interpolation into SQL single-quoted literals.
  * Doubles all single-quote characters to prevent SQL injection.
  */

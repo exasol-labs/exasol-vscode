@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { performance } from 'perf_hooks';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { QueryExecutor, QueryResult, ColumnMetadata } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
@@ -53,9 +54,9 @@ export class ObjectActions {
                         const query = `SELECT * FROM "${schemaName}"."${tableName}" LIMIT ${limit}`;
                         const driver = await this.connectionManager.getDriver(connection.id);
 
-                        const startTime = Date.now();
+                        const startTime = performance.now();
                         const result = await driver.query(query);
-                        const executionTime = Date.now() - startTime;
+                        const executionTime = performance.now() - startTime;
 
                         const columnsMeta = getColumnsFromResult(result);
                         const rows = getRowsFromResult(result);
@@ -210,9 +211,9 @@ export class ObjectActions {
                     ORDER BY COLUMN_ORDINAL_POSITION
                 `;
 
-                const startTime = Date.now();
+                const startTime = performance.now();
                 const result = await driver.query(query);
-                const executionTime = Date.now() - startTime;
+                const executionTime = performance.now() - startTime;
 
                 const columnsMeta = getColumnsFromResult(result);
                 const rows = getRowsFromResult(result);
