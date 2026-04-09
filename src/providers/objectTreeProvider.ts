@@ -1453,6 +1453,13 @@ export class ObjectTreeItem extends vscode.TreeItem {
                     arguments: [this]
                 };
                 break;
+            case 'system-table':
+                this.command = {
+                    command: 'exasol.openObject',
+                    title: 'Open System Table',
+                    arguments: [this]
+                };
+                break;
             case 'column':
                 if (this.columnInfo) {
                     this.tooltip = `${this.columnInfo.name}: ${this.columnInfo.type}${this.columnInfo.nullable ? ' (nullable)' : ''}`;

@@ -262,8 +262,11 @@ export function activate(context: vscode.ExtensionContext) {
 
             try {
                 openObjectExecuting.set(key, true);
-                // Double-click shows table structure only (not preview)
-                await objectActions.describeTable(item.connection, item.schemaName, item.tableInfo.name);
+                if (item.type === 'system-table') {
+                    await objectActions.previewTableData(item.connection, item.schemaName, item.tableInfo.name);
+                } else {
+                    await objectActions.describeTable(item.connection, item.schemaName, item.tableInfo.name);
+                }
             } finally {
                 // Clear after a short delay to allow UI to settle
                 setTimeout(() => openObjectExecuting.delete(key), 500);
