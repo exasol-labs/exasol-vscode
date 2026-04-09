@@ -2,6 +2,15 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.4.1] - 2026-04-09
+
+### Added
+- Toast notifications after query execution showing duration, row count, and success/failure status (configurable via `exasol.showQueryNotifications`)
+- Double-click on system tables (SYS, EXA_STATISTICS) now opens a data preview instead of column metadata
+
+### Fixed
+- Query execution time displayed as "0.0s" in notifications by switching from `Date.now()` to `performance.now()` for sub-millisecond precision
+
 ## [1.4.0] - 2026-03-31
 
 ### Added
