@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
-import { getRowsFromResult } from '../utils';
+import { getRowsFromResult, rawQuery } from '../utils';
 import { ObjectTreeProvider, ObjectTreeItem, ObjectNode } from './objectTreeProvider';
 import { getNodeTypeConfig, ObjectTreeItemType } from './objectTreeTypes';
 
@@ -73,7 +73,7 @@ export class ObjectSearchProvider {
             const driver = await this.connectionManager.getDriver(connectionId, 'background');
             const objects: SearchableObject[] = [];
 
-            const tablesResult = await driver.query(`
+            const tablesResult = await rawQuery(driver, `
                 SELECT TABLE_SCHEMA, TABLE_NAME, 'table' AS OBJECT_TYPE
                 FROM SYS.EXA_ALL_TABLES
                 WHERE TABLE_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
@@ -92,7 +92,7 @@ export class ObjectSearchProvider {
             }
 
             try {
-                const scriptsResult = await driver.query(`
+                const scriptsResult = await rawQuery(driver, `
                     SELECT SCRIPT_SCHEMA, SCRIPT_NAME
                     FROM SYS.EXA_ALL_SCRIPTS
                     WHERE SCRIPT_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
@@ -110,7 +110,7 @@ export class ObjectSearchProvider {
             }
 
             try {
-                const functionsResult = await driver.query(`
+                const functionsResult = await rawQuery(driver, `
                     SELECT FUNCTION_SCHEMA, FUNCTION_NAME
                     FROM SYS.EXA_ALL_FUNCTIONS
                     WHERE FUNCTION_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
@@ -128,7 +128,7 @@ export class ObjectSearchProvider {
             }
 
             try {
-                const virtualTablesResult = await driver.query(`
+                const virtualTablesResult = await rawQuery(driver, `
                     SELECT TABLE_SCHEMA, TABLE_NAME
                     FROM SYS.EXA_ALL_VIRTUAL_TABLES
                     ORDER BY TABLE_SCHEMA, TABLE_NAME
@@ -145,7 +145,7 @@ export class ObjectSearchProvider {
             }
 
             try {
-                const systemTablesResult = await driver.query(`
+                const systemTablesResult = await rawQuery(driver, `
                     SELECT SCHEMA_NAME AS TABLE_SCHEMA, OBJECT_NAME AS TABLE_NAME
                     FROM SYS.EXA_SYSCAT
                     WHERE SCHEMA_NAME IN ('SYS', 'EXA_STATISTICS')
@@ -163,7 +163,7 @@ export class ObjectSearchProvider {
             }
 
             try {
-                const columnsResult = await driver.query(`
+                const columnsResult = await rawQuery(driver, `
                     SELECT COLUMN_SCHEMA, COLUMN_TABLE, COLUMN_NAME
                     FROM SYS.EXA_ALL_COLUMNS
                     WHERE COLUMN_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')

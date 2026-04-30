@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
-import { getRowsFromResult, escapeSqlString } from '../utils';
+import { getRowsFromResult, escapeSqlString, rawQuery } from '../utils';
 import { ObjectTreeItemType, getNodeTypeConfig } from './objectTreeTypes';
 
 export type ObjectNode = ObjectTreeItem | ObjectMessageItem;
@@ -634,7 +634,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
 
             // Try to get schema counts in a single query
             try {
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT
                         s.SCHEMA_NAME,
                         COALESCE(t.TABLE_COUNT, 0) AS TABLE_COUNT,
@@ -652,7 +652,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     ) v ON s.SCHEMA_NAME = v.VIEW_SCHEMA
                     WHERE s.SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
                     ORDER BY s.SCHEMA_NAME
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 outputChannel?.appendLine(`   Schema query with counts returned ${rows.length} rows`);
                 return rows.map((row: any) => ({
@@ -665,7 +665,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 outputChannel?.appendLine(`   Falling back to simple schema query without counts...`);
 
                 // Fallback to simple query without counts
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT SCHEMA_NAME
                     FROM SYS.EXA_SCHEMAS
                     WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
@@ -766,7 +766,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             for (const attempt of attempts) {
                 outputChannel?.appendLine(`   Running tables query (${attempt.description}) for '${schemaName}'`);
                 try {
-                    const result = await driver.query(attempt.sql, undefined, undefined, 'raw');
+                    const result = await rawQuery(driver, attempt.sql);
                     const rows = getRowsFromResult(result);
                     outputChannel?.appendLine(`   ${attempt.description} returned ${rows.length} rows`);
                     return attempt.map(rows);
@@ -859,7 +859,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             for (const attempt of attempts) {
                 outputChannel?.appendLine(`   Running views query (${attempt.description}) for schema '${schemaName}'`);
                 try {
-                    const rawResult = await driver.query(attempt.sql, undefined, undefined, 'raw');
+                    const rawResult = await rawQuery(driver, attempt.sql);
                     const validated = this.getRawResultOrThrow(rawResult);
                     const rows = getRowsFromResult(validated);
                     outputChannel?.appendLine(`   ${attempt.description} returned ${rows.length} rows`);
@@ -894,7 +894,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT
                         COLUMN_NAME,
                         COLUMN_TYPE,
@@ -924,12 +924,12 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT SCRIPT_TYPE, COUNT(*) AS SCRIPT_COUNT
                     FROM SYS.EXA_ALL_SCRIPTS
                     WHERE SCRIPT_SCHEMA = '${escapeSqlString(schemaName)}'
                     GROUP BY SCRIPT_TYPE
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 const counts = new Map<string, number>();
                 for (const row of rows) {
@@ -955,11 +955,11 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT COUNT(*) AS FUNCTION_COUNT
                     FROM SYS.EXA_ALL_FUNCTIONS
                     WHERE FUNCTION_SCHEMA = '${escapeSqlString(schemaName)}'
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 if (rows.length > 0) {
                     return this.parseRowCount(rows[0].FUNCTION_COUNT) ?? 0;
@@ -981,7 +981,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT
                         SCRIPT_NAME,
                         SCRIPT_LANGUAGE,
@@ -991,7 +991,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     WHERE SCRIPT_SCHEMA = '${escapeSqlString(schemaName)}'
                     AND SCRIPT_TYPE = '${escapeSqlString(scriptType)}'
                     ORDER BY SCRIPT_NAME
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 return rows.map((row: any) => ({
                     name: row.SCRIPT_NAME,
@@ -1014,12 +1014,12 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT FUNCTION_NAME
                     FROM SYS.EXA_ALL_FUNCTIONS
                     WHERE FUNCTION_SCHEMA = '${escapeSqlString(schemaName)}'
                     ORDER BY FUNCTION_NAME
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 return rows.map((row: any) => ({
                     name: row.FUNCTION_NAME
@@ -1040,12 +1040,12 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT COUNT(*) AS CONSTRAINT_COUNT
                     FROM SYS.EXA_ALL_CONSTRAINTS
                     WHERE CONSTRAINT_SCHEMA = '${escapeSqlString(schemaName)}'
                     AND CONSTRAINT_TABLE = '${escapeSqlString(tableName)}'
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 if (rows.length > 0) {
                     return this.parseRowCount(rows[0].CONSTRAINT_COUNT) ?? 0;
@@ -1067,12 +1067,12 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT COUNT(*) AS INDEX_COUNT
                     FROM SYS.EXA_ALL_INDICES
                     WHERE INDEX_SCHEMA = '${escapeSqlString(schemaName)}'
                     AND INDEX_TABLE = '${escapeSqlString(tableName)}'
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 if (rows.length > 0) {
                     return this.parseRowCount(rows[0].INDEX_COUNT) ?? 0;
@@ -1094,13 +1094,13 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
                     FROM SYS.EXA_ALL_CONSTRAINTS
                     WHERE CONSTRAINT_SCHEMA = '${escapeSqlString(schemaName)}'
                     AND CONSTRAINT_TABLE = '${escapeSqlString(tableName)}'
                     ORDER BY CONSTRAINT_NAME
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 return rows.map((row: any) => ({
                     name: row.CONSTRAINT_NAME,
@@ -1123,14 +1123,14 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT COLUMN_NAME, ORDINAL_POSITION
                     FROM SYS.EXA_ALL_CONSTRAINT_COLUMNS
                     WHERE CONSTRAINT_SCHEMA = '${escapeSqlString(schemaName)}'
                     AND CONSTRAINT_TABLE = '${escapeSqlString(tableName)}'
                     AND CONSTRAINT_NAME = '${escapeSqlString(constraintName)}'
                     ORDER BY ORDINAL_POSITION
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 return rows.map((row: any) => ({
                     name: row.COLUMN_NAME
@@ -1151,13 +1151,13 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT INDEX_NAME, INDEX_TYPE, INDEX_COLUMNS
                     FROM SYS.EXA_ALL_INDICES
                     WHERE INDEX_SCHEMA = '${escapeSqlString(schemaName)}'
                     AND INDEX_TABLE = '${escapeSqlString(tableName)}'
                     ORDER BY INDEX_NAME
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 return rows.map((row: any) => ({
                     name: row.INDEX_NAME ?? row.INDEX_TYPE ?? 'INDEX',
@@ -1177,7 +1177,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT
                         SCHEMA_NAME,
                         ADAPTER_SCRIPT_SCHEMA,
@@ -1186,7 +1186,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                         LAST_REFRESH_BY
                     FROM SYS.EXA_ALL_VIRTUAL_SCHEMAS
                     ORDER BY SCHEMA_NAME
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 return rows.map((row: any) => ({
                     name: row.SCHEMA_NAME,
@@ -1209,12 +1209,12 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT TABLE_NAME
                     FROM SYS.EXA_ALL_VIRTUAL_TABLES
                     WHERE TABLE_SCHEMA = '${escapeSqlString(virtualSchemaName)}'
                     ORDER BY TABLE_NAME
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 return rows.map((row: any) => ({
                     name: row.TABLE_NAME
@@ -1235,13 +1235,13 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT COLUMN_NAME, COLUMN_TYPE
                     FROM SYS.EXA_ALL_VIRTUAL_COLUMNS
                     WHERE COLUMN_SCHEMA = '${escapeSqlString(virtualSchemaName)}'
                     AND COLUMN_TABLE = '${escapeSqlString(tableName)}'
                     ORDER BY COLUMN_ORDINAL_POSITION
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 return rows.map((row: any) => ({
                     name: row.COLUMN_NAME,
@@ -1262,12 +1262,12 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     SELECT OBJECT_NAME
                     FROM SYS.EXA_SYSCAT
                     WHERE SCHEMA_NAME = '${escapeSqlString(schemaName)}'
                     ORDER BY OBJECT_NAME
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 return rows.map((row: any) => ({
                     name: row.OBJECT_NAME
@@ -1288,9 +1288,9 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await driver.query(`
+                const result = await rawQuery(driver, `
                     DESCRIBE "${escapeSqlString(schemaName)}"."${escapeSqlString(tableName)}"
-                `, undefined, undefined, 'raw');
+                `);
                 const rows = getRowsFromResult(result);
                 return rows.map((row: any) => ({
                     name: row.COLUMN_NAME,
