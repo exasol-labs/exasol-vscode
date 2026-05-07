@@ -3,7 +3,7 @@ import { performance } from 'perf_hooks';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { QueryExecutor, QueryResult, ColumnMetadata } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
-import { getColumnsFromResult, getRowsFromResult } from './utils';
+import { getColumnsFromResult, getRowsFromResult, rawQuery } from './utils';
 
 export class ObjectActions {
     constructor(
@@ -96,7 +96,7 @@ export class ObjectActions {
                     AND COLUMN_TABLE = '${tableName}'
                     ORDER BY COLUMN_ORDINAL_POSITION
                 `;
-                const result = await driver.query(query);
+                const result = await rawQuery(driver, query);
                 return getRowsFromResult(result);
             }, connection.id);
 
@@ -132,7 +132,7 @@ export class ObjectActions {
                     WHERE VIEW_SCHEMA = '${schemaName}'
                     AND VIEW_NAME = '${viewName}'
                 `;
-                const result = await driver.query(query);
+                const result = await rawQuery(driver, query);
                 return getRowsFromResult(result);
             }, connection.id);
 
@@ -165,7 +165,7 @@ export class ObjectActions {
                     AND COLUMN_TABLE = '${tableName}'
                     ORDER BY COLUMN_ORDINAL_POSITION
                 `;
-                const result = await driver.query(query);
+                const result = await rawQuery(driver, query);
                 return getRowsFromResult(result);
             }, connection.id);
 

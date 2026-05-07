@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { performance } from 'perf_hooks';
 import { ConnectionManager } from './connectionManager';
-import { executeWithoutResult, getColumnsFromResult, getRowsFromResult } from './utils';
+import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute } from './utils';
 
 export interface ColumnMetadata {
     name: string;
@@ -76,21 +76,11 @@ export class QueryExecutor {
 
             if (isResultSet) {
                 // Result-set queries (SELECT, SHOW, DESCRIBE, etc.) - use query()
-                let result: any;
-                let usedExecuteFallback = false;
-
-                try {
-                    result = await driver.query(finalQuery);
-                } catch (queryError: any) {
-                    // E-EDJS-11: Driver says "Invalid result type. Please use method execute instead of query"
-                    // This can happen with certain query patterns - fall back to execute() with raw mode
-                    if (queryError?.message?.includes('E-EDJS-11')) {
-                        result = await driver.execute(finalQuery, undefined, undefined, 'raw');
-                        usedExecuteFallback = true;
-                    } else {
-                        throw queryError;
-                    }
-                }
+                // Use 'raw' response type to avoid a driver bug where error responses
+                // (status:'error', responseData:undefined) crash on `responseData.numResults`
+                // access. Our getColumnsFromResult/getRowsFromResult handle raw responses
+                // correctly and surface proper SQL error messages.
+                const result = await rawQuery(driver, finalQuery);
 
                 const executionTime = performance.now() - startTime;
                 const columnsMeta = getColumnsFromResult(result);
@@ -107,7 +97,7 @@ export class QueryExecutor {
                 };
             } else {
                 // Non-result-set commands (CREATE, ALTER, DROP, RENAME, INSERT, etc.) - use execute()
-                const rawExecuteResult = await driver.execute(finalQuery, undefined, undefined, 'raw');
+                const rawExecuteResult = await rawExecute(driver, finalQuery);
 
                 const executionTime = performance.now() - startTime;
                 const columnsMeta = getColumnsFromResult(rawExecuteResult);

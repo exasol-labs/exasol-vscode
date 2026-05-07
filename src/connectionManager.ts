@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import * as tls from 'tls';
 import { ExasolDriver, ExaWebsocket } from '@exasol/exasol-driver-ts';
+import { rawQuery } from './utils';
 import { WebSocket } from 'ws';
 import { getOutputChannel } from './extension';
 import {
@@ -639,7 +640,7 @@ export class ConnectionManager {
             // No mutex here — callers (executeWithRetry) already hold the mutex,
             // so this runs inside the exclusive section.
             await withTimeout(
-                driver.query('SELECT 1'),
+                rawQuery(driver, 'SELECT 1'),
                 validationTimeout,
                 'Validation timeout'
             );

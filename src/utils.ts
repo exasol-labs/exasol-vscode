@@ -32,10 +32,35 @@ export function escapeSqlString(value: string): string {
 }
 
 /**
+ * Run a query via the Exasol driver in 'raw' mode.
+ * Always use these instead of calling driver.query()/driver.execute() directly,
+ * because the driver's default (non-raw) mode crashes with
+ * "Cannot read properties of undefined (reading 'numResults')" when the
+ * database returns an error response (responseData is undefined).
+ */
+export function rawQuery(driver: ExasolDriver, sql: string): Promise<SQLResponse<SQLQueriesResponse>> {
+    return driver.query(sql, undefined, undefined, 'raw');
+}
+
+export function rawExecute(driver: ExasolDriver, sql: string): Promise<SQLResponse<SQLQueriesResponse>> {
+    return driver.execute(sql, undefined, undefined, 'raw');
+}
+
+/**
  * Type guard for raw Exasol driver responses (responseType: 'raw')
  */
 function isRawResponse(result: unknown): result is SQLResponse<SQLQueriesResponse> {
     return typeof result === 'object' && result !== null && 'status' in result && 'responseData' in result;
+}
+
+/**
+ * Throw a descriptive Error from a raw error response.
+ */
+function throwSqlError(response: SQLResponse<SQLQueriesResponse>): never {
+    const sqlCode = response.exception?.sqlCode;
+    const text = response.exception?.text || 'Query execution failed';
+    const message = sqlCode ? `SQL Error [${sqlCode}]: ${text}` : text;
+    throw new Error(message);
 }
 
 /**
@@ -74,30 +99,24 @@ export function getRowsFromResult(result: any): any[] {
         return [];
     }
 
-    try {
-        if (typeof result.getRows === 'function') {
-            return result.getRows();
-        }
-
-        if (isRawResponse(result)) {
-            if (result.status === 'error') {
-                const message = result.exception?.text || 'Query execution failed';
-                throw new Error(message);
-            }
-
-            const firstResult = result.responseData?.results?.[0];
-            if (!firstResult || firstResult.resultType !== 'resultSet') {
-                return [];
-            }
-
-            return convertResultSetToRows(firstResult.resultSet);
-        }
-
-        return result.rows || [];
-    } catch (error) {
-        // If extraction fails, surface the error so callers can handle/fallback appropriately
-        throw error;
+    if (typeof result.getRows === 'function') {
+        return result.getRows();
     }
+
+    if (isRawResponse(result)) {
+        if (result.status === 'error') {
+            throwSqlError(result);
+        }
+
+        const firstResult = result.responseData?.results?.[0];
+        if (!firstResult || firstResult.resultType !== 'resultSet') {
+            return [];
+        }
+
+        return convertResultSetToRows(firstResult.resultSet);
+    }
+
+    return result.rows || [];
 }
 
 /**
@@ -110,48 +129,31 @@ export function getColumnsFromResult(result: any): any[] {
         return [];
     }
 
-    try {
-        if (typeof result.getColumns === 'function') {
-            return result.getColumns();
-        }
-
-        if (isRawResponse(result)) {
-            if (result.status === 'error') {
-                const message = result.exception?.text || 'Query execution failed';
-                throw new Error(message);
-            }
-
-            const firstResult = result.responseData?.results?.[0];
-            if (!firstResult || firstResult.resultType !== 'resultSet') {
-                return [];
-            }
-
-            return firstResult.resultSet?.columns || [];
-        }
-
-        return result.columns || [];
-    } catch (error) {
-        throw error;
+    if (typeof result.getColumns === 'function') {
+        return result.getColumns();
     }
+
+    if (isRawResponse(result)) {
+        if (result.status === 'error') {
+            throwSqlError(result);
+        }
+
+        const firstResult = result.responseData?.results?.[0];
+        if (!firstResult || firstResult.resultType !== 'resultSet') {
+            return [];
+        }
+
+        return firstResult.resultSet?.columns || [];
+    }
+
+    return result.columns || [];
 }
 
-function isNonResultMetadataError(error: unknown): boolean {
-    const message = (error instanceof Error ? error.message : String(error ?? '')).toUpperCase();
-    return message.includes('NUMRESULTS') || message.includes('INVALID RESULT TYPE') || message.includes('E-EDJS-11');
-}
-
-export async function executeWithoutResult(
+export function executeWithoutResult(
     driver: ExasolDriver,
     sql: string
 ): Promise<SQLResponse<SQLQueriesResponse>> {
-    try {
-        return await driver.query(sql, undefined, undefined, 'raw');
-    } catch (error) {
-        if (isNonResultMetadataError(error)) {
-            return await driver.execute(sql, undefined, undefined, 'raw');
-        }
-        throw error;
-    }
+    return rawQuery(driver, sql);
 }
 
 /**
