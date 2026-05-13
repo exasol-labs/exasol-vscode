@@ -43,6 +43,8 @@ specs/
 
 # AI agent instructions (local only)
 CLAUDE.md
+.claude/
+openspec/
 
 # Temp files
 *.tmp
