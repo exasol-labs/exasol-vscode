@@ -2,6 +2,11 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [Unreleased]
+
+### Security
+- Resolved 10 Dependabot alerts (7 high, 3 moderate) by bumping `serialize-javascript` override to `^7.0.5` and refreshing the lockfile: `node-forge` 1.3.3 → 1.4.0, `fast-uri` 3.1.0 → 3.1.2, `lodash` 4.17.23 → 4.18.1, `follow-redirects` 1.15.11 → 1.16.0, `brace-expansion` 1.1.12 → 1.1.14
+
 ## [1.4.2] - 2026-05-13
 
 ### Added
