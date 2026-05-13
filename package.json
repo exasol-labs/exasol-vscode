@@ -3,7 +3,7 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "publisher": "exasol",
   "license": "MIT",
   "repository": {
@@ -152,6 +152,11 @@
         "command": "exasol.disconnectConnection",
         "title": "Exasol: Disconnect",
         "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "exasol.reconnectConnection",
+        "title": "Exasol: Reconnect",
+        "icon": "$(debug-restart)"
       },
       {
         "command": "exasol.openObject",
@@ -306,24 +311,34 @@
           "group": "connection@0"
         },
         {
-          "command": "exasol.disconnectConnection",
+          "command": "exasol.reconnectConnection",
           "when": "view == exasol.connections && viewItem == connection",
           "group": "connection@1"
         },
         {
-          "command": "exasol.editConnection",
+          "command": "exasol.disconnectConnection",
           "when": "view == exasol.connections && viewItem == connection",
           "group": "connection@2"
         },
         {
-          "command": "exasol.deleteConnection",
+          "command": "exasol.editConnection",
           "when": "view == exasol.connections && viewItem == connection",
           "group": "connection@3"
         },
         {
-          "command": "exasol.renameConnection",
+          "command": "exasol.deleteConnection",
           "when": "view == exasol.connections && viewItem == connection",
           "group": "connection@4"
+        },
+        {
+          "command": "exasol.renameConnection",
+          "when": "view == exasol.connections && viewItem == connection",
+          "group": "connection@5"
+        },
+        {
+          "command": "exasol.reconnectConnection",
+          "when": "view == exasol.connections && viewItem == connection",
+          "group": "inline"
         }
       ],
       "editor/context": [
@@ -392,6 +407,9 @@
         },
         {
           "command": "exasol.disconnectConnection"
+        },
+        {
+          "command": "exasol.reconnectConnection"
         }
       ]
     },

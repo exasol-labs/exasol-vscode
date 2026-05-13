@@ -2,6 +2,14 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.4.2] - 2026-05-13
+
+### Added
+- **Reconnect connection** — right-click any connection (or click the inline `$(debug-restart)` icon) to disconnect and re-establish it as the active connection in one step
+
+### Fixed
+- Lowered VS Code engine constraint to `^1.95.0` for broader compatibility with older VS Code installations (#48)
+
 ## [1.4.1] - 2026-03-31
 
 ### Fixed

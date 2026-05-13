@@ -314,6 +314,34 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    const reconnectConnectionCmd = vscode.commands.registerCommand('exasol.reconnectConnection', async (item: any) => {
+        const connection: StoredConnection | undefined = item?.connection ?? (
+            typeof item?.id === 'string' ? connectionManager.getConnection(item.id) : undefined
+        );
+
+        if (!connection) {
+            vscode.window.showWarningMessage('Unable to determine connection to reconnect.');
+            return;
+        }
+
+        const output = getOutputChannel();
+
+        try {
+            await vscode.commands.executeCommand('exasol.disconnectConnection', { connection });
+            await vscode.commands.executeCommand('exasol.setActiveConnection', { connection });
+            await connectionManager.getDriver(connection.id, 'background');
+            output.appendLine(`🔄 Reconnected to '${connection.name}'`);
+            vscode.window.setStatusBarMessage(`Exasol: Reconnected to '${connection.name}'`, 3000);
+        } catch (error) {
+            const message = `Failed to reconnect: ${error}`;
+            output.appendLine(`❌ ${message}`);
+            vscode.window.showErrorMessage(message);
+        } finally {
+            connectionTreeProvider.refresh();
+            objectTreeProvider.refresh();
+        }
+    });
+
     const disconnectConnectionCmd = vscode.commands.registerCommand('exasol.disconnectConnection', async (item: any) => {
         const connection: StoredConnection | undefined = item?.connection;
         const output = getOutputChannel();
@@ -423,6 +451,7 @@ export function activate(context: vscode.ExtensionContext) {
         deleteConnectionCmd,
         renameConnectionCmd,
         setActiveConnectionCmd,
+        reconnectConnectionCmd,
         disconnectConnectionCmd,
         copyQualifiedNameCmd,
         selectConnectionCmd,
