@@ -14,12 +14,9 @@ export class QueryHistoryProvider implements vscode.TreeDataProvider<QueryHistor
         this._onDidChangeTreeData.event;
 
     private history: QueryHistoryItem[] = [];
-    private maxHistorySize: number = 1000;
 
     constructor(private context: vscode.ExtensionContext) {
         this.loadHistory();
-        const config = vscode.workspace.getConfiguration('exasol');
-        this.maxHistorySize = config.get<number>('maxQueryHistorySize', 1000);
     }
 
     private loadHistory() {
@@ -40,9 +37,10 @@ export class QueryHistoryProvider implements vscode.TreeDataProvider<QueryHistor
 
         this.history.unshift(item);
 
-        // Trim history to max size
-        if (this.history.length > this.maxHistorySize) {
-            this.history = this.history.slice(0, this.maxHistorySize);
+        // Trim history to max size (read config inline so it always reflects current settings)
+        const maxHistorySize = vscode.workspace.getConfiguration('exasol').get<number>('maxQueryHistorySize', 1000);
+        if (this.history.length > maxHistorySize) {
+            this.history = this.history.slice(0, maxHistorySize);
         }
 
         this.saveHistory();
@@ -65,7 +63,7 @@ export class QueryHistoryProvider implements vscode.TreeDataProvider<QueryHistor
 
     async getChildren(element?: QueryHistoryTreeItem): Promise<QueryHistoryTreeItem[]> {
         if (!element) {
-            return this.history.map((item, index) => {
+            return this.history.map((item) => {
                 const date = new Date(item.timestamp);
                 const label = `${date.toLocaleTimeString()} - ${item.query.substring(0, 50)}${item.query.length > 50 ? '...' : ''}`;
                 const description = item.error ? 'Error' : `${item.rowCount} rows`;

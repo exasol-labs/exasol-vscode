@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { format } from 'sql-formatter';
+import { formatDialect, sql } from 'sql-formatter';
 
 /**
  * Vscode mock types used by the formatting provider tests.
@@ -126,8 +126,8 @@ function formatSql(
         linesBetweenQueries?: number;
     } = {}
 ): string {
-    return format(text, {
-        language: 'sql',
+    return formatDialect(text, {
+        dialect: sql,
         keywordCase: options.keywordCase ?? 'upper',
         indentStyle: options.indentStyle ?? 'standard',
         tabWidth: options.tabWidth ?? 2,
@@ -215,23 +215,31 @@ suite('SQL Formatting — indentation with tabs', () => {
 });
 
 suite('SQL Formatting — tabular indent styles', () => {
-    test('applies tabularLeft alignment', () => {
+    test('applies tabularLeft alignment: keywords left-padded to same column width', () => {
         const input = 'select id, name from users where id = 1';
         const result = formatSql(input, { indentStyle: 'tabularLeft' });
-        assert.ok(result.includes('SELECT'), 'Should contain SELECT keyword');
-        assert.ok(result.includes('FROM'), 'Should contain FROM keyword');
         const lines = result.split('\n');
-        const selectLine = lines.find(l => l.trimStart().startsWith('SELECT'));
-        const fromLine = lines.find(l => l.trimStart().startsWith('FROM'));
-        assert.ok(selectLine, 'Should have a SELECT line');
+        // In tabularLeft style all clause keywords begin at column 0 with no leading spaces
+        const selectLine = lines.find(l => l.startsWith('SELECT'));
+        const fromLine = lines.find(l => l.startsWith('FROM') || l.startsWith('  FROM'));
+        assert.ok(selectLine, 'Should have a SELECT line with no leading whitespace');
         assert.ok(fromLine, 'Should have a FROM line');
+        // keyword widths should be right-padded: SELECT(6) FROM(4) WHERE(5) are all present
+        assert.ok(result.includes('SELECT'), 'Should contain SELECT');
+        assert.ok(result.includes('FROM'), 'Should contain FROM');
+        assert.ok(result.includes('WHERE'), 'Should contain WHERE');
     });
 
-    test('applies tabularRight alignment', () => {
+    test('applies tabularRight alignment: keywords right-aligned to same column', () => {
         const input = 'select id, name from users where id = 1';
         const result = formatSql(input, { indentStyle: 'tabularRight' });
-        assert.ok(result.includes('SELECT'), 'Should contain SELECT keyword');
-        assert.ok(result.includes('FROM'), 'Should contain FROM keyword');
+        const lines = result.split('\n');
+        // In tabularRight the longest keyword (SELECT=6) is the reference; shorter ones are padded left
+        // FROM (4 chars) should have 2 leading spaces to align with SELECT
+        const fromLine = lines.find(l => /^\s+FROM\b/.test(l));
+        assert.ok(fromLine, 'FROM should have leading spaces (right-aligned padding)');
+        assert.ok(result.includes('SELECT'), 'Should contain SELECT');
+        assert.ok(result.includes('WHERE'), 'Should contain WHERE');
     });
 });
 

@@ -9,7 +9,6 @@ import { FormattingProvider } from './providers/formattingProvider';
 import { QueryExecutor } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
 import { QueryStatsPanel } from './panels/queryStatsPanel';
-import { TabResultCollector } from './execution/tabResultCollector';
 import { ConnectionPanel } from './panels/connectionPanel';
 import { SessionManager } from './sessionManager';
 import { ObjectActions } from './objectActions';
@@ -18,6 +17,7 @@ import { findStatementAtCursor, splitIntoStatements } from './utils';
 import { ExasolNotebookSerializer } from './notebooks/serializer';
 import { ExasolNotebookController } from './notebooks/controller';
 import { formatError } from './connectionTypes';
+import { TabResultCollector } from './execution/tabResultCollector';
 
 // Create output channel for logging
 let outputChannel: vscode.OutputChannel;
@@ -112,6 +112,52 @@ export function activate(context: vscode.ExtensionContext) {
         objectSearchProvider.showSearch();
     });
 
+    const newSqlFileCmd = vscode.commands.registerCommand('exasol.newSqlFile', async () => {
+        const doc = await vscode.workspace.openTextDocument({ language: 'exasol-sql', content: '' });
+        await vscode.window.showTextDocument(doc);
+    });
+
+    const newNotebookCmd = vscode.commands.registerCommand('exasol.newNotebook', async () => {
+        const cell = new vscode.NotebookCellData(
+            vscode.NotebookCellKind.Code,
+            '-- New Exasol SQL notebook\n',
+            'exasol-sql'
+        );
+        const data = new vscode.NotebookData([cell]);
+        const notebook = await vscode.workspace.openNotebookDocument('exasol-sql-notebook', data);
+        await vscode.window.showNotebookDocument(notebook);
+    });
+
+    // ── Item-command config table ────────────────────────────────────────────
+    // Each entry: guard item fields, then call handler. New commands = new row.
+    type ItemCommand = { command: string; needs: string[]; handler: (item: any) => Promise<unknown> | unknown };
+    const itemCommands: ItemCommand[] = [
+        { command: 'exasol.previewTable',   needs: ['connection', 'schemaName', 'tableInfo'],
+          handler: (i) => objectActions.previewTableData(i.connection, i.schemaName, i.tableInfo.name, 100) },
+        { command: 'exasol.showTableDDL',   needs: ['connection', 'schemaName', 'tableInfo'],
+          handler: (i) => objectActions.showTableDDL(i.connection, i.schemaName, i.tableInfo.name) },
+        { command: 'exasol.showViewDDL',    needs: ['connection', 'schemaName', 'tableInfo'],
+          handler: (i) => objectActions.showViewDDL(i.connection, i.schemaName, i.tableInfo.name) },
+        { command: 'exasol.generateSelect', needs: ['connection', 'schemaName', 'tableInfo'],
+          handler: (i) => objectActions.generateSelectStatement(i.connection, i.schemaName, i.tableInfo.name, i.type) },
+        { command: 'exasol.describeTable',  needs: ['connection', 'schemaName', 'tableInfo'],
+          handler: (i) => objectActions.describeTable(i.connection, i.schemaName, i.tableInfo.name) },
+        { command: 'exasol.setSchema',       needs: ['schemaName'],
+          handler: (i) => sessionManager.setSchema(i.schemaName) },
+        { command: 'exasol.editConnection',  needs: ['connection'],
+          handler: (i) => editConnection(connectionManager, connectionTreeProvider, objectTreeProvider, context, i.connection) },
+        { command: 'exasol.deleteConnection', needs: ['connection'],
+          handler: (i) => deleteConnection(connectionManager, connectionTreeProvider, objectTreeProvider, i.connection) },
+        { command: 'exasol.renameConnection', needs: ['connection'],
+          handler: (i) => renameConnection(connectionManager, connectionTreeProvider, objectTreeProvider, i.connection) },
+    ];
+    for (const cmd of itemCommands) {
+        context.subscriptions.push(vscode.commands.registerCommand(cmd.command, async (item: any) => {
+            if (cmd.needs.every(k => item?.[k])) { await cmd.handler(item); }
+        }));
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     // Create status bar item for result tabs mode
     const resultTabsStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50);
     resultTabsStatusBar.command = 'exasol.toggleSeparateResultTabs';
@@ -136,6 +182,9 @@ export function activate(context: vscode.ExtensionContext) {
         if (e.affectsConfiguration('exasol.separateResultTabs')) {
             updateResultTabsStatusBar();
         }
+        if (e.affectsConfiguration('exasol.schemaGrouping')) {
+            objectTreeProvider.refresh();
+        }
     });
 
     // Create status bar item for session info
@@ -158,7 +207,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Set initial context for active connection
     vscode.commands.executeCommand('setContext', 'exasol.hasActiveConnection', !!connectionManager.getActiveConnection());
 
-    // Register commands
+    // ── Remaining commands (one-off logic, stay inline) ─────────────────────
     const addConnectionCmd = vscode.commands.registerCommand('exasol.addConnection', async () => {
         await addConnection(connectionManager, connectionTreeProvider, objectTreeProvider, context);
     });
@@ -192,12 +241,6 @@ export function activate(context: vscode.ExtensionContext) {
         await ResultsPanel.exportCurrentToCSV();
     });
 
-    const renameConnectionCmd = vscode.commands.registerCommand('exasol.renameConnection', async (item: any) => {
-        if (item && item.connection) {
-            await renameConnection(connectionManager, connectionTreeProvider, objectTreeProvider, item.connection);
-        }
-    });
-
     const openQueryFromHistoryCmd = vscode.commands.registerCommand('exasol.openQueryFromHistory', async (query: string) => {
         const document = await vscode.workspace.openTextDocument({
             content: query,
@@ -206,36 +249,6 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.window.showTextDocument(document);
     });
 
-    // New commands for object actions
-    const previewTableCmd = vscode.commands.registerCommand('exasol.previewTable', async (item: any) => {
-        if (item && item.connection && item.schemaName && item.tableInfo) {
-            await objectActions.previewTableData(item.connection, item.schemaName, item.tableInfo.name, 100);
-        }
-    });
-
-    const showTableDDLCmd = vscode.commands.registerCommand('exasol.showTableDDL', async (item: any) => {
-        if (item && item.connection && item.schemaName && item.tableInfo) {
-            await objectActions.showTableDDL(item.connection, item.schemaName, item.tableInfo.name);
-        }
-    });
-
-    const showViewDDLCmd = vscode.commands.registerCommand('exasol.showViewDDL', async (item: any) => {
-        if (item && item.connection && item.schemaName && item.tableInfo) {
-            await objectActions.showViewDDL(item.connection, item.schemaName, item.tableInfo.name);
-        }
-    });
-
-    const generateSelectCmd = vscode.commands.registerCommand('exasol.generateSelect', async (item: any) => {
-        if (item && item.connection && item.schemaName && item.tableInfo) {
-            await objectActions.generateSelectStatement(item.connection, item.schemaName, item.tableInfo.name, item.type);
-        }
-    });
-
-    const describeTableCmd = vscode.commands.registerCommand('exasol.describeTable', async (item: any) => {
-        if (item && item.connection && item.schemaName && item.tableInfo) {
-            await objectActions.describeTable(item.connection, item.schemaName, item.tableInfo.name);
-        }
-    });
 
     // Prevent rapid duplicate executions (e.g., double-click)
     const openObjectExecuting = new Map<string, boolean>();
@@ -260,27 +273,9 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    const setSchemaCmd = vscode.commands.registerCommand('exasol.setSchema', async (item: any) => {
-        if (item && item.schemaName) {
-            await sessionManager.setSchema(item.schemaName);
-        }
-    });
-
     const clearCacheCmd = vscode.commands.registerCommand('exasol.clearCache', () => {
         completionProvider.clearCache();
         vscode.window.showInformationMessage('Autocomplete cache cleared');
-    });
-
-    const editConnectionCmd = vscode.commands.registerCommand('exasol.editConnection', async (item: any) => {
-        if (item && item.connection) {
-            await editConnection(connectionManager, connectionTreeProvider, objectTreeProvider, context, item.connection);
-        }
-    });
-
-    const deleteConnectionCmd = vscode.commands.registerCommand('exasol.deleteConnection', async (item: any) => {
-        if (item && item.connection) {
-            await deleteConnection(connectionManager, connectionTreeProvider, objectTreeProvider, item.connection);
-        }
     });
 
     const setActiveConnectionCmd = vscode.commands.registerCommand('exasol.setActiveConnection', async (item: any) => {
@@ -429,6 +424,9 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     // Add all disposables to context
+    // Note: item-driven commands (previewTable, showTableDDL, etc.) are
+    // registered directly into context.subscriptions inside the itemCommands
+    // loop above, so they don't appear here.
     context.subscriptions.push(
         addConnectionCmd,
         refreshConnectionsCmd,
@@ -439,23 +437,16 @@ export function activate(context: vscode.ExtensionContext) {
         showQueryHistoryCmd,
         exportResultsCmd,
         openQueryFromHistoryCmd,
-        previewTableCmd,
-        showTableDDLCmd,
-        showViewDDLCmd,
-        generateSelectCmd,
-        describeTableCmd,
         openObjectCmd,
-        setSchemaCmd,
         clearCacheCmd,
-        editConnectionCmd,
-        deleteConnectionCmd,
-        renameConnectionCmd,
         setActiveConnectionCmd,
         reconnectConnectionCmd,
         disconnectConnectionCmd,
         copyQualifiedNameCmd,
         selectConnectionCmd,
         findObjectCmd,
+        newSqlFileCmd,
+        newNotebookCmd,
         toggleSeparateResultTabsCmd,
         resultTabsStatusBar,
         resultTabsConfigListener,
@@ -615,7 +606,6 @@ async function executeQuery(
                 const separateTabs = vscode.workspace.getConfiguration('exasol').get<boolean>('separateResultTabs', false);
                 const useTabCollection = separateTabs && statements.length > 1;
                 const collector = useTabCollection ? new TabResultCollector() : null;
-                let lastResult = null;
 
                 for (let i = 0; i < statements.length; i++) {
                     const query = statements[i];
@@ -640,9 +630,6 @@ async function executeQuery(
 
                         // Add to history
                         queryHistoryProvider.addQuery(query, result.rowCount);
-
-                        // Keep track of the last result to show in the panel
-                        lastResult = result;
 
                         if (statements.length > 1) {
                             output.appendLine(`   ✅ Query ${queryNum} completed. ${result.rowCount} rows affected.`);
@@ -744,7 +731,7 @@ async function executeQuery(
                 }
             }
         );
-    } catch (error) {
+    } catch {
         // Error already handled in the loop
     } finally {
         cancellationTokenSource.dispose();

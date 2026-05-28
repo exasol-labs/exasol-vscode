@@ -5,13 +5,11 @@ export class TabResultCollector {
     private tabs: TabResult[] = [];
 
     addResult(result: QueryResult): void {
-        const index = this.tabs.length + 1;
-        this.tabs.push({ label: `Result ${index}`, result });
+        this.tabs.push({ label: `Result ${this.tabs.length + 1}`, result });
     }
 
     addError(message: string): void {
-        const index = this.tabs.length + 1;
-        this.tabs.push({ label: `Result ${index}`, error: message });
+        this.tabs.push({ label: `Result ${this.tabs.length + 1}`, error: message });
     }
 
     getTabs(): TabResult[] {

@@ -162,22 +162,28 @@ export class ObjectSearchProvider {
                 getOutputChannel()?.appendLine('Object search: Failed to fetch system tables');
             }
 
-            try {
-                const columnsResult = await rawQuery(driver, `
-                    SELECT COLUMN_SCHEMA, COLUMN_TABLE, COLUMN_NAME
-                    FROM SYS.EXA_ALL_COLUMNS
-                    WHERE COLUMN_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
-                    ORDER BY COLUMN_SCHEMA, COLUMN_TABLE, COLUMN_ORDINAL_POSITION
-                `);
-                for (const row of getRowsFromResult(columnsResult)) {
-                    objects.push({
-                        schema: row.COLUMN_SCHEMA,
-                        name: row.COLUMN_NAME,
-                        type: 'column'
-                    });
+            const searchIncludesColumns = vscode.workspace
+                .getConfiguration('exasol')
+                .get<boolean>('searchIncludesColumns', false);
+
+            if (searchIncludesColumns) {
+                try {
+                    const columnsResult = await rawQuery(driver, `
+                        SELECT COLUMN_SCHEMA, COLUMN_TABLE, COLUMN_NAME
+                        FROM SYS.EXA_ALL_COLUMNS
+                        WHERE COLUMN_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
+                        ORDER BY COLUMN_SCHEMA, COLUMN_TABLE, COLUMN_ORDINAL_POSITION
+                    `);
+                    for (const row of getRowsFromResult(columnsResult)) {
+                        objects.push({
+                            schema: row.COLUMN_SCHEMA,
+                            name: row.COLUMN_NAME,
+                            type: 'column'
+                        });
+                    }
+                } catch {
+                    getOutputChannel()?.appendLine('Object search: Failed to fetch columns');
                 }
-            } catch {
-                getOutputChannel()?.appendLine('Object search: Failed to fetch columns');
             }
 
             return objects;
@@ -186,7 +192,11 @@ export class ObjectSearchProvider {
 
     private toQuickPickItem(obj: SearchableObject): vscode.QuickPickItem {
         const config = getNodeTypeConfig(obj.type);
-        const iconId = config?.icon ?? 'symbol-misc';
+        // The tree intentionally renders columns without an icon (so the label
+        // aligns under the parent table), but in the flat QuickPick result list
+        // we still want a glyph to distinguish column hits from table hits.
+        const fallbackIcon = obj.type === 'column' ? 'symbol-field' : 'symbol-misc';
+        const iconId = config?.icon ? config.icon : fallbackIcon;
         const typeLabel = this.formatTypeLabel(obj.type);
 
         const item: vscode.QuickPickItem = {
@@ -215,18 +225,34 @@ export class ObjectSearchProvider {
         const outputChannel = getOutputChannel();
         const obj = this.itemDataMap.get(item);
 
+        outputChannel?.appendLine(
+            `Object search: revealInTree start, obj=${obj ? `${obj.schema}.${obj.name} (${obj.type})` : 'undefined'}`
+        );
+
         if (!obj) {
             return;
         }
 
+        // Ensure the Objects view is visible — reveal silently no-ops on a hidden view
+        // in some VS Code versions.
         try {
-            const targetNode = await this.findTreeNode(obj.name, obj.schema, this.formatTypeLabel(obj.type));
+            await vscode.commands.executeCommand('exasol.objects.focus');
+        } catch (focusError) {
+            outputChannel?.appendLine(`Object search: focus command failed (continuing): ${focusError}`);
+        }
+
+        try {
+            const targetNode = await this.findTreeNode(obj.name, obj.schema, obj.type);
             if (targetNode) {
+                outputChannel?.appendLine(
+                    `Object search: found target node id=${targetNode.id}, calling treeView.reveal`
+                );
                 await this.treeView.reveal(targetNode, {
                     select: true,
                     focus: true,
                     expand: true
                 });
+                outputChannel?.appendLine('Object search: treeView.reveal returned');
             } else {
                 outputChannel?.appendLine(
                     `Object search: Could not find tree node for ${obj.schema}.${obj.name}`
@@ -240,18 +266,28 @@ export class ObjectSearchProvider {
     private async findTreeNode(
         objectName: string,
         schemaName: string,
-        typeLabel: string
+        treeType: ObjectTreeItemType
     ): Promise<ObjectTreeItem | undefined> {
-        const treeType = this.typeLabelToTreeType(typeLabel);
-        if (!treeType) {
+        const outputChannel = getOutputChannel();
+        const rootNodes = await this.objectTreeProvider.getChildren();
+        outputChannel?.appendLine(
+            `Object search: findTreeNode rootNodes=${rootNodes.length} for ${schemaName}.${objectName} (${treeType})`
+        );
+
+        const schemaNode = await this.findSchemaNode(rootNodes, schemaName, treeType);
+        if (!schemaNode) {
+            const rootTypes = rootNodes
+                .map(n => (n instanceof ObjectTreeItem ? n.type : 'message'))
+                .join(', ');
+            outputChannel?.appendLine(
+                `Object search: schema node not found for '${schemaName}', root types: [${rootTypes}]`
+            );
             return undefined;
         }
 
-        const rootNodes = await this.objectTreeProvider.getChildren();
-        const schemaNode = await this.findSchemaNode(rootNodes, schemaName, treeType);
-        if (!schemaNode) {
-            return undefined;
-        }
+        outputChannel?.appendLine(
+            `Object search: schema node found id=${schemaNode.id}, type=${schemaNode.type}`
+        );
 
         if (treeType === 'system-table') {
             return this.findChildByNameAndType(
@@ -271,24 +307,33 @@ export class ObjectSearchProvider {
 
         const folderType = this.getFolderType(treeType);
         if (!folderType) {
+            outputChannel?.appendLine(`Object search: no folder type for ${treeType}`);
             return undefined;
         }
 
         const schemaChildren = await this.objectTreeProvider.getChildren(schemaNode);
         const folderNode = this.findChildByType(schemaChildren, folderType);
         if (!folderNode) {
+            outputChannel?.appendLine(
+                `Object search: folder ${folderType} not found under schema ${schemaName}`
+            );
             return undefined;
         }
+        outputChannel?.appendLine(`Object search: folder ${folderType} found id=${folderNode.id}`);
 
         if (treeType === 'column') {
             return this.findColumnInFolder(folderNode, objectName);
         }
 
-        return this.findChildByNameAndType(
+        const leaf = this.findChildByNameAndType(
             await this.objectTreeProvider.getChildren(folderNode),
             objectName,
             treeType
         );
+        outputChannel?.appendLine(
+            `Object search: leaf lookup for ${objectName} (${treeType}) -> ${leaf ? leaf.id : 'not found'}`
+        );
+        return leaf;
     }
 
     private async findSchemaNode(
@@ -296,6 +341,8 @@ export class ObjectSearchProvider {
         schemaName: string,
         treeType: ObjectTreeItemType
     ): Promise<ObjectTreeItem | undefined> {
+        const outputChannel = getOutputChannel();
+
         if (treeType === 'system-table') {
             const systemSchemasFolder = rootNodes.find(
                 node => node instanceof ObjectTreeItem && node.type === 'system-schemas-folder'
@@ -313,11 +360,42 @@ export class ObjectSearchProvider {
             ) as ObjectTreeItem | undefined;
         }
 
-        return rootNodes.find(
+        const direct = rootNodes.find(
             node => node instanceof ObjectTreeItem &&
                 (node.type === 'schema' || node.type === 'virtual-schema') &&
                 node.schemaName === schemaName
         ) as ObjectTreeItem | undefined;
+        if (direct) {
+            return direct;
+        }
+
+        // Schema grouping fallback: when exasol.schemaGrouping.enabled = true,
+        // root nodes are 'schema-group' items containing nested schema children.
+        const groupNodes = rootNodes.filter(
+            node => node instanceof ObjectTreeItem && node.type === 'schema-group'
+        ) as ObjectTreeItem[];
+
+        if (groupNodes.length > 0) {
+            outputChannel?.appendLine(
+                `Object search: schema not at root, searching ${groupNodes.length} schema-group(s)`
+            );
+            for (const group of groupNodes) {
+                const groupChildren = await this.objectTreeProvider.getChildren(group);
+                const match = groupChildren.find(
+                    node => node instanceof ObjectTreeItem &&
+                        (node.type === 'schema' || node.type === 'virtual-schema') &&
+                        node.schemaName === schemaName
+                ) as ObjectTreeItem | undefined;
+                if (match) {
+                    outputChannel?.appendLine(
+                        `Object search: found schema '${schemaName}' inside group '${group.label}'`
+                    );
+                    return match;
+                }
+            }
+        }
+
+        return undefined;
     }
 
     private getFolderType(objectType: ObjectTreeItemType): ObjectTreeItemType | undefined {
@@ -346,10 +424,7 @@ export class ObjectSearchProvider {
         type: ObjectTreeItemType
     ): ObjectTreeItem | undefined {
         return children.find(node => {
-            if (!(node instanceof ObjectTreeItem)) {
-                return false;
-            }
-            if (node.type !== type) {
+            if (!(node instanceof ObjectTreeItem) || node.type !== type) {
                 return false;
             }
             const nodeLabel = typeof node.label === 'string' ? node.label : node.label?.label;
@@ -380,16 +455,4 @@ export class ObjectSearchProvider {
         return undefined;
     }
 
-    private typeLabelToTreeType(typeLabel: string): ObjectTreeItemType | undefined {
-        switch (typeLabel) {
-            case 'Table': return 'table';
-            case 'View': return 'view';
-            case 'Script': return 'script';
-            case 'Function': return 'function';
-            case 'Virtual Table': return 'virtual-table';
-            case 'System Table': return 'system-table';
-            case 'Column': return 'column';
-            default: return undefined;
-        }
-    }
 }

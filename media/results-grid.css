@@ -1,0 +1,125 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    font-family: var(--vscode-font-family);
+    color: var(--vscode-foreground);
+    background-color: var(--vscode-editor-background);
+}
+body {
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+}
+.header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+input[type="text"] {
+    flex: 1;
+    min-width: 180px;
+    padding: 6px 10px;
+    border: 1px solid var(--vscode-panel-border);
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+}
+button {
+    padding: 6px 12px;
+    border: none;
+    cursor: pointer;
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+}
+button:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+.table-container {
+    flex: 1;
+    overflow: auto;
+    border: 1px solid var(--vscode-panel-border);
+    min-height: 0;
+    outline: none;
+}
+table { border-collapse: collapse; font-size: 13px; }
+th, td {
+    padding: 6px 10px;
+    border: 1px solid var(--vscode-panel-border);
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    position: relative;
+    user-select: none;
+    -webkit-user-select: none;
+    max-width: 400px;
+}
+td.truncated { cursor: help; font-style: italic; opacity: 0.95; }
+td.truncated::after {
+    content: '\1F4CB';
+    position: absolute; right: 4px; top: 50%;
+    transform: translateY(-50%); font-size: 10px; opacity: 0.5;
+}
+th {
+    background-color: var(--vscode-editor-background);
+    position: sticky; top: -1px; cursor: pointer;
+    min-width: 80px; z-index: 10;
+    box-shadow: 0 1px 0 0 var(--vscode-panel-border);
+    border-top: 1px solid var(--vscode-editor-background);
+}
+th.row-number-header {
+    min-width: 30px; width: 30px; max-width: 30px;
+    text-align: left; padding-left: 6px; cursor: default;
+    background-color: var(--vscode-sideBarSectionHeader-background);
+    user-select: none;
+    border-right: 1px solid var(--vscode-panel-border);
+}
+td { cursor: cell; }
+td.row-number {
+    min-width: 30px; width: 30px; max-width: 30px;
+    text-align: left; padding-left: 6px;
+    background-color: var(--vscode-sideBarSectionHeader-background);
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px; user-select: none; cursor: default;
+    font-weight: 500;
+    border-right: 1px solid var(--vscode-panel-border);
+}
+th:hover { background-color: var(--vscode-list-hoverBackground); }
+th .resizer {
+    position: absolute; top: 0; right: 0;
+    width: 5px; height: 100%;
+    cursor: col-resize; user-select: none; z-index: 1;
+}
+th .resizer:hover { background-color: var(--vscode-focusBorder); }
+td.selected {
+    background-color: var(--vscode-list-activeSelectionBackground);
+    color: var(--vscode-list-activeSelectionForeground);
+}
+td.selecting { background-color: var(--vscode-list-inactiveSelectionBackground); }
+th.sorted-asc::after { content: ' \25B2'; font-size: 10px; color: var(--vscode-charts-blue); }
+th.sorted-desc::after { content: ' \25BC'; font-size: 10px; color: var(--vscode-charts-blue); }
+tr:nth-child(even) { background-color: var(--vscode-sideBarSectionHeader-background); }
+.null-value { color: var(--vscode-disabledForeground); font-style: italic; font-size: 11px; }
+.context-menu {
+    position: fixed;
+    background-color: var(--vscode-menu-background);
+    border: 1px solid var(--vscode-menu-border);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    z-index: 1000; padding: 4px 0; min-width: 200px; display: none;
+}
+.context-menu-item {
+    padding: 6px 20px; cursor: pointer;
+    color: var(--vscode-menu-foreground); font-size: 13px;
+}
+.context-menu-item:hover {
+    background-color: var(--vscode-menu-selectionBackground);
+    color: var(--vscode-menu-selectionForeground);
+}
+#scroll-sentinel {
+    height: 1px;
+    visibility: hidden;
+}

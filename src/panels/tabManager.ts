@@ -24,7 +24,7 @@ function defaultTabState(): TabState {
 
 export class TabManager {
     private tabs: TabResult[] = [];
-    private activeIndex: number = 0;
+    private activeIndex = 0;
     private tabStates: TabState[] = [];
 
     setTabs(tabs: TabResult[]): void {

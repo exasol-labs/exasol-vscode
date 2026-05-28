@@ -3,7 +3,7 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "publisher": "exasol",
   "license": "MIT",
   "repository": {
@@ -23,11 +23,6 @@
     "sql",
     "database",
     "query"
-  ],
-  "activationEvents": [
-    "onView:exasol.connections",
-    "onView:exasol.objects",
-    "onView:exasol.queryHistory"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -66,7 +61,9 @@
         "type": "exasol-sql-notebook",
         "displayName": "Exasol SQL Notebook",
         "selector": [
-          { "filenamePattern": "*.exabook" }
+          {
+            "filenamePattern": "*.exabook"
+          }
         ]
       }
     ],
@@ -179,6 +176,16 @@
         "command": "exasol.findObject",
         "title": "Exasol: Find Database Object",
         "icon": "$(search)"
+      },
+      {
+        "command": "exasol.newSqlFile",
+        "title": "Exasol: New SQL File",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "exasol.newNotebook",
+        "title": "Exasol: New Notebook",
+        "icon": "$(notebook)"
       }
     ],
     "viewsContainers": {
@@ -202,18 +209,21 @@
         {
           "id": "exasol.connections",
           "name": "Connections",
+          "icon": "$(plug)",
           "visibility": "visible",
           "initialSize": 10
         },
         {
           "id": "exasol.objects",
           "name": "Database Objects",
+          "icon": "$(database)",
           "visibility": "visible",
           "initialSize": 60
         },
         {
           "id": "exasol.queryHistory",
           "name": "Query History",
+          "icon": "$(history)",
           "visibility": "visible",
           "initialSize": 3
         }
@@ -222,11 +232,13 @@
         {
           "id": "exasol.results",
           "name": "Query Results",
+          "icon": "$(table)",
           "type": "webview"
         },
         {
           "id": "exasol.queryStats",
           "name": "Query Info",
+          "icon": "$(graph)",
           "type": "webview"
         }
       ]
@@ -252,6 +264,16 @@
           "command": "exasol.findObject",
           "when": "view == exasol.objects",
           "group": "navigation"
+        },
+        {
+          "command": "exasol.newSqlFile",
+          "when": "view == exasol.connections || view == exasol.objects || view == exasol.queryHistory",
+          "group": "navigation@10"
+        },
+        {
+          "command": "exasol.newNotebook",
+          "when": "view == exasol.connections || view == exasol.objects || view == exasol.queryHistory",
+          "group": "navigation@11"
         },
         {
           "command": "exasol.showQueryHistory",
@@ -410,6 +432,12 @@
         },
         {
           "command": "exasol.reconnectConnection"
+        },
+        {
+          "command": "exasol.newSqlFile"
+        },
+        {
+          "command": "exasol.newNotebook"
         }
       ]
     },
@@ -480,6 +508,21 @@
           "type": "boolean",
           "default": false,
           "description": "When enabled, multi-statement executions display each result in a separate tab"
+        },
+        "exasol.searchIncludesColumns": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, object search includes columns from EXA_ALL_COLUMNS (may be slow on large schemas)"
+        },
+        "exasol.schemaGrouping.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Group schemas in the Database Objects tree by name prefix (the part before the first delimiter character). Disabled by default."
+        },
+        "exasol.schemaGrouping.delimiter": {
+          "type": "string",
+          "default": "_",
+          "description": "Delimiter used to split schema names into groups. Only the first segment is used. Empty value disables grouping."
         }
       }
     },
@@ -517,37 +560,44 @@
     "check-types": "tsc --noEmit",
     "package": "npm run check-types && node esbuild.mjs --production",
     "pretest": "npm run compile && npm run lint",
-    "lint": "echo 'Linting skipped'",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
     "test": "node ./out/test/runTest.js",
-    "test:unit": "mocha --ui tdd --require ts-node/register 'src/test/unit/**/*.test.ts'",
-    "test:local": "mocha --ui tdd --require ts-node/register 'src/test/local/*.test.ts'",
-    "test:watch": "mocha --ui tdd --require ts-node/register --watch 'src/test/unit/**/*.test.ts'",
+    "test:unit": "mocha --ui tdd --node-option=import=tsx 'src/test/unit/**/*.test.ts'",
+    "test:local": "mocha --ui tdd --node-option=import=tsx 'src/test/local/*.test.ts'",
+    "test:watch": "mocha --ui tdd --node-option=import=tsx --watch 'src/test/unit/**/*.test.ts'",
     "test:e2e": "node ./out/test/local/e2e/runTest.js"
   },
   "devDependencies": {
-    "@types/jsdom": "^28.0.0",
+    "@types/jsdom": "^28.0.3",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22",
     "@types/vscode": "^1.95.0",
+    "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^8.59.4",
+    "@typescript-eslint/parser": "^8.59.4",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
-    "@vscode/vsce": "^3.7.1",
-    "esbuild": "^0.25.1",
+    "@vscode/vsce": "^3.9.1",
+    "esbuild": "^0.28.0",
+    "eslint": "^10.4.0",
     "glob": "^13.0.0",
-    "jsdom": "^29.0.0",
+    "jsdom": "^29.1.1",
     "mocha": "^11.7.1",
-    "ovsx": "^0.10.9",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "ovsx": "^0.10.12",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.4"
   },
   "dependencies": {
-    "@exasol/exasol-driver-ts": "^0.3.1",
-    "@types/ws": "^8.18.1",
-    "sql-formatter": "^15.7.2",
-    "ws": "^8.19.0"
+    "@exasol/exasol-driver-ts": "github:mikhail-zhadanov/exasol-driver-ts#5bc94315248ae7da9f19c306217f30a69f1ab861",
+    "async-mutex": "^0.5.0",
+    "sql-formatter": "^15.8.0",
+    "ws": "^8.20.1"
   },
   "overrides": {
     "serialize-javascript": "^7.0.5",
-    "glob": "$glob"
+    "glob": "$glob",
+    "diff": "^8.0.3"
   }
 }

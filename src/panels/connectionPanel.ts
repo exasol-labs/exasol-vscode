@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, ExasolConnection, FingerprintRequiredError, FingerprintMismatchError, normalizeFingerprint, extractFingerprintError, TlsMode, formatError } from '../connectionManager';
 
+import { createWebviewRenderContext } from '../utils';
+
 export class ConnectionPanel {
     public static currentPanel: ConnectionPanel | undefined;
     private readonly _panel: vscode.WebviewPanel;
@@ -9,7 +11,7 @@ export class ConnectionPanel {
 
     private constructor(
         panel: vscode.WebviewPanel,
-        extensionUri: vscode.Uri,
+        private readonly extensionUri: vscode.Uri,
         private connectionManager: ConnectionManager,
         private outputChannel: vscode.OutputChannel,
         private existingConnection?: any
@@ -58,7 +60,8 @@ export class ConnectionPanel {
                 column,
                 {
                     enableScripts: true,
-                    retainContextWhenHidden: true
+                    retainContextWhenHidden: true,
+                    localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')]
                 }
             );
 
@@ -210,125 +213,35 @@ export class ConnectionPanel {
     }
 
     private _getHtmlForWebview(): string {
-        // Pre-fill values for edit mode
+        const ctx = createWebviewRenderContext(this._panel.webview, this.extensionUri, vscode.Uri.joinPath);
+
+        const isEdit = !!this.existingConnection;
         const values = {
             name: this.existingConnection?.name || '',
             host: this.existingConnection?.host || '',
             port: String(this.existingConnection?.port || 8563),
             user: this.existingConnection?.user || '',
-            password: '',
             tlsMode: this.existingConnection?.tlsMode || 'off',
             fingerprint: this.existingConnection?.fingerprint || ''
         };
-        const isEdit = !!this.existingConnection;
+
+        const passwordPlaceholder = isEdit
+            ? 'Enter new password (leave blank to keep current)'
+            : 'Enter password';
+        const passwordHint = isEdit
+            ? 'Leave blank to keep current password'
+            : 'Password will be stored securely in VS Code';
+        const passwordRequired = isEdit ? '' : 'required';
+        const fingerprintDisplay = values.tlsMode === 'fingerprint' ? 'block' : 'none';
 
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="${ctx.csp}">
     <title>${isEdit ? 'Edit' : 'Add'} Connection</title>
-    <style>
-        body {
-            padding: 20px;
-            font-family: var(--vscode-font-family);
-            color: var(--vscode-foreground);
-            background-color: var(--vscode-editor-background);
-        }
-        .form-container {
-            max-width: 500px;
-            margin: 0 auto;
-        }
-        h1 {
-            font-size: 24px;
-            margin-bottom: 30px;
-            color: var(--vscode-foreground);
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 600;
-            color: var(--vscode-foreground);
-        }
-        input {
-            width: 100%;
-            padding: 10px;
-            background-color: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            border: 1px solid var(--vscode-input-border);
-            border-radius: 2px;
-            font-size: 14px;
-            box-sizing: border-box;
-        }
-        input:focus, select:focus {
-            outline: 1px solid var(--vscode-focusBorder);
-        }
-        input::placeholder {
-            color: var(--vscode-input-placeholderForeground);
-        }
-        select {
-            width: 100%;
-            padding: 10px;
-            background-color: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            border: 1px solid var(--vscode-input-border);
-            border-radius: 2px;
-            font-size: 14px;
-            box-sizing: border-box;
-        }
-        .hint {
-            margin-top: 5px;
-            font-size: 12px;
-            color: var(--vscode-descriptionForeground);
-        }
-        .button-group {
-            margin-top: 30px;
-            display: flex;
-            gap: 10px;
-        }
-        button {
-            flex: 1;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 2px;
-            font-size: 14px;
-            cursor: pointer;
-            font-weight: 600;
-        }
-        .primary-button {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-        }
-        .primary-button:hover {
-            background-color: var(--vscode-button-hoverBackground);
-        }
-        .primary-button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        .secondary-button {
-            background-color: var(--vscode-button-secondaryBackground);
-            color: var(--vscode-button-secondaryForeground);
-        }
-        .secondary-button:hover {
-            background-color: var(--vscode-button-secondaryHoverBackground);
-        }
-        .error-message {
-            color: var(--vscode-errorForeground);
-            background-color: var(--vscode-inputValidation-errorBackground);
-            border: 1px solid var(--vscode-inputValidation-errorBorder);
-            padding: 10px;
-            margin-bottom: 20px;
-            border-radius: 2px;
-            display: none;
-        }
-        .icon {
-            margin-right: 8px;
-        }
-    </style>
+    <link rel="stylesheet" href="${ctx.mediaUri('connection-panel.css')}">
 </head>
 <body>
     <div class="form-container">
@@ -400,17 +313,17 @@ export class ConnectionPanel {
                 <input
                     type="password"
                     id="password"
-                    placeholder="${isEdit ? 'Enter new password (leave blank to keep current)' : 'Enter password'}"
-                    ${isEdit ? '' : 'required'}
+                    placeholder="${passwordPlaceholder}"
+                    ${passwordRequired}
                 />
-                <div class="hint">${isEdit ? 'Leave blank to keep current password' : 'Password will be stored securely in VS Code'}</div>
+                <div class="hint">${passwordHint}</div>
             </div>
 
             <div class="form-group">
                 <label for="tlsMode">
                     <span class="icon">🛡️</span>TLS Certificate Validation
                 </label>
-                <select id="tlsMode" onchange="toggleFingerprint()">
+                <select id="tlsMode">
                     <option value="off" ${values.tlsMode === 'off' ? 'selected' : ''}>Off (no validation)</option>
                     <option value="fingerprint" ${values.tlsMode === 'fingerprint' ? 'selected' : ''}>Fingerprint (pin certificate)</option>
                     <option value="full" ${values.tlsMode === 'full' ? 'selected' : ''}>Full validation (trusted CA)</option>
@@ -418,7 +331,7 @@ export class ConnectionPanel {
                 <div class="hint">Off: accept any certificate. Fingerprint: pin to specific certificate. Full: require trusted CA.</div>
             </div>
 
-            <div class="form-group" id="fingerprintGroup" style="display: ${values.tlsMode === 'fingerprint' ? 'block' : 'none'};">
+            <div class="form-group" id="fingerprintGroup" style="display: ${fingerprintDisplay};">
                 <label for="fingerprint">
                     <span class="icon">🔑</span>Certificate Fingerprint (SHA-256)
                 </label>
@@ -432,104 +345,18 @@ export class ConnectionPanel {
             </div>
 
             <div class="button-group">
-                <button type="button" class="secondary-button" onclick="cancel()">
+                <button type="button" class="secondary-button" id="cancelButton">
                     Cancel
                 </button>
                 <button type="submit" class="primary-button" id="submitButton">
-                    Test & ${isEdit ? 'Update' : 'Add'} Connection
+                    Test &amp; ${isEdit ? 'Update' : 'Add'} Connection
                 </button>
             </div>
         </form>
     </div>
 
-    <script>
-        const vscode = acquireVsCodeApi();
-        const isEdit = ${isEdit};
-
-        // Listen for messages from extension
-        window.addEventListener('message', event => {
-            const message = event.data;
-
-            switch (message.command) {
-                case 'error':
-                    showError(message.error);
-                    break;
-                case 'testing':
-                    // Already handled by submit button state
-                    break;
-            }
-        });
-
-        function toggleFingerprint() {
-            const tlsMode = document.getElementById('tlsMode').value;
-            document.getElementById('fingerprintGroup').style.display = tlsMode === 'fingerprint' ? 'block' : 'none';
-        }
-
-        document.getElementById('connectionForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-
-            const name = document.getElementById('name').value.trim();
-            const host = document.getElementById('host').value.trim();
-            const port = document.getElementById('port').value.trim();
-            const user = document.getElementById('user').value.trim();
-            const password = document.getElementById('password').value;
-            const tlsMode = document.getElementById('tlsMode').value;
-            const fingerprint = document.getElementById('fingerprint').value.trim();
-
-            // Validate inputs
-            if (!name || !host || !port || !user || (!isEdit && !password)) {
-                showError('All fields are required');
-                return;
-            }
-
-            // Validate port is a number
-            if (isNaN(port) || parseInt(port) <= 0 || parseInt(port) > 65535) {
-                showError('Port must be a valid number between 1 and 65535');
-                return;
-            }
-
-            // Validate fingerprint if provided
-            if (tlsMode === 'fingerprint' && fingerprint) {
-                const normalized = fingerprint.replace(/[:\\s]/g, '').toUpperCase();
-                if (!/^[0-9A-F]{64}$/.test(normalized)) {
-                    showError('Fingerprint must be a 64-character hexadecimal string (SHA-256)');
-                    return;
-                }
-            }
-
-            // Hide any previous errors
-            document.getElementById('errorMessage').style.display = 'none';
-
-            // Disable submit button
-            const submitButton = document.getElementById('submitButton');
-            submitButton.disabled = true;
-            submitButton.textContent = 'Testing Connection...';
-
-            // Send data to extension
-            vscode.postMessage({
-                command: 'submit',
-                data: { name, host, port, user, password, tlsMode, fingerprint }
-            });
-        });
-
-        function cancel() {
-            vscode.postMessage({ command: 'cancel' });
-        }
-
-        function showError(message) {
-            const errorDiv = document.getElementById('errorMessage');
-            errorDiv.textContent = '❌ ' + message;
-            errorDiv.style.display = 'block';
-
-            // Re-enable submit button
-            const submitButton = document.getElementById('submitButton');
-            submitButton.disabled = false;
-            submitButton.textContent = 'Test & ${isEdit ? 'Update' : 'Add'} Connection';
-        }
-
-        // Focus on first input
-        document.getElementById('name').focus();
-    </script>
+    ${ctx.dataIsland('conn-data', { isEdit, submitLabel: isEdit ? 'Update' : 'Add' })}
+    <script nonce="${ctx.nonce}" src="${ctx.mediaUri('connection-panel.js')}"></script>
 </body>
 </html>`;
     }
