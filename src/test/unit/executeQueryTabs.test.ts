@@ -1,6 +1,6 @@
 import * as assert from 'assert';
-import { TabResultCollector } from '../../execution/tabResultCollector';
 import { QueryResult } from '../../queryExecutor';
+import { TabResultCollector } from '../../execution/tabResultCollector';
 
 function makeResult(rowCount: number = 1): QueryResult {
     return {

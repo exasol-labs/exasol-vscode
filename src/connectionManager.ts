@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import * as tls from 'tls';
+import { Mutex } from 'async-mutex';
 import { ExasolDriver, ExaWebsocket } from '@exasol/exasol-driver-ts';
 import { rawQuery } from './utils';
 import { WebSocket } from 'ws';
@@ -68,8 +69,8 @@ export class ConnectionManager {
     /** Timestamp of the last successful driver.query() per connection+role, used to skip redundant validation. */
     private lastSuccessfulQuery: Map<string, Map<DriverRole, number>> = new Map();
     /** Serializes driver access per role to prevent pool exhaustion. */
-    private userMutex: Promise<void> = Promise.resolve();
-    private backgroundMutex: Promise<void> = Promise.resolve();
+    private readonly userMutex = new Mutex();
+    private readonly backgroundMutex = new Mutex();
     /** Timer for deferred cleanup of old connection drivers on switch. */
     private switchCleanupTimer: ReturnType<typeof setTimeout> | undefined;
     /** Tracks last use of background drivers for idle cleanup. */
@@ -91,18 +92,7 @@ export class ConnectionManager {
 
     private async loadConnections() {
         const stored = this.context.globalState.get<Array<Omit<StoredConnection, 'password'>>>('exasol.connections', []);
-        let needsSave = false;
         for (const conn of stored) {
-            // Migrate old host:port format to separate fields
-            if (!conn.port && conn.host.includes(':')) {
-                const [host, portStr] = conn.host.split(':');
-                conn.host = host;
-                conn.port = parseInt(portStr, 10) || 8563;
-                needsSave = true;
-            } else if (!conn.port) {
-                conn.port = 8563;
-                needsSave = true;
-            }
             // Load password from secure storage
             const password = await this.context.secrets.get(`exasol.password.${conn.id}`);
             if (password) {
@@ -111,9 +101,6 @@ export class ConnectionManager {
                     password
                 });
             }
-        }
-        if (needsSave) {
-            await this.saveConnections();
         }
         // Do not auto-activate any connection - user must manually select
     }
@@ -129,7 +116,7 @@ export class ConnectionManager {
     private async saveConnections() {
         // Save connection info without passwords to globalState
         const connectionsWithoutPasswords = Array.from(this.connections.values()).map(conn => {
-            const { password, ...rest } = conn;
+            const { password: _password, ...rest } = conn;
             return rest;
         });
         await this.context.globalState.update('exasol.connections', connectionsWithoutPasswords);
@@ -225,8 +212,7 @@ export class ConnectionManager {
         await this.resetDriver(id);
 
         const wasActive = this.activeConnection === id;
-
-        if (this.activeConnection === id) {
+        if (wasActive) {
             this.activeConnection = null;
             const firstConnection = this.connections.values().next().value;
             if (firstConnection) {
@@ -403,8 +389,7 @@ export class ConnectionManager {
                         });
                     }
                 }
-                // Unreachable, but satisfies TypeScript
-                throw new Error('Connection failed');
+                throw new Error(`All ${RECONNECT_MAX_ATTEMPTS} connection attempts failed`);
             }
         );
     }
@@ -518,18 +503,21 @@ export class ConnectionManager {
             return Promise.race(races).finally(() => cleanups.forEach(c => c()));
         };
 
+        const trackSuccess = (): void => {
+            if (!id) { return; }
+            if (!this.lastSuccessfulQuery.has(id)) {
+                this.lastSuccessfulQuery.set(id, new Map());
+            }
+            this.lastSuccessfulQuery.get(id)!.set(role, Date.now());
+            if (role === 'background') {
+                this.backgroundLastUsed.set(id, Date.now());
+            }
+        };
+
         try {
             const result = await this.runExclusive(raceable, role);
             // Track successful query so validateDriver can skip SELECT 1
-            if (id) {
-                if (!this.lastSuccessfulQuery.has(id)) {
-                    this.lastSuccessfulQuery.set(id, new Map());
-                }
-                this.lastSuccessfulQuery.get(id)!.set(role, Date.now());
-                if (role === 'background') {
-                    this.backgroundLastUsed.set(id, Date.now());
-                }
-            }
+            trackSuccess();
             return result;
         } catch (error) {
             const msg = error instanceof Error ? error.message : '';
@@ -564,15 +552,7 @@ export class ConnectionManager {
                 this.lastSuccessfulQuery.get(id)?.delete(role);
 
                 const result = await this.runExclusive(raceable, role);
-                if (id) {
-                    if (!this.lastSuccessfulQuery.has(id)) {
-                        this.lastSuccessfulQuery.set(id, new Map());
-                    }
-                    this.lastSuccessfulQuery.get(id)!.set(role, Date.now());
-                    if (role === 'background') {
-                        this.backgroundLastUsed.set(id, Date.now());
-                    }
-                }
+                trackSuccess();
                 return result;
             }
             throw error;
@@ -594,7 +574,7 @@ export class ConnectionManager {
 
             // If we can't access WebSocket state, assume we need to validate with query
             return true;
-        } catch (error) {
+        } catch {
             // If we can't check WebSocket state, assume we need to validate with query
             return true;
         }
@@ -606,17 +586,8 @@ export class ConnectionManager {
      * preventing E-EDJS-8 "pool reached its limit" errors.
      */
     private runExclusive<T>(fn: () => Promise<T>, role: DriverRole = 'user'): Promise<T> {
-        if (role === 'background') {
-            const prev = this.backgroundMutex;
-            let resolve!: () => void;
-            this.backgroundMutex = new Promise<void>(r => { resolve = r; });
-            return prev.then(fn).finally(resolve);
-        } else {
-            const prev = this.userMutex;
-            let resolve!: () => void;
-            this.userMutex = new Promise<void>(r => { resolve = r; });
-            return prev.then(fn).finally(resolve);
-        }
+        const mutex = role === 'background' ? this.backgroundMutex : this.userMutex;
+        return mutex.runExclusive(fn);
     }
 
     private async validateDriver(driver: ExasolDriver, connectionId: string, role: DriverRole = 'user'): Promise<boolean> {
@@ -647,7 +618,7 @@ export class ConnectionManager {
             if (!this.lastSuccessfulQuery.has(connectionId)) {
                 this.lastSuccessfulQuery.set(connectionId, new Map());
             }
-            this.lastSuccessfulQuery.get(connectionId)!.set(role, Date.now());
+            this.lastSuccessfulQuery.get(connectionId)!.set(role, Date.now()); // validation counts as success
             return true;
         } catch (error) {
             const outputChannel = getOutputChannel();

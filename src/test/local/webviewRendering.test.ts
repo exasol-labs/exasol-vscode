@@ -1,4 +1,6 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
+import * as path from 'path';
 import { JSDOM } from 'jsdom';
 
 // Mock vscode module before any source imports that depend on it.
@@ -46,7 +48,7 @@ require.cache['vscode'] = {
 } as any;
 
 // Now import source modules that transitively depend on vscode.
-const { getResultHtml, ResultsPanel } = require('../../panels/resultsPanel');
+const { ResultsPanel } = require('../../panels/resultsPanel');
 const { buildTabBarHtml, buildTabBarCss } = require('../../panels/tabBarRenderer');
 const { TabManager } = require('../../panels/tabManager');
 
@@ -74,17 +76,17 @@ function parseDom(html: string): Document {
 }
 
 // ──────────────────────────────────────────────
-// Single result rendering (getResultHtml)
+// Grid HTML structure (ResultsPanel.getGridHtmlStructure)
 // ──────────────────────────────────────────────
 
-suite('getResultHtml', () => {
+suite('ResultsPanel.getGridHtmlStructure', () => {
 
     test('renders column headers for a result with columns', () => {
         const result = makeResult(['id', 'name', 'age'], [
             { id: 1, name: 'Alice', age: 30 },
         ]);
-        const html = getResultHtml(result, { title: 'Test', showExport: true });
-        const doc = parseDom(html);
+        const html = ResultsPanel.getGridHtmlStructure(result, 'filter-1', '');
+        const doc = parseDom(`<html><body>${html}</body></html>`);
 
         const headers = Array.from(doc.querySelectorAll('th span'))
             .map((el: any) => el.textContent);
@@ -93,8 +95,8 @@ suite('getResultHtml', () => {
 
     test('renders correct number of column headers including row-number header', () => {
         const result = makeResult(['col_a', 'col_b'], []);
-        const html = getResultHtml(result, { title: 'Test', showExport: false });
-        const doc = parseDom(html);
+        const html = ResultsPanel.getGridHtmlStructure(result, 'filter-1', '');
+        const doc = parseDom(`<html><body>${html}</body></html>`);
 
         const allTh = doc.querySelectorAll('th');
         // row-number header (#) + 2 data columns
@@ -102,56 +104,33 @@ suite('getResultHtml', () => {
         assert.ok(allTh[0].classList.contains('row-number-header'));
     });
 
-    test('renders success message for DDL/DML result with no columns', () => {
-        const result: QueryResult = {
-            columns: [],
-            columnMetadata: [],
-            rows: [],
-            rowCount: 5,
-            executionTime: 100,
-        };
-        const html = getResultHtml(result, { title: 'Test', showExport: false });
-        const doc = parseDom(html);
-
-        const successTitle = doc.querySelector('.success-title');
-        assert.ok(successTitle, 'expected success title element');
-        assert.ok(
-            successTitle!.textContent!.includes('successfully'),
-            'expected success message text'
-        );
-
-        const rowsAffected = doc.querySelector('.detail-value');
-        assert.ok(rowsAffected, 'expected rows affected display');
-        assert.ok(rowsAffected!.textContent!.includes('5'));
-    });
-
-    test('renders a filter input', () => {
+    test('renders a filter input with the provided filterId', () => {
         const result = makeResult(['x'], [{ x: 1 }]);
-        const html = getResultHtml(result, { title: 'Test', showExport: true });
-        const doc = parseDom(html);
+        const html = ResultsPanel.getGridHtmlStructure(result, 'my-filter-id', '');
+        const doc = parseDom(`<html><body>${html}</body></html>`);
 
-        const filterInput = doc.querySelector('input[type="text"]');
-        assert.ok(filterInput, 'expected filter input element');
+        const filterInput = doc.getElementById('my-filter-id');
+        assert.ok(filterInput, 'expected filter input element with matching id');
         assert.ok(
             (filterInput as any).getAttribute('placeholder')?.includes('Filter'),
             'expected filter placeholder text'
         );
     });
 
-    test('renders an export button when showExport is true', () => {
+    test('renders an export button when exportButton HTML is provided', () => {
         const result = makeResult(['x'], [{ x: 1 }]);
-        const html = getResultHtml(result, { title: 'Test', showExport: true });
-        const doc = parseDom(html);
+        const html = ResultsPanel.getGridHtmlStructure(result, 'filter-1', '<button id="export">Export CSV</button>');
+        const doc = parseDom(`<html><body>${html}</body></html>`);
 
         const exportBtn = doc.getElementById('export');
         assert.ok(exportBtn, 'expected export button');
         assert.ok(exportBtn!.textContent!.includes('Export'));
     });
 
-    test('does not render export button when showExport is false', () => {
+    test('renders no export button when exportButton is empty string', () => {
         const result = makeResult(['x'], [{ x: 1 }]);
-        const html = getResultHtml(result, { title: 'Test', showExport: false });
-        const doc = parseDom(html);
+        const html = ResultsPanel.getGridHtmlStructure(result, 'filter-1', '');
+        const doc = parseDom(`<html><body>${html}</body></html>`);
 
         const exportBtn = doc.getElementById('export');
         assert.strictEqual(exportBtn, null);
@@ -159,8 +138,8 @@ suite('getResultHtml', () => {
 
     test('renders row count display', () => {
         const result = makeResult(['x'], [{ x: 1 }, { x: 2 }, { x: 3 }]);
-        const html = getResultHtml(result, { title: 'Test', showExport: true });
-        const doc = parseDom(html);
+        const html = ResultsPanel.getGridHtmlStructure(result, 'filter-1', '');
+        const doc = parseDom(`<html><body>${html}</body></html>`);
 
         const countEl = doc.getElementById('count');
         assert.ok(countEl, 'expected count element');
@@ -275,13 +254,17 @@ suite('TabManager.shouldShowTabBar', () => {
 });
 
 // ──────────────────────────────────────────────
-// Shared CSS/JS static methods
+// Media asset files (results-grid.css / results-grid.js)
 // ──────────────────────────────────────────────
 
-suite('ResultsPanel static methods', () => {
+const mediaDir = path.resolve(__dirname, '..', '..', '..', 'media');
 
-    test('getSharedGridCss returns non-empty string with expected selectors', () => {
-        const css: string = ResultsPanel.getSharedGridCss();
+suite('media/results-grid.css', () => {
+
+    test('exists and contains expected selectors', () => {
+        const cssPath = path.join(mediaDir, 'results-grid.css');
+        assert.ok(fs.existsSync(cssPath), 'media/results-grid.css must exist');
+        const css = fs.readFileSync(cssPath, 'utf8');
         assert.ok(css.length > 0, 'CSS should be non-empty');
         assert.ok(css.includes('.table-container'), 'expected .table-container selector');
         assert.ok(css.includes('.null-value'), 'expected .null-value selector');
@@ -289,10 +272,14 @@ suite('ResultsPanel static methods', () => {
         assert.ok(css.includes('th'), 'expected th selector');
         assert.ok(css.includes('td'), 'expected td selector');
     });
+});
 
-    test('getSharedGridScript returns non-empty string with expected function names', () => {
-        const dataJson = JSON.stringify({ columns: ['x'], columnMetadata: [], rows: [] });
-        const script: string = ResultsPanel.getSharedGridScript(dataJson, 'filter-1', 'null', "'asc'");
+suite('media/results-grid.js', () => {
+
+    test('exists and contains expected function names', () => {
+        const jsPath = path.join(mediaDir, 'results-grid.js');
+        assert.ok(fs.existsSync(jsPath), 'media/results-grid.js must exist');
+        const script = fs.readFileSync(jsPath, 'utf8');
         assert.ok(script.length > 0, 'script should be non-empty');
         assert.ok(script.includes('sortRows'), 'expected sortRows function');
         assert.ok(script.includes('render'), 'expected render function');

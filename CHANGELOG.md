@@ -2,10 +2,29 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
-## [Unreleased]
+## [1.5.0] - 2026-05-28
+
+### Added
+- **CTE column completion**: `WITH cte AS (SELECT ...)` exposes its projected columns when the CTE name (or an alias bound to it) is followed by a dot
+- **LOCAL.<alias> completion**: Exasol-specific `LOCAL.foo` references inside `WHERE`/`HAVING`/`QUALIFY`/`GROUP BY` resolve against the SELECT-list aliases of the enclosing SELECT
+- **Context-aware completion ranking**: columns are surfaced first in `SELECT`/`WHERE`/`ON` contexts, command keywords first at statement start; schemas no longer dominate every popup
+- Column completions now preserve source (FROM-clause) order instead of being alphabetised
+- **New SQL File / New Notebook buttons** in the Database Objects view title bar, so users can start working without manually creating files and switching language modes
+- **Optional schema grouping**: opt-in setting `exasol.schemaGrouping.enabled` buckets schemas in the Database Objects tree by a configurable delimiter prefix (`exasol.schemaGrouping.delimiter`, default `_`). Off by default
+
+### Fixed
+- **Query Info panel and cell inspector now populate for table preview**: previewing a table or running Describe in the Database Objects view no longer leaves the Query Info side panel stuck on its empty state; cell clicks in the result grid also update the cell inspector
+- **Object search reveal**: clicking a search result now correctly reveals and selects the matching node in the Database Objects tree, even when the tree view is collapsed or another sidebar view is focused
+- Alias parsing in completion now correctly handles quoted schemas and tables (e.g. `"SCHEMA"."TABLE" AS b`); previously bailed out and showed schemas instead of the table's columns
+- Column metadata is fetched lazily per table when first needed, rather than only being available if a prior bulk load populated `DatabaseObject.columns`
+- CodeLens `Execute` range now covers the full statement through the terminating semicolon line; previously truncated multi-line statements at the first line's end, dropping clauses like `LIMIT` that sat on the semicolon line
+- Defensive filtering of null/empty rows returned from metadata queries so a single bad row no longer crashes column or schema completion
+- Columns in the Database Objects tree now indent correctly under their parent table or view
+- New SQL File / New Notebook icons stay visible on the Connections and Query History views too
 
 ### Security
-- Resolved 10 Dependabot alerts (7 high, 3 moderate) by bumping `serialize-javascript` override to `^7.0.5` and refreshing the lockfile: `node-forge` 1.3.3 → 1.4.0, `fast-uri` 3.1.0 → 3.1.2, `lodash` 4.17.23 → 4.18.1, `follow-redirects` 1.15.11 → 1.16.0, `brace-expansion` 1.1.12 → 1.1.14
+- Resolved 10 Dependabot alerts (7 high, 3 moderate) by bumping `serialize-javascript` override to `^7.0.5` and refreshing the lockfile: `node-forge` 1.3.3 to 1.4.0, `fast-uri` 3.1.0 to 3.1.2, `lodash` 4.17.23 to 4.18.1, `follow-redirects` 1.15.11 to 1.16.0, `brace-expansion` 1.1.12 to 1.1.14
+- Bumped `tmp` to 0.2.7 to clear an additional Dependabot advisory
 
 ## [1.4.2] - 2026-05-13
 

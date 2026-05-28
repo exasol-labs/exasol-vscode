@@ -28,7 +28,7 @@ export function parseExabookCells(text: string): ParseResult {
 
     const cells = raw
         .filter((cell: unknown): cell is Record<string, unknown> =>
-            cell != null && typeof cell === 'object' && typeof (cell as any).value === 'string'
+            cell !== null && typeof cell === 'object' && typeof (cell as Record<string, unknown>).value === 'string'
         )
         .map(cell => ({
             kind: cell.kind === 1 ? 1 : 2,
@@ -39,8 +39,3 @@ export function parseExabookCells(text: string): ParseResult {
     return { cells, warnings };
 }
 
-/** Escape HTML-significant characters to prevent XSS in rendered output. */
-export function escapeHtml(s: string): string {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}

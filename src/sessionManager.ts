@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, BACKGROUND_QUERY_TIMEOUT_MS } from './connectionManager';
 import { executeWithoutResult, getRowsFromResult, rawQuery } from './utils';
+import { getOutputChannel } from './extension';
 
 export class SessionManager {
     private currentSchema: string | undefined;
@@ -82,7 +83,7 @@ export class SessionManager {
                 this._onDidChangeSession.fire();
             }
         } catch (error) {
-            console.error('Failed to refresh session:', error);
+            getOutputChannel()?.appendLine(`Failed to refresh session: ${error}`);
         }
     }
 
@@ -103,11 +104,7 @@ export class SessionManager {
         if (!activeConnection) {
             return 'Exasol: No connection';
         }
-
-        let text = `Exasol: ${activeConnection.name}`;
-        if (this.currentSchema) {
-            text += ` | Schema: ${this.currentSchema}`;
-        }
-        return text;
+        const schemaSuffix = this.currentSchema ? ` | Schema: ${this.currentSchema}` : '';
+        return `Exasol: ${activeConnection.name}${schemaSuffix}`;
     }
 }

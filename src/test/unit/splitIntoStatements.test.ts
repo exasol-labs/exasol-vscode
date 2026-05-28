@@ -271,10 +271,48 @@ SELECT * FROM table2;`;
 
         const statements = splitIntoStatements(text);
         assert.strictEqual(statements.length, 2);
-        
+
         // First statement should include both comments and AND clause
         assert.ok(statements[0].includes('/* block comment; */'));
         assert.ok(statements[0].includes('-- line comment;'));
         assert.ok(statements[0].includes('AND name'));
+    });
+
+    test('multi-line block comment with semicolons inside does not split statement', () => {
+        const text = `SELECT * FROM table10
+/* This block comment
+   spans multiple lines;
+   and contains; multiple; semicolons */
+WHERE id = 10;
+
+SELECT * FROM table11;`;
+
+        const statements = splitIntoStatements(text);
+        assert.strictEqual(statements.length, 2);
+        assert.ok(statements[0].includes('SELECT * FROM table10'));
+        assert.ok(statements[0].includes('WHERE id = 10;'));
+        assert.ok(statements[1].includes('table11'));
+    });
+
+    test('apostrophe-escaped string with semicolon inside is a single statement', () => {
+        const text = `SELECT 'O''Brien''s; query' FROM table11
+WHERE name = 'test';
+
+SELECT * FROM table12;`;
+
+        const statements = splitIntoStatements(text);
+        assert.strictEqual(statements.length, 2);
+        assert.ok(statements[0].includes("'O''Brien''s; query'"), 'doubled-quote string literal preserved');
+        assert.ok(statements[0].includes("'test'"));
+        assert.ok(statements[1].includes('table12'));
+    });
+
+    test('two statements on one line produce two separate statements', () => {
+        const text = `SELECT * FROM table12; SELECT * FROM table13;`;
+
+        const statements = splitIntoStatements(text);
+        assert.strictEqual(statements.length, 2);
+        assert.ok(statements[0].includes('table12'));
+        assert.ok(statements[1].includes('table13'));
     });
 });

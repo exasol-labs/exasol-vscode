@@ -64,6 +64,16 @@ npm run test:local   # Webview rendering tests (jsdom)
 npm run test:e2e     # E2E tests (requires compile first)
 ```
 
+### Known build warnings
+
+`npm ci` prints two transitive deprecation warnings (`prebuild-install` via `keytar`, `whatwg-encoding` via `cheerio`). Both come from `@vscode/vsce` and have no upstream fix yet. Tracked at https://github.com/microsoft/vscode-vsce/issues/1237.
+
+A third warning, `npm warn skipping integrity check for git dependency ssh://git@github.com/mikhail-zhadanov/exasol-driver-ts.git`, appears because `@exasol/exasol-driver-ts` is installed from a git URL (the fork branch) instead of an npm tarball, so npm cannot verify a registry integrity hash. The SHA pin in `package.json` provides integrity (any tampering would change the SHA). Will go away once the upstream PR ([exasol/exasol-driver-ts#59](https://github.com/exasol/exasol-driver-ts/pull/59)) merges and we switch back to the npm release.
+
+### Forked driver
+
+`@exasol/exasol-driver-ts` is temporarily sourced from a fork at [mikhail-zhadanov/exasol-driver-ts](https://github.com/mikhail-zhadanov/exasol-driver-ts) that swaps `node-forge` for Node's built-in `node:crypto` in the RSA login path. This shrinks the bundled `extension.js` by roughly 280 KB. The pin reverts to the upstream package once the change lands there.
+
 ## Limitations
 
 - Large result sets (>10,000 rows) may impact rendering performance

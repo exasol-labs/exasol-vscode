@@ -1,14 +1,8 @@
 import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
-import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute } from './utils';
+import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, ColumnMetadata, stripCommentsPreservingStrings } from './utils';
 
-export interface ColumnMetadata {
-    name: string;
-    type: string;
-    precision?: number;
-    scale?: number;
-    size?: number;
-}
+export type { ColumnMetadata };
 
 export interface QueryResult {
     columns: string[];
@@ -23,29 +17,6 @@ export class QueryExecutor {
 
     constructor(private connectionManager: ConnectionManager) {}
 
-    private extractColumnMetadata(columnsMeta: any[]): ColumnMetadata[] {
-        return columnsMeta.map((col: any) => {
-            const name = col.name ?? col.COLUMN_NAME ?? col;
-            const dataType = col.dataType;
-
-            if (dataType && typeof dataType === 'object') {
-                return {
-                    name,
-                    type: dataType.type || 'VARCHAR',
-                    precision: dataType.precision,
-                    scale: dataType.scale,
-                    size: dataType.size
-                };
-            }
-
-            // Fallback for columns without dataType info
-            return {
-                name,
-                type: 'VARCHAR'
-            };
-        });
-    }
-
     async execute(query: string, cancellationToken?: vscode.CancellationToken): Promise<QueryResult> {
         const activeConnection = this.connectionManager.getActiveConnection();
         if (!activeConnection) {
@@ -54,7 +25,7 @@ export class QueryExecutor {
 
         const config = vscode.workspace.getConfiguration('exasol');
         const maxRows = config.get<number>('maxResultRows', 10000);
-        const timeout = config.get<number>('queryTimeout', 300);
+        const _timeout = config.get<number>('queryTimeout', 300);
 
         const startTime = Date.now();
 
@@ -84,8 +55,8 @@ export class QueryExecutor {
                 const executionTime = Date.now() - startTime;
                 const columnsMeta = getColumnsFromResult(result);
                 const rows = getRowsFromResult(result);
-                const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
-                const columnMetadata = this.extractColumnMetadata(columnsMeta);
+                const columns = columnsMeta.map(extractColumnName);
+                const columnMetadata = extractColumnMetadata(columnsMeta);
 
                 return {
                     columns,
@@ -101,8 +72,8 @@ export class QueryExecutor {
                 const executionTime = Date.now() - startTime;
                 const columnsMeta = getColumnsFromResult(rawExecuteResult);
                 const rows = getRowsFromResult(rawExecuteResult);
-                const columns = columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col);
-                const columnMetadata = this.extractColumnMetadata(columnsMeta);
+                const columns = columnsMeta.map(extractColumnName);
+                const columnMetadata = extractColumnMetadata(columnsMeta);
                 const affectedRows =
                     rows.length > 0
                         ? rows.length
@@ -144,10 +115,10 @@ export class QueryExecutor {
 
             const columnsMeta = getColumnsFromResult(result);
             const rows = getRowsFromResult(result).slice(0, maxRows);
-            const columnMetadata = this.extractColumnMetadata(columnsMeta);
+            const columnMetadata = extractColumnMetadata(columnsMeta);
 
             return {
-                columns: columnsMeta.map((col: any) => col.name ?? col.COLUMN_NAME ?? col),
+                columns: columnsMeta.map(extractColumnName),
                 columnMetadata,
                 rows,
                 rowCount: rows.length,
@@ -157,12 +128,10 @@ export class QueryExecutor {
     }
 
     private isResultSetQuery(query: string): boolean {
-        const cleaned = query
+        const cleaned = stripCommentsPreservingStrings(query)
             .trim()
             .replace(/^;+/, '')
-            .replace(/^\(+/, '')
-            .replace(/--.*$/gm, '') // Remove single-line comments
-            .replace(/\/\*[\s\S]*?\*\//g, ''); // Remove multi-line comments
+            .replace(/^\(+/, '');
 
         // Special case: SELECT INTO creates a table (DDL with side effects)
         // Match pattern: SELECT ... INTO table_name ...
@@ -177,20 +146,9 @@ export class QueryExecutor {
 
         const firstWord = firstWordMatch[1].toUpperCase();
 
-        // Commands that return result sets (use query method)
-        const resultSetCommands = new Set([
-            'SELECT',
-            'WITH',
-            'SHOW',
-            'DESCRIBE',
-            'DESC',
-            'EXPLAIN',
-            'FETCH',
-            'VALUES',
-            'TABLE'
-        ]);
-
-        // Commands that don't return result sets (use execute method)
+        // Commands that don't return result sets (use execute method).
+        // Everything else (SELECT, WITH, SHOW, DESCRIBE, DESC, EXPLAIN, FETCH, VALUES, TABLE, unknown)
+        // is treated as a result-set query.
         const executeCommands = new Set([
             // DDL
             'CREATE',
@@ -227,17 +185,7 @@ export class QueryExecutor {
             'PRELOAD'
         ]);
 
-        // If it's explicitly an execute command, return false
-        if (executeCommands.has(firstWord)) {
-            return false;
-        }
-
-        // If it's explicitly a result set command, return true
-        if (resultSetCommands.has(firstWord)) {
-            return true;
-        }
-
-        // Default to true for unknown commands
-        return true;
+        // Execute commands return false; result-set commands and unknowns return true
+        return !executeCommands.has(firstWord);
     }
 }

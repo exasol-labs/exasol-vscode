@@ -19,7 +19,8 @@ export type ObjectTreeItemType =
     | 'index'
     | 'system-schemas-folder'
     | 'system-schema'
-    | 'system-table';
+    | 'system-table'
+    | 'schema-group';
 
 export interface NodeTypeConfig {
     icon: string;
@@ -42,7 +43,7 @@ export function getNodeTypeConfig(
         case 'view':
             return { icon: 'eye', contextValue: 'view' };
         case 'column':
-            return { icon: 'symbol-field', contextValue: 'column' };
+            return { icon: '', contextValue: 'column' };
         case 'virtual-schema':
             return { icon: 'remote', contextValue: 'virtual-schema' };
         case 'virtual-table':
@@ -69,6 +70,8 @@ export function getNodeTypeConfig(
             return { icon: 'list-tree', contextValue: 'index' };
         case 'system-schemas-folder':
             return { icon: 'library', contextValue: 'system-schemas-folder' };
+        case 'schema-group':
+            return { icon: 'folder', contextValue: 'schema-group' };
         case 'system-schema':
             return { icon: 'database', contextValue: 'system-schema' };
         case 'system-table':

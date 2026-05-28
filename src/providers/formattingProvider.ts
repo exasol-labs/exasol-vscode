@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { format } from 'sql-formatter';
+import { formatDialect, sql } from 'sql-formatter';
 
 export class FormattingProvider
     implements vscode.DocumentFormattingEditProvider, vscode.DocumentRangeFormattingEditProvider {
@@ -47,8 +47,8 @@ export class FormattingProvider
         const tabWidth = config.get<number>('tabWidth') ?? options?.tabSize ?? 2;
         const useTabs = config.get<boolean>('useTabs') ?? (options ? !options.insertSpaces : false);
 
-        return format(text, {
-            language: 'sql',
+        return formatDialect(text, {
+            dialect: sql,
             keywordCase: config.get<'upper' | 'lower' | 'preserve'>('keywordCase') ?? 'upper',
             indentStyle: config.get<'standard' | 'tabularLeft' | 'tabularRight'>('indentStyle') ?? 'standard',
             tabWidth,

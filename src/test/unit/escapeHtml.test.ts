@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { escapeHtml } from '../../notebooks/notebookUtils';
+import { escapeHtml } from '../../utils';
 
 suite('escapeHtml', () => {
 

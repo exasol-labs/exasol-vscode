@@ -39,10 +39,10 @@ suite('ObjectTreeItemType and getNodeTypeConfig', () => {
             assert.strictEqual(config.contextValue, 'view');
         });
 
-        test('column returns symbol-field icon', () => {
+        test('column returns empty icon so the tree renders no glyph', () => {
             const config = getNodeTypeConfig('column');
             assert.ok(config);
-            assert.strictEqual(config.icon, 'symbol-field');
+            assert.strictEqual(config.icon, '');
             assert.strictEqual(config.contextValue, 'column');
         });
     });
@@ -209,7 +209,13 @@ suite('ObjectTreeItemType and getNodeTypeConfig', () => {
             for (const type of allTypes) {
                 const config = getNodeTypeConfig(type);
                 assert.ok(config, `${type} should return a valid config`);
-                assert.ok(config.icon, `${type} should have an icon`);
+                if (type === 'column') {
+                    // Columns intentionally have no icon so the label aligns
+                    // under the parent table/view label.
+                    assert.strictEqual(config.icon, '', `${type} should have an empty icon`);
+                } else {
+                    assert.ok(config.icon, `${type} should have an icon`);
+                }
                 assert.ok(config.contextValue, `${type} should have a contextValue`);
             }
         });

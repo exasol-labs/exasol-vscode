@@ -6,6 +6,7 @@ src/**
 vsc-extension-quickstart.md
 **/tsconfig.json
 **/.eslintrc.json
+eslint.config.*
 **/*.map
 **/*.ts
 # Test files - exclude from package
@@ -17,6 +18,15 @@ esbuild.mjs
 *.vsix
 .DS_Store
 CLAUDE.md
+*AUDIT*.md
+AGENT_PROMPTS*.md
+WORKFLOW_*.md
+*REPORT*.md
+*COMPACTION*.md
+*NOTES*.md
+*SCRATCH*.md
+*DRAFT*.md
+CC_*.md
 .claude/**
 specs/**
 examples/**

@@ -1,8 +1,27 @@
 import * as vscode from 'vscode';
-import { ConnectionManager, StoredConnection, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
+import { ConnectionManager, StoredConnection } from '../connectionManager';
 import { getOutputChannel } from '../extension';
-import { getRowsFromResult, escapeSqlString, rawQuery } from '../utils';
 import { ObjectTreeItemType, getNodeTypeConfig } from './objectTreeTypes';
+import {
+    fetchSchemas,
+    fetchTables,
+    fetchViews,
+    fetchColumns,
+    fetchScriptCounts,
+    fetchFunctionCount,
+    fetchScripts,
+    fetchFunctions,
+    fetchConstraintCount,
+    fetchIndexCount,
+    fetchConstraints,
+    fetchConstraintColumns,
+    fetchIndices,
+    fetchVirtualSchemas,
+    fetchVirtualTables,
+    fetchVirtualColumns,
+    fetchSystemTables,
+    fetchSystemTableColumns
+} from './objectTreeFetchers';
 
 export type ObjectNode = ObjectTreeItem | ObjectMessageItem;
 
@@ -18,7 +37,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
     constructor(private readonly connectionManager: ConnectionManager) {}
 
     // Handle drag operation
-    async handleDrag(source: readonly ObjectNode[], dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken): Promise<void> {
+    async handleDrag(source: readonly ObjectNode[], dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): Promise<void> {
         const items = source.filter((item): item is ObjectTreeItem => item instanceof ObjectTreeItem);
 
         if (items.length === 0) {
@@ -58,7 +77,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
     }
 
     // We don't support drop operations
-    async handleDrop(target: ObjectNode | undefined, dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken): Promise<void> {
+    async handleDrop(_target: ObjectNode | undefined, _dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): Promise<void> {
         // Not implemented - we only support dragging out, not dropping in
     }
 
@@ -96,24 +115,14 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             try {
                 outputChannel?.appendLine(`📂 Objects view: Fetching schemas for active connection '${activeConnection.name}'`);
                 const [schemas, virtualSchemas] = await Promise.all([
-                    this.fetchSchemas(activeConnection),
-                    this.fetchVirtualSchemas(activeConnection)
+                    fetchSchemas(this.connectionManager, activeConnection),
+                    fetchVirtualSchemas(this.connectionManager, activeConnection)
                 ]);
                 outputChannel?.appendLine(`📂 Objects view: Found ${schemas.length} schemas, ${virtualSchemas.length} virtual schemas`);
 
-                const schemaNodes: ObjectNode[] = schemas.map(schema => {
-                    const id = `${activeConnection.id}:${schema.name}`;
-                    return new ObjectTreeItem({
-                        label: schema.name,
-                        id,
-                        collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
-                        type: 'schema',
-                        connection: activeConnection,
-                        schemaName: schema.name,
-                        tableCount: schema.tableCount,
-                        viewCount: schema.viewCount
-                    });
-                });
+                const cfg = vscode.workspace.getConfiguration('exasol');
+                const groupingEnabled = cfg.get<boolean>('schemaGrouping.enabled', false);
+                const delimiter = cfg.get<string>('schemaGrouping.delimiter', '_');
 
                 const virtualSchemaNodes: ObjectNode[] = virtualSchemas.map(vs => {
                     const id = `${activeConnection.id}:${vs.name}:virtual-schema`;
@@ -141,12 +150,86 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     return item;
                 });
 
-                const allNodes = [...schemaNodes, ...virtualSchemaNodes];
-                allNodes.sort((a, b) => {
-                    const labelA = (a as ObjectTreeItem).label as string;
-                    const labelB = (b as ObjectTreeItem).label as string;
-                    return labelA.localeCompare(labelB);
-                });
+                const allNodes: ObjectNode[] = [];
+
+                if (!groupingEnabled || !delimiter) {
+                    const schemaNodes: ObjectNode[] = schemas.map(schema => {
+                        const id = `${activeConnection.id}:${schema.name}`;
+                        return new ObjectTreeItem({
+                            label: schema.name,
+                            id,
+                            collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                            type: 'schema',
+                            connection: activeConnection,
+                            schemaName: schema.name,
+                            tableCount: schema.tableCount,
+                            viewCount: schema.viewCount
+                        });
+                    });
+                    allNodes.push(...schemaNodes, ...virtualSchemaNodes);
+                    allNodes.sort((a, b) => {
+                        const labelA = (a as ObjectTreeItem).label as string;
+                        const labelB = (b as ObjectTreeItem).label as string;
+                        return labelA.localeCompare(labelB);
+                    });
+                } else {
+                    const groups = new Map<string, SchemaInfo[]>();
+                    const ungrouped: SchemaInfo[] = [];
+                    for (const schema of schemas) {
+                        const info: SchemaInfo = {
+                            name: schema.name,
+                            tableCount: schema.tableCount,
+                            viewCount: schema.viewCount
+                        };
+                        if (schema.name.includes(delimiter)) {
+                            const prefix = schema.name.split(delimiter)[0];
+                            if (prefix !== '') {
+                                const bucket = groups.get(prefix);
+                                if (bucket) {
+                                    bucket.push(info);
+                                } else {
+                                    groups.set(prefix, [info]);
+                                }
+                                continue;
+                            }
+                        }
+                        ungrouped.push(info);
+                    }
+
+                    for (const members of groups.values()) {
+                        members.sort((a, b) => a.name.localeCompare(b.name));
+                    }
+                    ungrouped.sort((a, b) => a.name.localeCompare(b.name));
+
+                    const groupNodes: ObjectTreeItem[] = Array.from(groups.entries())
+                        .sort(([a], [b]) => a.localeCompare(b))
+                        .map(([prefix, members]) => new ObjectTreeItem({
+                            label: prefix,
+                            id: `${activeConnection.id}:schema-group:${prefix}`,
+                            collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                            type: 'schema-group',
+                            connection: activeConnection,
+                            groupedSchemas: members
+                        }));
+
+                    allNodes.push(...groupNodes, ...virtualSchemaNodes);
+                    allNodes.sort((a, b) => {
+                        const labelA = (a as ObjectTreeItem).label as string;
+                        const labelB = (b as ObjectTreeItem).label as string;
+                        return labelA.localeCompare(labelB);
+                    });
+
+                    if (ungrouped.length > 0) {
+                        allNodes.push(new ObjectTreeItem({
+                            label: '(ungrouped)',
+                            id: `${activeConnection.id}:schema-group:__ungrouped__`,
+                            collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                            type: 'schema-group',
+                            connection: activeConnection,
+                            groupedSchemas: ungrouped
+                        }));
+                    }
+                }
 
                 allNodes.push(new ObjectTreeItem({
                     label: 'System Schemas',
@@ -169,13 +252,31 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             return [];
         }
 
+        if (element.type === 'schema-group') {
+            const members = element.groupedSchemas ?? [];
+            return members.map(schema => {
+                const id = `${element.connection!.id}:${schema.name}`;
+                return new ObjectTreeItem({
+                    label: schema.name,
+                    id,
+                    collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                    type: 'schema',
+                    connection: element.connection,
+                    schemaName: schema.name,
+                    tableCount: schema.tableCount,
+                    viewCount: schema.viewCount,
+                    parent: element
+                });
+            });
+        }
+
         if (element.type === 'schema') {
             const connId = element.connection!.id;
             const schema = element.schemaName!;
 
             const [scriptCounts, functionCount] = await Promise.all([
-                this.fetchScriptCounts(element.connection!, schema),
-                this.fetchFunctionCount(element.connection!, schema)
+                fetchScriptCounts(this.connectionManager, element.connection!, schema),
+                fetchFunctionCount(this.connectionManager, element.connection!, schema)
             ]);
 
             const children: ObjectNode[] = [
@@ -261,7 +362,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         if (element.type === 'tables-folder') {
             try {
                 outputChannel?.appendLine(`📋 Objects view: Fetching tables for '${element.schemaName}'`);
-                const tables = await this.fetchTables(element.connection!, element.schemaName!);
+                const tables = await fetchTables(this.connectionManager, element.connection!, element.schemaName!);
                 outputChannel?.appendLine(`📋 Objects view: Found ${tables.length} tables`);
                 return tables.map(table => {
                     const id = `${element.connection!.id}:${element.schemaName}:${table.name}:table`;
@@ -287,7 +388,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         if (element.type === 'views-folder') {
             try {
                 outputChannel?.appendLine(`👁️ Objects view: Fetching views for '${element.schemaName}'`);
-                const views = await this.fetchViews(element.connection!, element.schemaName!);
+                const views = await fetchViews(this.connectionManager, element.connection!, element.schemaName!);
                 outputChannel?.appendLine(`👁️ Objects view: Found ${views.length} views`);
                 return views.map(view => {
                     const id = `${element.connection!.id}:${element.schemaName}:${view.name}:view`;
@@ -323,91 +424,71 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         }
 
         if (element.type === 'functions-folder') {
-            try {
-                outputChannel?.appendLine(`Objects view: Fetching functions for '${element.schemaName}'`);
-                const functions = await this.fetchFunctions(element.connection!, element.schemaName!);
-                outputChannel?.appendLine(`Objects view: Found ${functions.length} functions`);
-                return functions.map(fn => new ObjectTreeItem({
-                    label: fn.name,
-                    id: `${element.connection!.id}:${element.schemaName}:${fn.name}:function`,
-                    collapsibleState: vscode.TreeItemCollapsibleState.None,
-                    type: 'function',
-                    connection: element.connection,
-                    schemaName: element.schemaName,
-                    functionInfo: fn,
-                    parent: element
-                }));
-            } catch (error) {
-                outputChannel?.appendLine(`Failed to fetch functions: ${error}`);
-                return [];
-            }
+            outputChannel?.appendLine(`Objects view: Fetching functions for '${element.schemaName}'`);
+            const functions = await fetchFunctions(this.connectionManager, element.connection!, element.schemaName!);
+            outputChannel?.appendLine(`Objects view: Found ${functions.length} functions`);
+            return functions.map(fn => new ObjectTreeItem({
+                label: fn.name,
+                id: `${element.connection!.id}:${element.schemaName}:${fn.name}:function`,
+                collapsibleState: vscode.TreeItemCollapsibleState.None,
+                type: 'function',
+                connection: element.connection,
+                schemaName: element.schemaName,
+                functionInfo: fn,
+                parent: element
+            }));
         }
 
         if (element.type === 'constraints-folder') {
-            try {
-                const constraints = await this.fetchConstraints(
-                    element.connection!, element.schemaName!, element.tableInfo!.name
-                );
-                return constraints.map(c => new ObjectTreeItem({
-                    label: c.name,
-                    id: `${element.connection!.id}:${element.schemaName}:${element.tableInfo!.name}:${c.name}:constraint`,
-                    collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
-                    type: 'constraint',
-                    connection: element.connection,
-                    schemaName: element.schemaName,
-                    tableInfo: element.tableInfo,
-                    constraintType: c.type,
-                    parent: element
-                }));
-            } catch (error) {
-                outputChannel?.appendLine(`Failed to fetch constraints: ${error}`);
-                return [];
-            }
+            const constraints = await fetchConstraints(
+                this.connectionManager, element.connection!, element.schemaName!, element.tableInfo!.name
+            );
+            return constraints.map(c => new ObjectTreeItem({
+                label: c.name,
+                id: `${element.connection!.id}:${element.schemaName}:${element.tableInfo!.name}:${c.name}:constraint`,
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                type: 'constraint',
+                connection: element.connection,
+                schemaName: element.schemaName,
+                tableInfo: element.tableInfo,
+                constraintType: c.type,
+                parent: element
+            }));
         }
 
         if (element.type === 'indices-folder') {
-            try {
-                const indices = await this.fetchIndices(
-                    element.connection!, element.schemaName!, element.tableInfo!.name
-                );
-                return indices.map(idx => {
-                    const item = new ObjectTreeItem({
-                        label: idx.name,
-                        id: `${element.connection!.id}:${element.schemaName}:${element.tableInfo!.name}:${idx.name}:index`,
-                        collapsibleState: vscode.TreeItemCollapsibleState.None,
-                        type: 'index',
-                        connection: element.connection,
-                        schemaName: element.schemaName,
-                        tableInfo: element.tableInfo,
-                        parent: element
-                    });
-                    item.description = idx.columns;
-                    return item;
+            const indices = await fetchIndices(
+                this.connectionManager, element.connection!, element.schemaName!, element.tableInfo!.name
+            );
+            return indices.map(idx => {
+                const item = new ObjectTreeItem({
+                    label: idx.name,
+                    id: `${element.connection!.id}:${element.schemaName}:${element.tableInfo!.name}:${idx.name}:index`,
+                    collapsibleState: vscode.TreeItemCollapsibleState.None,
+                    type: 'index',
+                    connection: element.connection,
+                    schemaName: element.schemaName,
+                    tableInfo: element.tableInfo,
+                    parent: element
                 });
-            } catch (error) {
-                outputChannel?.appendLine(`Failed to fetch indices: ${error}`);
-                return [];
-            }
+                item.description = idx.columns;
+                return item;
+            });
         }
 
         if (element.type === 'constraint') {
-            try {
-                const columns = await this.fetchConstraintColumns(
-                    element.connection!, element.schemaName!, element.tableInfo!.name, element.label as string
-                );
-                return columns.map(col => new ObjectTreeItem({
-                    label: col.name,
-                    id: `${element.connection!.id}:${element.schemaName}:${element.tableInfo!.name}:${element.label}:${col.name}:constraint-column`,
-                    collapsibleState: vscode.TreeItemCollapsibleState.None,
-                    type: 'column',
-                    connection: element.connection,
-                    schemaName: element.schemaName,
-                    parent: element
-                }));
-            } catch (error) {
-                outputChannel?.appendLine(`Failed to fetch constraint columns: ${error}`);
-                return [];
-            }
+            const columns = await fetchConstraintColumns(
+                this.connectionManager, element.connection!, element.schemaName!, element.tableInfo!.name, element.label as string
+            );
+            return columns.map(col => new ObjectTreeItem({
+                label: col.name,
+                id: `${element.connection!.id}:${element.schemaName}:${element.tableInfo!.name}:${element.label}:${col.name}:constraint-column`,
+                collapsibleState: vscode.TreeItemCollapsibleState.None,
+                type: 'column',
+                connection: element.connection,
+                schemaName: element.schemaName,
+                parent: element
+            }));
         }
 
         if (element.type === 'table' || element.type === 'view') {
@@ -415,23 +496,17 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             const schema = element.schemaName!;
             const tableName = element.tableInfo!.name;
 
-            let constraintCount = 0;
-            let indexCount = 0;
-
-            try {
-                [constraintCount, indexCount] = await Promise.all([
-                    this.fetchConstraintCount(element.connection!, schema, tableName),
-                    this.fetchIndexCount(element.connection!, schema, tableName)
-                ]);
-            } catch (error) {
-                outputChannel?.appendLine(`Failed to fetch constraint/index counts: ${error}`);
-            }
+            const [constraintCount, indexCount] = await Promise.all([
+                fetchConstraintCount(this.connectionManager, element.connection!, schema, tableName),
+                fetchIndexCount(this.connectionManager, element.connection!, schema, tableName)
+            ]);
 
             try {
                 outputChannel?.appendLine(
                     `📊 Objects view: Fetching columns for ${element.type} '${tableName}'`
                 );
-                const columns = await this.fetchColumns(
+                const columns = await fetchColumns(
+                    this.connectionManager,
                     element.connection!,
                     schema,
                     tableName
@@ -488,55 +563,45 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         }
 
         if (element.type === 'virtual-schema') {
-            try {
-                outputChannel?.appendLine(`Objects view: Fetching virtual tables for '${element.schemaName}'`);
-                const tables = await this.fetchVirtualTables(element.connection!, element.schemaName!);
-                outputChannel?.appendLine(`Objects view: Found ${tables.length} virtual tables`);
-                return tables.map(table => {
-                    const id = `${element.connection!.id}:${element.schemaName}:${table.name}:virtual-table`;
-                    return new ObjectTreeItem({
-                        label: table.name,
-                        id,
-                        collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
-                        type: 'virtual-table',
-                        connection: element.connection,
-                        schemaName: element.schemaName,
-                        tableInfo: { name: table.name },
-                        parent: element
-                    });
+            outputChannel?.appendLine(`Objects view: Fetching virtual tables for '${element.schemaName}'`);
+            const tables = await fetchVirtualTables(this.connectionManager, element.connection!, element.schemaName!);
+            outputChannel?.appendLine(`Objects view: Found ${tables.length} virtual tables`);
+            return tables.map(table => {
+                const id = `${element.connection!.id}:${element.schemaName}:${table.name}:virtual-table`;
+                return new ObjectTreeItem({
+                    label: table.name,
+                    id,
+                    collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                    type: 'virtual-table',
+                    connection: element.connection,
+                    schemaName: element.schemaName,
+                    tableInfo: { name: table.name },
+                    parent: element
                 });
-            } catch (error) {
-                outputChannel?.appendLine(`Failed to fetch virtual tables: ${error}`);
-                return [];
-            }
+            });
         }
 
         if (element.type === 'virtual-table') {
-            try {
-                outputChannel?.appendLine(
-                    `Objects view: Fetching virtual columns for '${element.schemaName}'.'${element.tableInfo!.name}'`
-                );
-                const columns = await this.fetchVirtualColumns(
-                    element.connection!, element.schemaName!, element.tableInfo!.name
-                );
-                outputChannel?.appendLine(`Objects view: Found ${columns.length} virtual columns`);
-                return columns.map(col => {
-                    const id = `${element.connection!.id}:${element.schemaName}:${element.tableInfo!.name}:${col.name}:column`;
-                    return new ObjectTreeItem({
-                        label: `${col.name} (${col.type})`,
-                        id,
-                        collapsibleState: vscode.TreeItemCollapsibleState.None,
-                        type: 'column',
-                        connection: element.connection,
-                        schemaName: element.schemaName,
-                        columnInfo: { name: col.name, type: col.type, nullable: false },
-                        parent: element
-                    });
+            outputChannel?.appendLine(
+                `Objects view: Fetching virtual columns for '${element.schemaName}'.'${element.tableInfo!.name}'`
+            );
+            const columns = await fetchVirtualColumns(
+                this.connectionManager, element.connection!, element.schemaName!, element.tableInfo!.name
+            );
+            outputChannel?.appendLine(`Objects view: Found ${columns.length} virtual columns`);
+            return columns.map(col => {
+                const id = `${element.connection!.id}:${element.schemaName}:${element.tableInfo!.name}:${col.name}:column`;
+                return new ObjectTreeItem({
+                    label: `${col.name} (${col.type})`,
+                    id,
+                    collapsibleState: vscode.TreeItemCollapsibleState.None,
+                    type: 'column',
+                    connection: element.connection,
+                    schemaName: element.schemaName,
+                    columnInfo: { name: col.name, type: col.type, nullable: false },
+                    parent: element
                 });
-            } catch (error) {
-                outputChannel?.appendLine(`Failed to fetch virtual columns: ${error}`);
-                return [];
-            }
+            });
         }
 
         if (element.type === 'system-schemas-folder') {
@@ -564,7 +629,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         }
 
         if (element.type === 'system-schema') {
-            const tables = await this.fetchSystemTables(element.connection!, element.schemaName!);
+            const tables = await fetchSystemTables(this.connectionManager, element.connection!, element.schemaName!);
             return tables.map(table => {
                 const id = `${element.connection!.id}:${element.schemaName}:${table.name}:system-table`;
                 return new ObjectTreeItem({
@@ -581,8 +646,8 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         }
 
         if (element.type === 'system-table') {
-            const columns = await this.fetchSystemTableColumns(
-                element.connection!, element.schemaName!, element.tableInfo!.name
+            const columns = await fetchSystemTableColumns(
+                this.connectionManager, element.connection!, element.schemaName!, element.tableInfo!.name
             );
             return columns.map(col => {
                 const id = `${element.connection!.id}:${element.schemaName}:${element.tableInfo!.name}:${col.name}:column`;
@@ -604,746 +669,27 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
 
     private async getScriptFolderChildren(element: ObjectTreeItem, scriptType: string): Promise<ObjectNode[]> {
         const outputChannel = getOutputChannel();
-        try {
-            const scripts = await this.fetchScripts(element.connection!, element.schemaName!, scriptType);
-            outputChannel?.appendLine(`Objects view: Found ${scripts.length} ${scriptType} scripts`);
-            return scripts.map(script => new ObjectTreeItem({
-                label: script.name,
-                id: `${element.connection!.id}:${element.schemaName}:${script.name}:script`,
-                collapsibleState: vscode.TreeItemCollapsibleState.None,
-                type: 'script',
-                connection: element.connection,
-                schemaName: element.schemaName,
-                scriptType,
-                scriptInfo: script,
-                parent: element
-            }));
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch ${scriptType} scripts: ${error}`);
-            return [];
-        }
+        const scripts = await fetchScripts(this.connectionManager, element.connection!, element.schemaName!, scriptType);
+        outputChannel?.appendLine(`Objects view: Found ${scripts.length} ${scriptType} scripts`);
+        return scripts.map(script => new ObjectTreeItem({
+            label: script.name,
+            id: `${element.connection!.id}:${element.schemaName}:${script.name}:script`,
+            collapsibleState: vscode.TreeItemCollapsibleState.None,
+            type: 'script',
+            connection: element.connection,
+            schemaName: element.schemaName,
+            scriptType,
+            scriptInfo: script,
+            parent: element
+        }));
     }
 
-    private async fetchSchemas(connection: StoredConnection): Promise<Array<{ name: string; tableCount?: number; viewCount?: number }>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                outputChannel?.appendLine(`   Getting driver for connection ID: ${connection.id}`);
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                outputChannel?.appendLine(`   Driver obtained, running schema query with object counts...`);
+}
 
-            // Try to get schema counts in a single query
-            try {
-                const result = await rawQuery(driver, `
-                    SELECT
-                        s.SCHEMA_NAME,
-                        COALESCE(t.TABLE_COUNT, 0) AS TABLE_COUNT,
-                        COALESCE(v.VIEW_COUNT, 0) AS VIEW_COUNT
-                    FROM SYS.EXA_SCHEMAS s
-                    LEFT JOIN (
-                        SELECT TABLE_SCHEMA, COUNT(*) AS TABLE_COUNT
-                        FROM SYS.EXA_ALL_TABLES
-                        GROUP BY TABLE_SCHEMA
-                    ) t ON s.SCHEMA_NAME = t.TABLE_SCHEMA
-                    LEFT JOIN (
-                        SELECT VIEW_SCHEMA, COUNT(*) AS VIEW_COUNT
-                        FROM SYS.EXA_ALL_VIEWS
-                        GROUP BY VIEW_SCHEMA
-                    ) v ON s.SCHEMA_NAME = v.VIEW_SCHEMA
-                    WHERE s.SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
-                    ORDER BY s.SCHEMA_NAME
-                `);
-                const rows = getRowsFromResult(result);
-                outputChannel?.appendLine(`   Schema query with counts returned ${rows.length} rows`);
-                return rows.map((row: any) => ({
-                    name: row.SCHEMA_NAME,
-                    tableCount: this.parseRowCount(row.TABLE_COUNT),
-                    viewCount: this.parseRowCount(row.VIEW_COUNT)
-                }));
-            } catch (error) {
-                outputChannel?.appendLine(`   Failed to fetch counts with optimized query: ${error}`);
-                outputChannel?.appendLine(`   Falling back to simple schema query without counts...`);
-
-                // Fallback to simple query without counts
-                const result = await rawQuery(driver, `
-                    SELECT SCHEMA_NAME
-                    FROM SYS.EXA_SCHEMAS
-                    WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
-                    ORDER BY SCHEMA_NAME
-                `);
-                const rows = getRowsFromResult(result);
-                outputChannel?.appendLine(`   Schema query returned ${rows.length} rows`);
-                return rows.map((row: any) => ({ name: row.SCHEMA_NAME }));
-            }
-            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`   Error fetching schemas: ${error}`);
-            throw new Error(`Failed to fetch schemas: ${error}`);
-        }
-    }
-
-    private async fetchTables(
-        connection: StoredConnection,
-        schemaName: string
-    ): Promise<Array<{ name: string; rowCount?: number }>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const attempts: Array<{
-                description: string;
-                sql: string;
-                map: (rows: any[]) => Array<{ name: string; rowCount?: number }>;
-                isRecoverable: (error: unknown) => boolean;
-            }> = [
-                {
-                    description: 'tables with row counts from EXA_ALL_TABLES',
-                    sql: `
-                        SELECT
-                            TABLE_NAME,
-                            TABLE_ROW_COUNT
-                        FROM SYS.EXA_ALL_TABLES
-                        WHERE TABLE_SCHEMA = '${escapeSqlString(schemaName)}'
-                        ORDER BY TABLE_NAME
-                    `,
-                    map: rows => rows.map((row: any) => ({
-                        name: row.TABLE_NAME,
-                        rowCount: this.parseRowCount(row.TABLE_ROW_COUNT)
-                    })),
-                    isRecoverable: error =>
-                        this.isColumnMissingError(error, 'TABLE_ROW_COUNT') ||
-                        this.isColumnMissingError(error, 'EXA_ALL_TABLES')
-                },
-                {
-                    description: 'tables without row counts from EXA_ALL_TABLES',
-                    sql: `
-                        SELECT TABLE_NAME
-                        FROM SYS.EXA_ALL_TABLES
-                        WHERE TABLE_SCHEMA = '${escapeSqlString(schemaName)}'
-                        ORDER BY TABLE_NAME
-                    `,
-                    map: rows => rows.map((row: any) => ({
-                        name: row.TABLE_NAME
-                    })),
-                    isRecoverable: error =>
-                        this.isColumnMissingError(error, 'EXA_ALL_TABLES') ||
-                        this.isColumnMissingError(error, 'TABLE_NAME')
-                },
-                {
-                    description: 'tables from EXA_ALL_OBJECTS',
-                    sql: `
-                        SELECT OBJECT_NAME AS TABLE_NAME
-                        FROM SYS.EXA_ALL_OBJECTS
-                        WHERE OBJECT_SCHEMA = '${escapeSqlString(schemaName)}'
-                        AND OBJECT_TYPE = 'TABLE'
-                        ORDER BY OBJECT_NAME
-                    `,
-                    map: rows => rows.map((row: any) => ({
-                        name: row.TABLE_NAME ?? row.OBJECT_NAME
-                    })),
-                    isRecoverable: error =>
-                        this.isColumnMissingError(error, 'EXA_ALL_OBJECTS') ||
-                        this.isColumnMissingError(error, 'OBJECT_TYPE')
-                },
-                {
-                    description: 'tables from EXA_ALL_COLUMNS fallback',
-                    sql: `
-                        SELECT DISTINCT COLUMN_TABLE AS TABLE_NAME
-                        FROM SYS.EXA_ALL_COLUMNS
-                        WHERE COLUMN_SCHEMA = '${escapeSqlString(schemaName)}'
-                        AND (COLUMN_OBJECT_TYPE = 'TABLE' OR COLUMN_OBJECT_TYPE IS NULL)
-                        ORDER BY COLUMN_TABLE
-                    `,
-                    map: rows => rows.map((row: any) => ({
-                        name: row.TABLE_NAME ?? row.COLUMN_TABLE
-                    })),
-                    isRecoverable: () => false
-                }
-            ];
-
-            let lastError: unknown = undefined;
-
-            for (const attempt of attempts) {
-                outputChannel?.appendLine(`   Running tables query (${attempt.description}) for '${schemaName}'`);
-                try {
-                    const result = await rawQuery(driver, attempt.sql);
-                    const rows = getRowsFromResult(result);
-                    outputChannel?.appendLine(`   ${attempt.description} returned ${rows.length} rows`);
-                    return attempt.map(rows);
-                } catch (error) {
-                    lastError = error;
-                    if (attempt.isRecoverable(error)) {
-                        outputChannel?.appendLine(
-                            `   Tables query failed due to missing metadata (${error}). Trying fallback...`
-                        );
-                        continue;
-                    }
-
-                    throw error;
-                }
-            }
-
-                throw lastError ?? new Error('Unknown error fetching tables');
-            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`   Error in fetchTables: ${error}`);
-            throw new Error(`Failed to fetch tables: ${error}`);
-        }
-    }
-
-    private async fetchViews(connection: StoredConnection, schemaName: string): Promise<Array<{ name: string }>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                outputChannel?.appendLine(`   Running views query for schema '${schemaName}'`);
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-
-                const attempts: Array<{
-                description: string;
-                sql: string;
-                map: (rows: any[]) => Array<{ name: string }>;
-                recoverable: (error: unknown) => boolean;
-            }> = [
-                {
-                    description: 'views from EXA_ALL_VIEWS',
-                    sql: `
-                        SELECT TABLE_NAME AS VIEW_NAME
-                        FROM SYS.EXA_ALL_VIEWS
-                        WHERE VIEW_SCHEMA = '${escapeSqlString(schemaName)}'
-                        ORDER BY TABLE_NAME
-                    `,
-                    map: rows => rows.map((row: any) => ({ name: row.VIEW_NAME ?? row.TABLE_NAME })),
-                    recoverable: error =>
-                        this.isColumnMissingError(error, 'TABLE_NAME') ||
-                        this.isColumnMissingError(error, 'VIEW_SCHEMA') ||
-                        this.isRawDataError(error)
-                },
-                {
-                    description: 'views from EXA_ALL_OBJECTS',
-                    sql: `
-                        SELECT
-                            OBJECT_NAME AS VIEW_NAME
-                        FROM SYS.EXA_ALL_OBJECTS
-                        WHERE OBJECT_SCHEMA = '${escapeSqlString(schemaName)}'
-                        AND OBJECT_TYPE = 'VIEW'
-                        ORDER BY OBJECT_NAME
-                    `,
-                    map: rows => rows.map((row: any) => ({ name: row.VIEW_NAME ?? row.OBJECT_NAME })),
-                    recoverable: error =>
-                        this.isColumnMissingError(error, 'OBJECT_NAME') ||
-                        this.isColumnMissingError(error, 'OBJECT_SCHEMA') ||
-                        this.isColumnMissingError(error, 'OBJECT_TYPE') ||
-                        this.isRawDataError(error)
-                },
-                {
-                    description: 'views from EXA_ALL_COLUMNS',
-                    sql: `
-                        SELECT DISTINCT
-                            COLUMN_TABLE AS VIEW_NAME
-                        FROM SYS.EXA_ALL_COLUMNS
-                        WHERE COLUMN_SCHEMA = '${escapeSqlString(schemaName)}'
-                        AND (
-                            COLUMN_OBJECT_TYPE IS NULL OR
-                            COLUMN_OBJECT_TYPE = 'VIEW' OR
-                            COLUMN_OBJECT_TYPE = 'VIRTUAL TABLE'
-                        )
-                        ORDER BY COLUMN_TABLE
-                    `,
-                    map: rows => rows.map((row: any) => ({ name: row.VIEW_NAME ?? row.COLUMN_TABLE })),
-                    recoverable: () => false
-                }
-            ];
-
-            let lastError: unknown = undefined;
-
-            for (const attempt of attempts) {
-                outputChannel?.appendLine(`   Running views query (${attempt.description}) for schema '${schemaName}'`);
-                try {
-                    const rawResult = await rawQuery(driver, attempt.sql);
-                    const validated = this.getRawResultOrThrow(rawResult);
-                    const rows = getRowsFromResult(validated);
-                    outputChannel?.appendLine(`   ${attempt.description} returned ${rows.length} rows`);
-                    return attempt.map(rows);
-                } catch (error) {
-                    lastError = error;
-                    if (attempt.recoverable(error)) {
-                        outputChannel?.appendLine(
-                            `   Views query failed (${error}). Trying next fallback...`
-                        );
-                        continue;
-                    }
-
-                    throw error;
-                }
-            }
-
-                throw lastError ?? new Error('Unknown error fetching views');
-            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`   Error in fetchViews: ${error}`);
-            outputChannel?.appendLine(`   Error stack: ${(error as Error).stack}`);
-            throw new Error(`Failed to fetch views: ${error}`);
-        }
-    }
-
-    private async fetchColumns(
-        connection: StoredConnection,
-        schemaName: string,
-        tableName: string
-    ): Promise<Array<{ name: string; type: string; nullable: boolean }>> {
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT
-                        COLUMN_NAME,
-                        COLUMN_TYPE,
-                        COLUMN_IS_NULLABLE
-                    FROM SYS.EXA_ALL_COLUMNS
-                    WHERE COLUMN_SCHEMA = '${escapeSqlString(schemaName)}'
-                    AND COLUMN_TABLE = '${escapeSqlString(tableName)}'
-                    ORDER BY COLUMN_ORDINAL_POSITION
-                `);
-                const rows = getRowsFromResult(result);
-                return rows.map((row: any) => ({
-                    name: row.COLUMN_NAME,
-                    type: row.COLUMN_TYPE,
-                    nullable: row.COLUMN_IS_NULLABLE
-                }));
-            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
-        } catch (error) {
-            throw new Error(`Failed to fetch columns: ${error}`);
-        }
-    }
-
-    private async fetchScriptCounts(
-        connection: StoredConnection,
-        schemaName: string
-    ): Promise<Map<string, number>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT SCRIPT_TYPE, COUNT(*) AS SCRIPT_COUNT
-                    FROM SYS.EXA_ALL_SCRIPTS
-                    WHERE SCRIPT_SCHEMA = '${escapeSqlString(schemaName)}'
-                    GROUP BY SCRIPT_TYPE
-                `);
-                const rows = getRowsFromResult(result);
-                const counts = new Map<string, number>();
-                for (const row of rows) {
-                    const scriptType = row.SCRIPT_TYPE as string;
-                    const count = this.parseRowCount(row.SCRIPT_COUNT) ?? 0;
-                    if (scriptType && count > 0) {
-                        counts.set(scriptType, count);
-                    }
-                }
-                return counts;
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch script counts for '${schemaName}': ${error}`);
-            return new Map();
-        }
-    }
-
-    private async fetchFunctionCount(
-        connection: StoredConnection,
-        schemaName: string
-    ): Promise<number> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT COUNT(*) AS FUNCTION_COUNT
-                    FROM SYS.EXA_ALL_FUNCTIONS
-                    WHERE FUNCTION_SCHEMA = '${escapeSqlString(schemaName)}'
-                `);
-                const rows = getRowsFromResult(result);
-                if (rows.length > 0) {
-                    return this.parseRowCount(rows[0].FUNCTION_COUNT) ?? 0;
-                }
-                return 0;
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch function count for '${schemaName}': ${error}`);
-            return 0;
-        }
-    }
-
-    private async fetchScripts(
-        connection: StoredConnection,
-        schemaName: string,
-        scriptType: string
-    ): Promise<Array<{ name: string; language: string; inputType: string | null; scriptType: string }>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT
-                        SCRIPT_NAME,
-                        SCRIPT_LANGUAGE,
-                        SCRIPT_INPUT_TYPE,
-                        SCRIPT_TYPE
-                    FROM SYS.EXA_ALL_SCRIPTS
-                    WHERE SCRIPT_SCHEMA = '${escapeSqlString(schemaName)}'
-                    AND SCRIPT_TYPE = '${escapeSqlString(scriptType)}'
-                    ORDER BY SCRIPT_NAME
-                `);
-                const rows = getRowsFromResult(result);
-                return rows.map((row: any) => ({
-                    name: row.SCRIPT_NAME,
-                    language: row.SCRIPT_LANGUAGE,
-                    inputType: row.SCRIPT_INPUT_TYPE ?? null,
-                    scriptType: row.SCRIPT_TYPE
-                }));
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch scripts (${scriptType}) for '${schemaName}': ${error}`);
-            return [];
-        }
-    }
-
-    private async fetchFunctions(
-        connection: StoredConnection,
-        schemaName: string
-    ): Promise<Array<{ name: string }>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT FUNCTION_NAME
-                    FROM SYS.EXA_ALL_FUNCTIONS
-                    WHERE FUNCTION_SCHEMA = '${escapeSqlString(schemaName)}'
-                    ORDER BY FUNCTION_NAME
-                `);
-                const rows = getRowsFromResult(result);
-                return rows.map((row: any) => ({
-                    name: row.FUNCTION_NAME
-                }));
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch functions for '${schemaName}': ${error}`);
-            return [];
-        }
-    }
-
-    private async fetchConstraintCount(
-        connection: StoredConnection,
-        schemaName: string,
-        tableName: string
-    ): Promise<number> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT COUNT(*) AS CONSTRAINT_COUNT
-                    FROM SYS.EXA_ALL_CONSTRAINTS
-                    WHERE CONSTRAINT_SCHEMA = '${escapeSqlString(schemaName)}'
-                    AND CONSTRAINT_TABLE = '${escapeSqlString(tableName)}'
-                `);
-                const rows = getRowsFromResult(result);
-                if (rows.length > 0) {
-                    return this.parseRowCount(rows[0].CONSTRAINT_COUNT) ?? 0;
-                }
-                return 0;
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch constraint count for '${schemaName}'.'${tableName}': ${error}`);
-            return 0;
-        }
-    }
-
-    private async fetchIndexCount(
-        connection: StoredConnection,
-        schemaName: string,
-        tableName: string
-    ): Promise<number> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT COUNT(*) AS INDEX_COUNT
-                    FROM SYS.EXA_ALL_INDICES
-                    WHERE INDEX_SCHEMA = '${escapeSqlString(schemaName)}'
-                    AND INDEX_TABLE = '${escapeSqlString(tableName)}'
-                `);
-                const rows = getRowsFromResult(result);
-                if (rows.length > 0) {
-                    return this.parseRowCount(rows[0].INDEX_COUNT) ?? 0;
-                }
-                return 0;
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch index count for '${schemaName}'.'${tableName}': ${error}`);
-            return 0;
-        }
-    }
-
-    private async fetchConstraints(
-        connection: StoredConnection,
-        schemaName: string,
-        tableName: string
-    ): Promise<Array<{ name: string; type: string }>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
-                    FROM SYS.EXA_ALL_CONSTRAINTS
-                    WHERE CONSTRAINT_SCHEMA = '${escapeSqlString(schemaName)}'
-                    AND CONSTRAINT_TABLE = '${escapeSqlString(tableName)}'
-                    ORDER BY CONSTRAINT_NAME
-                `);
-                const rows = getRowsFromResult(result);
-                return rows.map((row: any) => ({
-                    name: row.CONSTRAINT_NAME,
-                    type: row.CONSTRAINT_TYPE
-                }));
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch constraints for '${schemaName}'.'${tableName}': ${error}`);
-            return [];
-        }
-    }
-
-    private async fetchConstraintColumns(
-        connection: StoredConnection,
-        schemaName: string,
-        tableName: string,
-        constraintName: string
-    ): Promise<Array<{ name: string }>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT COLUMN_NAME, ORDINAL_POSITION
-                    FROM SYS.EXA_ALL_CONSTRAINT_COLUMNS
-                    WHERE CONSTRAINT_SCHEMA = '${escapeSqlString(schemaName)}'
-                    AND CONSTRAINT_TABLE = '${escapeSqlString(tableName)}'
-                    AND CONSTRAINT_NAME = '${escapeSqlString(constraintName)}'
-                    ORDER BY ORDINAL_POSITION
-                `);
-                const rows = getRowsFromResult(result);
-                return rows.map((row: any) => ({
-                    name: row.COLUMN_NAME
-                }));
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch constraint columns for '${constraintName}': ${error}`);
-            return [];
-        }
-    }
-
-    private async fetchIndices(
-        connection: StoredConnection,
-        schemaName: string,
-        tableName: string
-    ): Promise<Array<{ name: string; columns: string }>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT INDEX_NAME, INDEX_TYPE, INDEX_COLUMNS
-                    FROM SYS.EXA_ALL_INDICES
-                    WHERE INDEX_SCHEMA = '${escapeSqlString(schemaName)}'
-                    AND INDEX_TABLE = '${escapeSqlString(tableName)}'
-                    ORDER BY INDEX_NAME
-                `);
-                const rows = getRowsFromResult(result);
-                return rows.map((row: any) => ({
-                    name: row.INDEX_NAME ?? row.INDEX_TYPE ?? 'INDEX',
-                    columns: row.INDEX_COLUMNS ?? ''
-                }));
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch indices for '${schemaName}'.'${tableName}': ${error}`);
-            return [];
-        }
-    }
-
-    private async fetchVirtualSchemas(
-        connection: StoredConnection
-    ): Promise<Array<{ name: string; adapterName?: string; lastRefresh?: string; lastRefreshBy?: string }>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT
-                        SCHEMA_NAME,
-                        ADAPTER_SCRIPT_SCHEMA,
-                        ADAPTER_SCRIPT_NAME,
-                        LAST_REFRESH,
-                        LAST_REFRESH_BY
-                    FROM SYS.EXA_ALL_VIRTUAL_SCHEMAS
-                    ORDER BY SCHEMA_NAME
-                `);
-                const rows = getRowsFromResult(result);
-                return rows.map((row: any) => ({
-                    name: row.SCHEMA_NAME,
-                    adapterName: row.ADAPTER_SCRIPT_NAME ?? undefined,
-                    lastRefresh: row.LAST_REFRESH ?? undefined,
-                    lastRefreshBy: row.LAST_REFRESH_BY ?? undefined
-                }));
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch virtual schemas: ${error}`);
-            return [];
-        }
-    }
-
-    private async fetchVirtualTables(
-        connection: StoredConnection,
-        virtualSchemaName: string
-    ): Promise<Array<{ name: string }>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT TABLE_NAME
-                    FROM SYS.EXA_ALL_VIRTUAL_TABLES
-                    WHERE TABLE_SCHEMA = '${escapeSqlString(virtualSchemaName)}'
-                    ORDER BY TABLE_NAME
-                `);
-                const rows = getRowsFromResult(result);
-                return rows.map((row: any) => ({
-                    name: row.TABLE_NAME
-                }));
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch virtual tables for '${virtualSchemaName}': ${error}`);
-            return [];
-        }
-    }
-
-    private async fetchVirtualColumns(
-        connection: StoredConnection,
-        virtualSchemaName: string,
-        tableName: string
-    ): Promise<Array<{ name: string; type: string }>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT COLUMN_NAME, COLUMN_TYPE
-                    FROM SYS.EXA_ALL_VIRTUAL_COLUMNS
-                    WHERE COLUMN_SCHEMA = '${escapeSqlString(virtualSchemaName)}'
-                    AND COLUMN_TABLE = '${escapeSqlString(tableName)}'
-                    ORDER BY COLUMN_ORDINAL_POSITION
-                `);
-                const rows = getRowsFromResult(result);
-                return rows.map((row: any) => ({
-                    name: row.COLUMN_NAME,
-                    type: row.COLUMN_TYPE
-                }));
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch virtual columns for '${virtualSchemaName}'.'${tableName}': ${error}`);
-            return [];
-        }
-    }
-
-    private async fetchSystemTables(
-        connection: StoredConnection,
-        schemaName: string
-    ): Promise<Array<{ name: string }>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    SELECT OBJECT_NAME
-                    FROM SYS.EXA_SYSCAT
-                    WHERE SCHEMA_NAME = '${escapeSqlString(schemaName)}'
-                    ORDER BY OBJECT_NAME
-                `);
-                const rows = getRowsFromResult(result);
-                return rows.map((row: any) => ({
-                    name: row.OBJECT_NAME
-                }));
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch system tables for '${schemaName}': ${error}`);
-            return [];
-        }
-    }
-
-    private async fetchSystemTableColumns(
-        connection: StoredConnection,
-        schemaName: string,
-        tableName: string
-    ): Promise<Array<{ name: string; type: string }>> {
-        const outputChannel = getOutputChannel();
-        try {
-            return await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id, 'background');
-                const result = await rawQuery(driver, `
-                    DESCRIBE "${escapeSqlString(schemaName)}"."${escapeSqlString(tableName)}"
-                `);
-                const rows = getRowsFromResult(result);
-                return rows.map((row: any) => ({
-                    name: row.COLUMN_NAME,
-                    type: row.SQL_TYPE ?? 'UNKNOWN'
-                }));
-            }, connection.id, { role: 'background' });
-        } catch (error) {
-            outputChannel?.appendLine(`Failed to fetch system table columns for '${schemaName}'.'${tableName}': ${error}`);
-            return [];
-        }
-    }
-
-    private parseRowCount(rowCount: unknown): number | undefined {
-        if (rowCount === null || rowCount === undefined) {
-            return undefined;
-        }
-
-        if (typeof rowCount === 'number') {
-            return Number.isFinite(rowCount) ? rowCount : undefined;
-        }
-
-        const parsed = Number(rowCount);
-        return Number.isFinite(parsed) ? parsed : undefined;
-    }
-
-    private isColumnMissingError(error: unknown, columnOrTableName: string): boolean {
-        const message = (error instanceof Error ? error.message : String(error ?? '')).toUpperCase();
-        const searchTerm = columnOrTableName.toUpperCase();
-        return message.includes(searchTerm) &&
-            (message.includes('NOT FOUND') || message.includes('INVALID') || message.includes('OBJECT'));
-    }
-
-    private isRawDataError(error: unknown): boolean {
-        const message = (error instanceof Error ? error.message : String(error ?? '')).toUpperCase();
-        return message.includes('NUMRESULTS') || error instanceof TypeError;
-    }
-
-    private getRawResultOrThrow(result: any): any {
-        if (!result) {
-            throw new Error('Empty result set');
-        }
-
-        if (typeof result.status === 'string' && result.status !== 'ok') {
-            const message = result.exception?.text || 'Unknown error';
-            throw new Error(message);
-        }
-
-        if (!result.responseData || typeof result.responseData.numResults !== 'number') {
-            throw new Error('Unexpected result format: missing numResults');
-        }
-
-        return result;
-    }
+interface SchemaInfo {
+    name: string;
+    tableCount?: number;
+    viewCount?: number;
 }
 
 interface ObjectTreeItemOptions {
@@ -1364,6 +710,7 @@ interface ObjectTreeItemOptions {
     scriptInfo?: { name: string; language: string; inputType: string | null; scriptType: string };
     functionInfo?: { name: string };
     parent?: ObjectTreeItem | null;
+    groupedSchemas?: SchemaInfo[];
 }
 
 export class ObjectTreeItem extends vscode.TreeItem {
@@ -1381,6 +728,7 @@ export class ObjectTreeItem extends vscode.TreeItem {
     public readonly scriptInfo?: { name: string; language: string; inputType: string | null; scriptType: string };
     public readonly functionInfo?: { name: string };
     public readonly parent: ObjectTreeItem | null;
+    public readonly groupedSchemas?: SchemaInfo[];
 
     constructor(options: ObjectTreeItemOptions) {
         super(options.label, options.collapsibleState);
@@ -1399,13 +747,16 @@ export class ObjectTreeItem extends vscode.TreeItem {
         this.scriptInfo = options.scriptInfo;
         this.functionInfo = options.functionInfo;
         this.parent = options.parent ?? null;
+        this.groupedSchemas = options.groupedSchemas;
 
         const config = getNodeTypeConfig(options.type, {
             scriptType: this.scriptType,
             constraintType: this.constraintType
         });
         if (config) {
-            this.iconPath = new vscode.ThemeIcon(config.icon);
+            if (config.icon) {
+                this.iconPath = new vscode.ThemeIcon(config.icon);
+            }
             this.contextValue = config.contextValue;
         }
 

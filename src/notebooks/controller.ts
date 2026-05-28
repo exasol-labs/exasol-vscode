@@ -3,7 +3,7 @@ import { ConnectionManager } from '../connectionManager';
 import { QueryExecutor, QueryResult } from '../queryExecutor';
 import { getOutputChannel } from '../extension';
 import { formatError } from '../connectionTypes';
-import { escapeHtml } from './notebookUtils';
+import { escapeHtml } from '../utils';
 
 export class ExasolNotebookController {
     private readonly controller: vscode.NotebookController;
@@ -128,7 +128,7 @@ export class ExasolNotebookController {
         html += '<div class="exasol-nb-scroll"><table class="exasol-nb-table"><thead><tr>';
 
         for (const col of columns) {
-            html += `<th>${this.escapeHtml(col)}</th>`;
+            html += `<th>${escapeHtml(col)}</th>`;
         }
         html += '</tr></thead><tbody>';
 
@@ -139,7 +139,7 @@ export class ExasolNotebookController {
                 if (val === null || val === undefined) {
                     html += '<td class="null-val">NULL</td>';
                 } else {
-                    html += `<td>${this.escapeHtml(String(val))}</td>`;
+                    html += `<td>${escapeHtml(String(val))}</td>`;
                 }
             }
             html += '</tr>';
@@ -149,7 +149,4 @@ export class ExasolNotebookController {
         return html;
     }
 
-    private escapeHtml(s: string): string {
-        return escapeHtml(s);
-    }
 }

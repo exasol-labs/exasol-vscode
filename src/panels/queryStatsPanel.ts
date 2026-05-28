@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { QueryResult } from '../queryExecutor';
+import { createWebviewRenderContext } from '../utils';
 
 export interface QueryStats {
     query: string;
@@ -43,7 +44,10 @@ export class QueryStatsPanel implements vscode.WebviewViewProvider {
 
     resolveWebviewView(webviewView: vscode.WebviewView): void | Thenable<void> {
         this.view = webviewView;
-        this.view.webview.options = { enableScripts: true };
+        this.view.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media')]
+        };
 
         // Listen for messages from other panels
         this.view.webview.onDidReceiveMessage(message => {
@@ -69,16 +73,7 @@ export class QueryStatsPanel implements vscode.WebviewViewProvider {
     }
 
     public static updateCellInspector(column: string, value: any, type: string) {
-        if (!QueryStatsPanel.instance || !QueryStatsPanel.instance.view) {
-            return;
-        }
-
-        QueryStatsPanel.instance.view.webview.postMessage({
-            command: 'showCellInspector',
-            column,
-            value,
-            type
-        });
+        QueryStatsPanel.instance?.updateCellInspector(column, value, type);
     }
 
     private update(stats: QueryStats) {
@@ -98,251 +93,125 @@ export class QueryStatsPanel implements vscode.WebviewViewProvider {
     }
 
     private getEmptyHtml(): string {
-        return `
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <style>
-                    body {
-                        padding: 12px;
-                        font-family: var(--vscode-font-family);
-                        color: var(--vscode-descriptionForeground);
-                        background-color: var(--vscode-sideBar-background);
-                        font-size: 12px;
-                    }
-                    .empty {
-                        text-align: center;
-                        padding: 20px;
-                        opacity: 0.6;
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="empty">Execute a query to see statistics</div>
-            </body>
-            </html>
-        `;
+        const ctx = createWebviewRenderContext(this.view!.webview, this.extensionUri, vscode.Uri.joinPath);
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="${ctx.csp}">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style nonce="${ctx.nonce}">
+        body {
+            padding: 12px;
+            font-family: var(--vscode-font-family);
+            color: var(--vscode-descriptionForeground);
+            background-color: var(--vscode-sideBar-background);
+            font-size: 12px;
+        }
+        .empty {
+            text-align: center;
+            padding: 20px;
+            opacity: 0.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="empty">Execute a query to see statistics</div>
+</body>
+</html>`;
     }
 
     private getStatsHtml(stats: QueryStats): string {
-        const queryPreview = this.getQueryPreview(stats.query);
-        const timeFormatted = this.formatTime(stats.executionTime);
-        const timestampFormatted = this.formatTimestamp(stats.timestamp);
-        const throughput = this.calculateThroughput(stats);
-        const avgRowTime = this.calculateAvgRowTime(stats);
+        const ctx = createWebviewRenderContext(this.view!.webview, this.extensionUri, vscode.Uri.joinPath);
 
-        return `
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <style>
-                    * {
-                        margin: 0;
-                        padding: 0;
-                        box-sizing: border-box;
-                    }
-                    body {
-                        padding: 8px;
-                        font-family: var(--vscode-font-family);
-                        color: var(--vscode-foreground);
-                        background-color: var(--vscode-sideBar-background);
-                        font-size: 12px;
-                        width: fit-content;
-                        min-width: 200px;
-                        max-width: 400px;
-                    }
-                    .section-header {
-                        color: var(--vscode-descriptionForeground);
-                        font-size: 10px;
-                        font-weight: 600;
-                        text-transform: uppercase;
-                        margin-bottom: 8px;
-                        letter-spacing: 0.5px;
-                    }
-                    .cell-inspector {
-                        border: 1px solid var(--vscode-panel-border);
-                        border-radius: 3px;
-                        padding: 8px;
-                        margin-bottom: 12px;
-                        background-color: var(--vscode-editor-background);
-                        display: none;
-                    }
-                    .cell-inspector.visible {
-                        display: block;
-                    }
-                    .inspector-header {
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        margin-bottom: 6px;
-                        gap: 6px;
-                    }
-                    .inspector-column {
-                        color: var(--vscode-descriptionForeground);
-                        font-size: 10px;
-                        font-weight: 600;
-                    }
-                    .inspector-type {
-                        color: var(--vscode-charts-blue);
-                        font-size: 10px;
-                        font-family: var(--vscode-editor-font-family);
-                    }
-                    .inspector-value {
-                        font-family: var(--vscode-editor-font-family);
-                        font-size: 11px;
-                        word-wrap: break-word;
-                        white-space: pre-wrap;
-                        max-height: 100px;
-                        overflow-y: auto;
-                        padding: 6px;
-                        background-color: var(--vscode-input-background);
-                        border: 1px solid var(--vscode-input-border);
-                        border-radius: 2px;
-                    }
-                    .inspector-null {
-                        color: var(--vscode-disabledForeground);
-                        font-style: italic;
-                    }
-                    .stat-group {
-                        margin-bottom: 10px;
-                        padding-bottom: 10px;
-                        border-bottom: 1px solid var(--vscode-panel-border);
-                    }
-                    .stat-group:last-child {
-                        border-bottom: none;
-                        margin-bottom: 0;
-                    }
-                    .stat-item {
-                        display: grid;
-                        grid-template-columns: auto 1fr;
-                        align-items: baseline;
-                        margin-bottom: 5px;
-                        gap: 12px;
-                    }
-                    .stat-label {
-                        color: var(--vscode-descriptionForeground);
-                        font-size: 11px;
-                        white-space: nowrap;
-                    }
-                    .stat-value {
-                        color: var(--vscode-foreground);
-                        font-weight: 500;
-                        text-align: right;
-                        font-size: 12px;
-                        white-space: nowrap;
-                    }
-                    .stat-value.highlight {
-                        color: var(--vscode-charts-blue);
-                        font-weight: 600;
-                    }
-                    .stat-value.success {
-                        color: var(--vscode-terminal-ansiGreen);
-                    }
-                    .query-preview {
-                        font-family: var(--vscode-editor-font-family);
-                        font-size: 10px;
-                        background-color: var(--vscode-editor-background);
-                        border: 1px solid var(--vscode-panel-border);
-                        border-radius: 3px;
-                        padding: 6px 8px;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                        white-space: nowrap;
-                        color: var(--vscode-editor-foreground);
-                        margin-top: 4px;
-                        max-width: 100%;
-                    }
-                    .timestamp {
-                        color: var(--vscode-descriptionForeground);
-                        font-size: 10px;
-                        text-align: center;
-                        margin-top: 8px;
-                        opacity: 0.7;
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="cell-inspector" id="cellInspector">
-                    <div class="section-header">Cell Value</div>
-                    <div class="inspector-header">
-                        <span class="inspector-column" id="inspectorColumn"></span>
-                        <span class="inspector-type" id="inspectorType"></span>
-                    </div>
-                    <div class="inspector-value" id="inspectorValue"></div>
-                </div>
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="${ctx.csp}">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="${ctx.mediaUri('query-stats.css')}">
+</head>
+<body>
+    <div class="cell-inspector" id="cellInspector">
+        <div class="section-header">Cell Value</div>
+        <div class="inspector-header">
+            <span class="inspector-column" id="inspectorColumn"></span>
+            <span class="inspector-type" id="inspectorType"></span>
+        </div>
+        <div class="inspector-value" id="inspectorValue"></div>
+    </div>
 
-                <div class="section-header">Query Statistics</div>
-                <div class="stat-group">
-                    <div class="stat-item">
-                        <span class="stat-label">Time</span>
-                        <span class="stat-value highlight">${timeFormatted}</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Rows</span>
-                        <span class="stat-value success">${stats.rowCount.toLocaleString()}</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Cols</span>
-                        <span class="stat-value">${stats.columnCount}</span>
-                    </div>
-                </div>
+    <div class="section-header">Query Statistics</div>
+    <div class="stat-group">
+        <div class="stat-item">
+            <span class="stat-label">Time</span>
+            <span class="stat-value highlight" id="statTime"></span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Rows</span>
+            <span class="stat-value success" id="statRows"></span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Cols</span>
+            <span class="stat-value" id="statCols"></span>
+        </div>
+    </div>
 
-                <div class="stat-group">
-                    <div class="stat-item">
-                        <span class="stat-label">Throughput</span>
-                        <span class="stat-value">${throughput}</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Avg/Row</span>
-                        <span class="stat-value">${avgRowTime}</span>
-                    </div>
-                </div>
+    <div class="stat-group">
+        <div class="stat-item">
+            <span class="stat-label">Throughput</span>
+            <span class="stat-value" id="statThroughput"></span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Avg/Row</span>
+            <span class="stat-value" id="statAvgRow"></span>
+        </div>
+    </div>
 
-                <div class="stat-group">
-                    <div class="stat-label" style="margin-bottom: 4px;">Query</div>
-                    <div class="query-preview" title="${this.escapeHtml(stats.query)}">${queryPreview}</div>
-                </div>
+    <div class="stat-group">
+        <div class="stat-label query-label">Query</div>
+        <div class="query-preview" id="queryPreview"></div>
+    </div>
 
-                <div class="timestamp">${timestampFormatted}</div>
+    <div class="timestamp" id="statTimestamp"></div>
 
-                <script>
-                    const vscode = acquireVsCodeApi();
-                    const cellInspector = document.getElementById('cellInspector');
-                    const inspectorColumn = document.getElementById('inspectorColumn');
-                    const inspectorType = document.getElementById('inspectorType');
-                    const inspectorValue = document.getElementById('inspectorValue');
-
-                    window.addEventListener('message', event => {
-                        const message = event.data;
-                        if (message.command === 'showCellInspector') {
-                            cellInspector.classList.add('visible');
-                            inspectorColumn.textContent = message.column;
-                            inspectorType.textContent = message.type;
-
-                            if (message.value === null || message.value === undefined || message.value === '') {
-                                inspectorValue.innerHTML = '<span class="inspector-null">(null)</span>';
-                            } else {
-                                inspectorValue.textContent = String(message.value);
-                            }
-                        }
-                    });
-                </script>
-            </body>
-            </html>
-        `;
+    ${ctx.dataIsland('stats-data', {
+        timeFormatted: this.formatTime(stats.executionTime),
+        rowCount: stats.rowCount.toLocaleString(),
+        columnCount: stats.columnCount,
+        throughput: this.calculateThroughput(stats),
+        avgRowTime: this.calculateAvgRowTime(stats),
+        queryTitle: stats.query,
+        queryPreview: this.getQueryPreview(stats.query),
+        timestampFormatted: this.formatTimestamp(stats.timestamp)
+    })}
+    <script nonce="${ctx.nonce}" src="${ctx.mediaUri('query-stats.js')}"></script>
+    <script nonce="${ctx.nonce}">
+        (function () {
+            const d = JSON.parse(document.getElementById('stats-data').textContent);
+            document.getElementById('statTime').textContent = d.timeFormatted;
+            document.getElementById('statRows').textContent = d.rowCount;
+            document.getElementById('statCols').textContent = d.columnCount;
+            document.getElementById('statThroughput').textContent = d.throughput;
+            document.getElementById('statAvgRow').textContent = d.avgRowTime;
+            const qp = document.getElementById('queryPreview');
+            qp.textContent = d.queryPreview;
+            qp.title = d.queryTitle;
+            document.getElementById('statTimestamp').textContent = d.timestampFormatted;
+        })();
+    </script>
+</body>
+</html>`;
     }
 
     private getQueryPreview(query: string): string {
         const cleaned = query.replace(/\s+/g, ' ').trim();
         const maxLength = 50;
         if (cleaned.length <= maxLength) {
-            return this.escapeHtml(cleaned);
+            return cleaned;
         }
-        return this.escapeHtml(cleaned.substring(0, maxLength)) + '...';
+        return cleaned.substring(0, maxLength) + '...';
     }
 
     private formatTime(ms: number): string {
@@ -395,15 +264,4 @@ export class QueryStatsPanel implements vscode.WebviewViewProvider {
         return `${msPerRow.toFixed(1)}ms`;
     }
 
-    private escapeHtml(text: string): string {
-        const div = { textContent: text } as any;
-        const element = { innerHTML: '', appendChild: (node: any) => { element.innerHTML = node.textContent; } };
-        element.appendChild(div);
-        return text
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
-    }
 }
