@@ -3,7 +3,7 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "publisher": "exasol",
   "license": "MIT",
   "repository": {
@@ -590,7 +590,7 @@
     "typescript-eslint": "^8.59.4"
   },
   "dependencies": {
-    "@exasol/exasol-driver-ts": "github:mikhail-zhadanov/exasol-driver-ts#5bc94315248ae7da9f19c306217f30a69f1ab861",
+    "@exasol/exasol-driver-ts": "github:mikhail-zhadanov/exasol-driver-ts#46d96eff6dd109aa201275b7347a94e9a5f52612",
     "async-mutex": "^0.5.0",
     "sql-formatter": "^15.8.0",
     "ws": "^8.20.1"

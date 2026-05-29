@@ -72,13 +72,13 @@ A third warning, `npm warn skipping integrity check for git dependency ssh://git
 
 ### Forked driver
 
-`@exasol/exasol-driver-ts` is temporarily sourced from a fork at [mikhail-zhadanov/exasol-driver-ts](https://github.com/mikhail-zhadanov/exasol-driver-ts) that swaps `node-forge` for Node's built-in `node:crypto` in the RSA login path. This shrinks the bundled `extension.js` by roughly 280 KB. The pin reverts to the upstream package once the change lands there.
+`@exasol/exasol-driver-ts` is temporarily sourced from a fork at [mikhail-zhadanov/exasol-driver-ts](https://github.com/mikhail-zhadanov/exasol-driver-ts) (v0.4.1, rebased on upstream 0.4.0). The fork replaces `node-forge` with Node's built-in `node:crypto` in both the RSA login path and the local CSV import TLS-certificate path, removing `node-forge` from the bundle entirely (~280 KB of `extension.js`). The pin reverts to the upstream package once the change lands there ([exasol/exasol-driver-ts#59](https://github.com/exasol/exasol-driver-ts/pull/59)).
 
 ## Limitations
 
 - Large result sets (>10,000 rows) may impact rendering performance
 - Query cancellation relies on driver support; some queries may not cancel immediately
-- The [Exasol TypeScript driver](https://github.com/exasol/exasol-driver-ts) only supports cloud file uploads
+- Local file import from the extension is supported for CSV only, via `IMPORT INTO <table> FROM LOCAL CSV FILE '<path>'`. The extension intercepts the statement and streams the file to Exasol over the driver's TLS tunnel, so the cluster must be able to open a connection back to the client machine for the import tunnel. Other local formats (e.g. FBV) and multi-file local imports are not supported; cloud file imports continue to work via raw SQL. Cancelling an in-progress local import does not stop the load already streaming to the cluster
 
 ## Support
 
