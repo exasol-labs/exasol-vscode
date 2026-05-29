@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
 import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, ColumnMetadata, stripCommentsPreservingStrings } from './utils';
+import { parseLocalCsvImport, resolveImportPath } from './localCsvImport';
 
 export type { ColumnMetadata };
 
@@ -31,6 +32,27 @@ export class QueryExecutor {
 
         // Clean the query - remove trailing semicolons and trim
         let finalQuery = query.trim().replace(/;+\s*$/, '').trim();
+
+        // Intercept local CSV imports: raw SQL cannot stream a local file over the
+        // WebSocket protocol, so route them through the driver's programmatic import.
+        const localImport = parseLocalCsvImport(finalQuery);
+        if (localImport) {
+            return await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver();
+                const absPath = resolveImportPath(localImport.filePath);
+                const rowCount = await driver.importFromCsvFile(localImport.table, absPath, localImport.options);
+
+                const executionTime = Date.now() - startTime;
+
+                return {
+                    columns: [],
+                    columnMetadata: [],
+                    rows: [],
+                    rowCount,
+                    executionTime
+                };
+            }, undefined, cancellationToken ? { cancellationToken } : undefined);
+        }
 
         // Auto-add LIMIT to SELECT queries without explicit LIMIT
         if (finalQuery.toUpperCase().startsWith('SELECT') && !finalQuery.toUpperCase().includes('LIMIT')) {

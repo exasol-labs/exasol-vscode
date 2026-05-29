@@ -78,7 +78,7 @@ A third warning, `npm warn skipping integrity check for git dependency ssh://git
 
 - Large result sets (>10,000 rows) may impact rendering performance
 - Query cancellation relies on driver support; some queries may not cancel immediately
-- Importing local files is not yet available from the extension; only cloud file imports work. Local CSV import support exists in the driver as of 0.4.1, but the extension UI wiring is tracked separately ([#9](https://github.com/exasol-labs/exasol-vscode/issues/9))
+- Local file import from the extension is supported for CSV only, via `IMPORT INTO <table> FROM LOCAL CSV FILE '<path>'`. The extension intercepts the statement and streams the file to Exasol over the driver's TLS tunnel, so the cluster must be able to open a connection back to the client machine for the import tunnel. Other local formats (e.g. FBV) and multi-file local imports are not supported; cloud file imports continue to work via raw SQL
 
 ## Support
 
