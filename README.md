@@ -72,13 +72,13 @@ A third warning, `npm warn skipping integrity check for git dependency ssh://git
 
 ### Forked driver
 
-`@exasol/exasol-driver-ts` is temporarily sourced from a fork at [mikhail-zhadanov/exasol-driver-ts](https://github.com/mikhail-zhadanov/exasol-driver-ts) that swaps `node-forge` for Node's built-in `node:crypto` in the RSA login path. This shrinks the bundled `extension.js` by roughly 280 KB. The pin reverts to the upstream package once the change lands there.
+`@exasol/exasol-driver-ts` is temporarily sourced from a fork at [mikhail-zhadanov/exasol-driver-ts](https://github.com/mikhail-zhadanov/exasol-driver-ts) (v0.4.1, rebased on upstream 0.4.0). The fork replaces `node-forge` with Node's built-in `node:crypto` in both the RSA login path and the local CSV import TLS-certificate path, removing `node-forge` from the bundle entirely (~280 KB of `extension.js`). The pin reverts to the upstream package once the change lands there ([exasol/exasol-driver-ts#59](https://github.com/exasol/exasol-driver-ts/pull/59)).
 
 ## Limitations
 
 - Large result sets (>10,000 rows) may impact rendering performance
 - Query cancellation relies on driver support; some queries may not cancel immediately
-- The [Exasol TypeScript driver](https://github.com/exasol/exasol-driver-ts) only supports cloud file uploads
+- Importing local files is not yet available from the extension; only cloud file imports work. Local CSV import support exists in the driver as of 0.4.1, but the extension UI wiring is tracked separately ([#9](https://github.com/exasol-labs/exasol-vscode/issues/9))
 
 ## Support
 
