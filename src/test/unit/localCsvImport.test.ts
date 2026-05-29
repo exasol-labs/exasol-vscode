@@ -141,3 +141,39 @@ suite('parseLocalCsvImport: multiple files', () => {
         );
     });
 });
+
+suite('parseLocalCsvImport: string-literal-aware option parsing (#3)', () => {
+    test("NULL = 'FILE' parses without a false multi-file error", () => {
+        const result = parseLocalCsvImport("IMPORT INTO t FROM LOCAL CSV FILE '/data/in.csv' NULL = 'FILE'");
+        assert.ok(result, 'should detect the import');
+        assert.strictEqual(result.options.null, 'FILE');
+    });
+
+    test("COLUMN SEPARATOR = 'SKIP' sets the separator, not skip", () => {
+        const result = parseLocalCsvImport("IMPORT INTO t FROM LOCAL CSV FILE '/data/in.csv' COLUMN SEPARATOR = 'SKIP'");
+        assert.ok(result);
+        assert.strictEqual(result.options.columnSeparator, 'SKIP');
+        assert.strictEqual(result.options.skip, undefined);
+    });
+
+    test('a quoted value containing TRIM is not misread as a trim mode', () => {
+        const result = parseLocalCsvImport("IMPORT INTO t FROM LOCAL CSV FILE '/data/in.csv' NULL = 'TRIM'");
+        assert.ok(result);
+        assert.strictEqual(result.options.null, 'TRIM');
+        assert.strictEqual(result.options.trim, undefined);
+    });
+
+    test("a quoted value containing ROW SEPARATOR is not misread as a row separator", () => {
+        const result = parseLocalCsvImport("IMPORT INTO t FROM LOCAL CSV FILE '/data/in.csv' NULL = 'ROW SEPARATOR'");
+        assert.ok(result);
+        assert.strictEqual(result.options.null, 'ROW SEPARATOR');
+        assert.strictEqual(result.options.rowSeparator, undefined);
+    });
+
+    test('still throws on a genuine second FILE token after a quoted option', () => {
+        assert.throws(
+            () => parseLocalCsvImport("IMPORT INTO t FROM LOCAL CSV FILE '/data/a.csv' NULL = 'x' FILE '/data/b.csv'"),
+            /single FILE/
+        );
+    });
+});

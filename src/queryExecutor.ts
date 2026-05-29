@@ -26,7 +26,7 @@ export class QueryExecutor {
 
         const config = vscode.workspace.getConfiguration('exasol');
         const maxRows = config.get<number>('maxResultRows', 10000);
-        const _timeout = config.get<number>('queryTimeout', 300);
+        const queryTimeoutMs = config.get<number>('queryTimeout', 300) * 1000;
 
         const startTime = Date.now();
 
@@ -35,8 +35,18 @@ export class QueryExecutor {
 
         // Intercept local CSV imports: raw SQL cannot stream a local file over the
         // WebSocket protocol, so route them through the driver's programmatic import.
+        //
+        // Cancelling the wrapper here only abandons this promise: it does NOT stop
+        // the in-flight server-side load nor tear down the driver's import tunnel.
+        // Stopping a streaming import cleanly needs a driver-side AbortSignal,
+        // tracked in exasol/exasol-driver-ts#68.
         const localImport = parseLocalCsvImport(finalQuery);
         if (localImport) {
+            // Unlike the SELECT/DDL branches, the import branch passes a timeout:
+            // the cluster connects back to the driver's import tunnel, and an
+            // asymmetric NAT/firewall can stall that handshake with no automatic
+            // recovery, leaving the import hung indefinitely. The timeout rejects
+            // a stalled import instead of hanging forever.
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver();
                 const absPath = resolveImportPath(localImport.filePath);
@@ -51,7 +61,7 @@ export class QueryExecutor {
                     rowCount,
                     executionTime
                 };
-            }, undefined, cancellationToken ? { cancellationToken } : undefined);
+            }, undefined, { timeoutMs: queryTimeoutMs, ...(cancellationToken ? { cancellationToken } : {}) });
         }
 
         // Auto-add LIMIT to SELECT queries without explicit LIMIT

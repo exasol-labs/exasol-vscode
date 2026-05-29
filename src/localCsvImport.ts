@@ -45,11 +45,6 @@ export function parseLocalCsvImport(sql: string): ParsedLocalCsvImport | null {
     const filePath = match.groups.path.replace(/''/g, "'");
     const rest = match.groups.rest;
 
-    // Multiple files are not supported by the single-file driver method.
-    if (/\bFILE\b/i.test(rest)) {
-        throw new Error('Local CSV import supports a single FILE; found multiple. Run one IMPORT per file.');
-    }
-
     return {
         table,
         filePath,
@@ -58,54 +53,127 @@ export function parseLocalCsvImport(sql: string): ParsedLocalCsvImport | null {
 }
 
 /**
+ * One option token recognized in the trailing clause: a `KEYWORD = 'value'`
+ * pair, a `SKIP = <number>` pair, or a bare `TRIM`/`LTRIM`/`RTRIM` keyword.
+ * The regex is anchored at the current cursor (`y` flag) so matching and
+ * consuming proceed strictly left-to-right; quoted string values are captured
+ * whole and never re-scanned for keywords.
+ */
+interface OptionTokenMatcher {
+    re: RegExp;
+    apply: (options: CsvFormatOptions, m: RegExpExecArray) => void;
+}
+
+const OPTION_TOKEN_MATCHERS: OptionTokenMatcher[] = [
+    {
+        re: /SKIP\s*=\s*(\d+)/iy,
+        apply: (options, m) => { options.skip = Number(m[1]); }
+    },
+    {
+        re: /COLUMN\s+SEPARATOR\s*=\s*'((?:[^']|'')*)'/iy,
+        apply: (options, m) => { options.columnSeparator = m[1].replace(/''/g, "'"); }
+    },
+    {
+        re: /COLUMN\s+DELIMITER\s*=\s*'((?:[^']|'')*)'/iy,
+        apply: (options, m) => { options.columnDelimiter = m[1].replace(/''/g, "'"); }
+    },
+    {
+        re: /ROW\s+SEPARATOR\s*=\s*'(LF|CR|CRLF)'/iy,
+        apply: (options, m) => {
+            const value = m[1].toUpperCase();
+            options.rowSeparator = RowSeparator[value as keyof typeof RowSeparator];
+        }
+    },
+    {
+        re: /ENCODING\s*=\s*'((?:[^']|'')*)'/iy,
+        apply: (options, m) => {
+            options.encoding = m[1].replace(/''/g, "'") as CsvFormatOptions['encoding'];
+        }
+    },
+    {
+        re: /NULL\s*=\s*'((?:[^']|'')*)'/iy,
+        apply: (options, m) => { options.null = m[1].replace(/''/g, "'"); }
+    },
+    {
+        // TRIM / LTRIM / RTRIM as a bare keyword token (no value). The \b after
+        // ensures TRIM is not consumed from the middle of a longer identifier.
+        re: /(LTRIM|RTRIM|TRIM)\b/iy,
+        apply: (options, m) => {
+            const value = m[1].toUpperCase();
+            if (value === 'LTRIM') {
+                options.trim = TrimMode.LEADING;
+            } else if (value === 'RTRIM') {
+                options.trim = TrimMode.TRAILING;
+            } else {
+                options.trim = TrimMode.BOTH;
+            }
+        }
+    }
+];
+
+/** Matches an unconsumed `FILE` keyword token in the option structure. */
+const FILE_TOKEN_RE = /FILE\b/iy;
+/** Matches leading whitespace and optional comma/AND separators between tokens. */
+const SEPARATOR_RE = /[\s,]*(?:AND[\s,]+)?/iy;
+
+/**
  * Parses the trailing options clause of a local CSV import into CsvFormatOptions.
+ *
+ * Walks `rest` left-to-right, matching and consuming one option token at a time.
+ * Because quoted string values are captured whole and the cursor only advances
+ * past matched spans, a keyword that appears INSIDE a quoted value (e.g.
+ * `NULL = 'FILE'`, `COLUMN SEPARATOR = 'SKIP'`) is never re-interpreted as an
+ * option keyword. The multi-file guard likewise only fires on a real `FILE`
+ * token found in the unconsumed structure, not on text inside a quoted value.
  * Tolerant of arbitrary whitespace and optional spacing around `=`.
  */
 function parseCsvOptions(rest: string): CsvFormatOptions {
     const options: CsvFormatOptions = {};
+    let pos = 0;
 
-    const skipMatch = /\bSKIP\s*=\s*(\d+)/i.exec(rest);
-    if (skipMatch) {
-        options.skip = Number(skipMatch[1]);
-    }
-
-    const columnSeparatorMatch = /\bCOLUMN\s+SEPARATOR\s*=\s*'((?:[^']|'')*)'/i.exec(rest);
-    if (columnSeparatorMatch) {
-        options.columnSeparator = columnSeparatorMatch[1].replace(/''/g, "'");
-    }
-
-    const columnDelimiterMatch = /\bCOLUMN\s+DELIMITER\s*=\s*'((?:[^']|'')*)'/i.exec(rest);
-    if (columnDelimiterMatch) {
-        options.columnDelimiter = columnDelimiterMatch[1].replace(/''/g, "'");
-    }
-
-    const rowSeparatorMatch = /\bROW\s+SEPARATOR\s*=\s*'(LF|CR|CRLF)'/i.exec(rest);
-    if (rowSeparatorMatch) {
-        const value = rowSeparatorMatch[1].toUpperCase();
-        options.rowSeparator = RowSeparator[value as keyof typeof RowSeparator];
-    }
-
-    const encodingMatch = /\bENCODING\s*=\s*'((?:[^']|'')*)'/i.exec(rest);
-    if (encodingMatch) {
-        options.encoding = encodingMatch[1].replace(/''/g, "'") as CsvFormatOptions['encoding'];
-    }
-
-    // TRIM / LTRIM / RTRIM (match the most specific token first).
-    const trimMatch = /\b(LTRIM|RTRIM|TRIM)\b/i.exec(rest);
-    if (trimMatch) {
-        const value = trimMatch[1].toUpperCase();
-        if (value === 'LTRIM') {
-            options.trim = TrimMode.LEADING;
-        } else if (value === 'RTRIM') {
-            options.trim = TrimMode.TRAILING;
-        } else {
-            options.trim = TrimMode.BOTH;
+    const skipSeparators = (): void => {
+        SEPARATOR_RE.lastIndex = pos;
+        const sep = SEPARATOR_RE.exec(rest);
+        if (sep) {
+            pos = SEPARATOR_RE.lastIndex;
         }
-    }
+    };
 
-    const nullMatch = /\bNULL\s*=\s*'((?:[^']|'')*)'/i.exec(rest);
-    if (nullMatch) {
-        options.null = nullMatch[1].replace(/''/g, "'");
+    while (pos < rest.length) {
+        skipSeparators();
+        if (pos >= rest.length) {
+            break;
+        }
+
+        // A real FILE token in the unconsumed structure means a second file.
+        FILE_TOKEN_RE.lastIndex = pos;
+        if (FILE_TOKEN_RE.exec(rest)) {
+            throw new Error('Local CSV import supports a single FILE; found multiple. Run one IMPORT per file.');
+        }
+
+        let matched = false;
+        for (const matcher of OPTION_TOKEN_MATCHERS) {
+            matcher.re.lastIndex = pos;
+            const m = matcher.re.exec(rest);
+            if (m) {
+                matcher.apply(options, m);
+                pos = matcher.re.lastIndex;
+                matched = true;
+                break;
+            }
+        }
+
+        if (!matched) {
+            // Unrecognized token: advance past it so a quoted value or stray
+            // token cannot wedge the loop, and keep scanning for a FILE keyword.
+            const advance = /\S+/y;
+            advance.lastIndex = pos;
+            if (advance.exec(rest)) {
+                pos = advance.lastIndex;
+            } else {
+                break;
+            }
+        }
     }
 
     return options;
