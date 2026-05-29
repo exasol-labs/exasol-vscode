@@ -2,6 +2,12 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.5.1] - 2026-05-29
+
+### Changed
+- Updated the bundled Exasol driver to a fork rebased on upstream exasol-driver-ts 0.4.0, picking up its dependency/security refreshes and the `query()`/`execute()` cancellation fix
+- Kept `node-forge` out of the bundle: the local-CSV-import TLS path that 0.4.0 introduces normally relies on `node-forge`, but it and the login password encryption both use Node's built-in `crypto` instead, so the ~313 KB dependency is not bundled
+
 ## [1.5.0] - 2026-05-28
 
 ### Added
