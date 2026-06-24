@@ -593,7 +593,7 @@
     "@exasol/exasol-driver-ts": "github:mikhail-zhadanov/exasol-driver-ts#46d96eff6dd109aa201275b7347a94e9a5f52612",
     "async-mutex": "^0.5.0",
     "sql-formatter": "^15.8.0",
-    "ws": "^8.20.1"
+    "ws": "^8.21.0"
   },
   "overrides": {
     "serialize-javascript": "^7.0.5",
