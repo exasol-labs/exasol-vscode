@@ -535,19 +535,19 @@
         "command": "exasol.executeQuery",
         "key": "ctrl+enter",
         "mac": "cmd+enter",
-        "when": "editorLangId == exasol-sql"
+        "when": "editorLangId == exasol-sql && !notebookEditorFocused"
       },
       {
         "command": "exasol.executeSelectedQuery",
         "key": "ctrl+shift+enter",
         "mac": "cmd+shift+enter",
-        "when": "editorTextFocus && editorLangId == exasol-sql"
+        "when": "editorTextFocus && editorLangId == exasol-sql && !notebookEditorFocused"
       },
       {
         "command": "exasol.executeScript",
         "key": "ctrl+alt+enter",
         "mac": "cmd+alt+enter",
-        "when": "editorLangId == exasol-sql"
+        "when": "editorLangId == exasol-sql && !notebookEditorFocused"
       },
       {
         "command": "exasol.findObject",
