@@ -11,7 +11,6 @@ import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import {
     DataEditor,
-    GridCellKind,
     CompactSelection,
     type DataEditorRef,
     type GridCell,
@@ -27,15 +26,22 @@ import {
 import {
     isDateType,
     isTimestampType,
-    isBooleanType,
     formatNumericDisplay,
     formatDateDisplay,
-    parseBoolean,
     isUrlValue,
     estimateColumnWidth,
     MIN_ESTIMATED_COLUMN_WIDTH,
     MAX_ESTIMATED_COLUMN_WIDTH,
 } from './cellFormat';
+import {
+    NULL_DISPLAY,
+    getColumnBaseType,
+    getColumnType,
+    isNumericColumn,
+    compareRows,
+    buildDisplayCell,
+} from './gridCells';
+import { cssVar, buildGridTheme } from './gridTheme';
 import {
     getQueryPreview,
     formatTime,
@@ -103,8 +109,6 @@ const DEFAULT_COLUMN_WIDTH = 150;
 const QUERY_INFO_DEFAULT_WIDTH = 240;
 const QUERY_INFO_MIN_WIDTH = 160;
 const QUERY_INFO_MAX_WIDTH = 600;
-const NULL_DISPLAY = '(null)';
-const NUMERIC_TYPE_RE = /^(DECIMAL|NUMERIC|NUMBER|INT|INTEGER|BIGINT|SMALLINT|TINYINT|DOUBLE|FLOAT|REAL)/i;
 
 const acquireVsCode = (): VsCodeApi => {
     if (window.__vscode) {
@@ -122,73 +126,6 @@ const readIsland = <T,>(id: string): T | null => {
     }
     return JSON.parse(el.textContent) as T;
 };
-
-const cssVar = (name: string, fallback: string): string => {
-    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    return value || fallback;
-};
-
-const buildTheme = (): Partial<Theme> => {
-    const background = cssVar('--vscode-editor-background', '#1e1e1e');
-    const foreground = cssVar('--vscode-foreground', '#cccccc');
-    const border = cssVar('--vscode-panel-border', 'rgba(128,128,128,0.35)');
-    const selection = cssVar('--vscode-editor-selectionBackground', 'rgba(38,79,120,0.4)');
-    const accent = cssVar('--vscode-focusBorder', '#007fd4');
-    const headerBackground = cssVar('--vscode-sideBarSectionHeader-background', background);
-    const fontFamily = cssVar('--vscode-editor-font-family', 'monospace');
-    const fontSize = cssVar('--vscode-editor-font-size', '13px');
-    const description = cssVar('--vscode-descriptionForeground', '#999999');
-
-    return {
-        accentColor: accent,
-        accentFg: foreground,
-        accentLight: selection,
-        textDark: foreground,
-        textMedium: foreground,
-        textLight: description,
-        textBubble: foreground,
-        bgIconHeader: headerBackground,
-        fgIconHeader: foreground,
-        textHeader: foreground,
-        textHeaderSelected: foreground,
-        bgCell: background,
-        bgCellMedium: background,
-        bgHeader: headerBackground,
-        bgHeaderHasFocus: headerBackground,
-        bgHeaderHovered: cssVar('--vscode-list-hoverBackground', headerBackground),
-        borderColor: border,
-        horizontalBorderColor: border,
-        drilldownBorder: border,
-        baseFontStyle: fontSize,
-        headerFontStyle: `600 ${fontSize}`,
-        fontFamily,
-        editorFontSize: fontSize,
-    };
-};
-
-const getColumnType = (columnName: string, metadata: ColumnMetadata[]): string => {
-    const colMeta = metadata.find(col => col.name === columnName);
-    if (!colMeta) {
-        return 'VARCHAR';
-    }
-    let type = colMeta.type;
-    if (colMeta.precision !== undefined && colMeta.scale !== undefined) {
-        type += `(${colMeta.precision},${colMeta.scale})`;
-    } else if (colMeta.size !== undefined) {
-        type += `(${colMeta.size})`;
-    } else if (colMeta.precision !== undefined) {
-        type += `(${colMeta.precision})`;
-    }
-    return type;
-};
-
-const isNumericColumn = (columnName: string, metadata: ColumnMetadata[]): boolean => {
-    const colMeta = metadata.find(col => col.name === columnName);
-    return colMeta !== undefined && NUMERIC_TYPE_RE.test(colMeta.type);
-};
-
-const getColumnBaseType = (columnName: string, metadata: ColumnMetadata[]): string =>
-    metadata.find(col => col.name === columnName)?.type ?? '';
 
 const cellDisplayString = (value: CellValue, columnName: string, metadata: ColumnMetadata[]): string => {
     if (value === null || value === undefined) {
@@ -211,33 +148,6 @@ const WIDTH_SAMPLE_ROW_LIMIT = 200;
 
 const cellTextForFilter = (value: CellValue): string =>
     value === null || value === undefined ? '' : String(value);
-
-const VALUE_NUMERIC_RE = /^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
-
-const isNumericValue = (value: CellValue): boolean =>
-    typeof value === 'number' || (typeof value === 'string' && VALUE_NUMERIC_RE.test(value));
-
-const compareRows = (a: ResultRow, b: ResultRow, column: string, direction: 'asc' | 'desc'): number => {
-    let aVal: CellValue = a[column];
-    let bVal: CellValue = b[column];
-    if (aVal === null || aVal === undefined) {
-        aVal = '';
-    }
-    if (bVal === null || bVal === undefined) {
-        bVal = '';
-    }
-    const aNum = isNumericValue(aVal) ? Number(aVal) : NaN;
-    const bNum = isNumericValue(bVal) ? Number(bVal) : NaN;
-    if (!isNaN(aNum) && !isNaN(bNum)) {
-        return direction === 'asc' ? aNum - bNum : bNum - aNum;
-    }
-    const aStr = String(aVal).toLowerCase();
-    const bStr = String(bVal).toLowerCase();
-    if (direction === 'asc') {
-        return aStr < bStr ? -1 : aStr > bStr ? 1 : 0;
-    }
-    return bStr < aStr ? -1 : bStr > aStr ? 1 : 0;
-};
 
 const csvQuote = (value: string): string =>
     value.includes(',') || value.includes('"') || value.includes('\n')
@@ -298,9 +208,9 @@ const usePortal = (): HTMLElement | null => {
 };
 
 const useTheme = (): Partial<Theme> => {
-    const [theme, setTheme] = React.useState<Partial<Theme>>(() => buildTheme());
+    const [theme, setTheme] = React.useState<Partial<Theme>>(() => buildGridTheme());
     React.useEffect(() => {
-        const observer = new MutationObserver(() => setTheme(buildTheme()));
+        const observer = new MutationObserver(() => setTheme(buildGridTheme()));
         observer.observe(document.body, { attributes: true, attributeFilter: ['class', 'style'] });
         return () => observer.disconnect();
     }, []);
@@ -582,55 +492,7 @@ const ResultsGrid: React.FC<GridProps> = ({ data, renderState, savedTabState, qu
             const [col, row] = cell;
             const columnName = orderedColumnNames[col];
             const value = rows[row]?.[columnName];
-            if (value === null || value === undefined) {
-                return {
-                    kind: GridCellKind.Text,
-                    data: NULL_DISPLAY,
-                    displayData: NULL_DISPLAY,
-                    allowOverlay: false,
-                    themeOverride: { textDark: nullTextColor },
-                };
-            }
-            const baseType = getColumnBaseType(columnName, columnMetadata);
-            if (isNumericColumn(columnName, columnMetadata)) {
-                const num = Number(value);
-                if (!isNaN(num)) {
-                    return {
-                        kind: GridCellKind.Number,
-                        data: num,
-                        displayData: formatNumericDisplay(value),
-                        contentAlign: 'left',
-                        allowOverlay: false,
-                        readonly: true,
-                    };
-                }
-            }
-            if (isBooleanType(baseType)) {
-                const parsed = parseBoolean(value);
-                if (parsed !== undefined) {
-                    return {
-                        kind: GridCellKind.Boolean,
-                        data: parsed,
-                        readonly: true,
-                        allowOverlay: false,
-                    };
-                }
-            }
-            let display: string;
-            if (isTimestampType(baseType)) {
-                display = formatDateDisplay(value, true);
-            } else if (isDateType(baseType)) {
-                display = formatDateDisplay(value, false);
-            } else {
-                display = String(value);
-            }
-            return {
-                kind: GridCellKind.Text,
-                data: display,
-                displayData: display,
-                allowOverlay: true,
-                readonly: true,
-            };
+            return buildDisplayCell(value, columnName, columnMetadata, nullTextColor);
         },
         [rows, orderedColumnNames, columnMetadata, nullTextColor]
     );

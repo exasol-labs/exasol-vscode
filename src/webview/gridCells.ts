@@ -34,6 +34,26 @@ export const NULL_DISPLAY = '(null)';
 export const getColumnBaseType = (columnName: string, metadata: readonly GridColumnMetadata[]): string =>
     metadata.find(col => col.name === columnName)?.type ?? '';
 
+/**
+ * Builds the fully-qualified column type label (e.g. `DECIMAL(18,2)`, `VARCHAR(200)`) used by the
+ * cell inspector. Falls back to `VARCHAR` when the column has no metadata.
+ */
+export const getColumnType = (columnName: string, metadata: readonly GridColumnMetadata[]): string => {
+    const colMeta = metadata.find(col => col.name === columnName);
+    if (!colMeta) {
+        return 'VARCHAR';
+    }
+    let type = colMeta.type;
+    if (colMeta.precision !== undefined && colMeta.scale !== undefined) {
+        type += `(${colMeta.precision},${colMeta.scale})`;
+    } else if (colMeta.size !== undefined) {
+        type += `(${colMeta.size})`;
+    } else if (colMeta.precision !== undefined) {
+        type += `(${colMeta.precision})`;
+    }
+    return type;
+};
+
 export const isNumericColumn = (columnName: string, metadata: readonly GridColumnMetadata[]): boolean => {
     const colMeta = metadata.find(col => col.name === columnName);
     return colMeta !== undefined && NUMERIC_TYPE_RE.test(colMeta.type);
