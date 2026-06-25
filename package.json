@@ -3,7 +3,7 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "publisher": "exasol",
   "license": "MIT",
   "repository": {
@@ -64,6 +64,16 @@
           {
             "filenamePattern": "*.exabook"
           }
+        ]
+      }
+    ],
+    "notebookRenderer": [
+      {
+        "id": "exasol-grid-renderer",
+        "displayName": "Exasol Result Grid",
+        "entrypoint": "./media/notebook-renderer.js",
+        "mimeTypes": [
+          "application/x-exasol-grid+json"
         ]
       }
     ],
