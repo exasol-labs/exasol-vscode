@@ -8,7 +8,6 @@ import { ExasolCodeLensProvider } from './providers/codeLensProvider';
 import { FormattingProvider } from './providers/formattingProvider';
 import { QueryExecutor } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
-import { QueryStatsPanel } from './panels/queryStatsPanel';
 import { ConnectionPanel } from './panels/connectionPanel';
 import { SessionManager } from './sessionManager';
 import { ObjectActions } from './objectActions';
@@ -47,7 +46,6 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register panel views
     ResultsPanel.register(context);
-    QueryStatsPanel.register(context);
 
     // Register notebook support
     const notebookSerializer = vscode.workspace.registerNotebookSerializer(
@@ -640,8 +638,7 @@ async function executeQuery(
                         if (collector) {
                             collector.addResult(result);
                         } else {
-                            await ResultsPanel.show(result);
-                            QueryStatsPanel.updateStats(query, result);
+                            await ResultsPanel.show(result, query);
                         }
 
                     } catch (error) {
@@ -719,11 +716,6 @@ async function executeQuery(
 
                 if (collector && collector.hasResults()) {
                     ResultsPanel.showMultiple(collector.getTabs());
-                    // Update stats for the first successful result
-                    const firstTab = collector.getTabs().find(t => t.result);
-                    if (firstTab?.result) {
-                        QueryStatsPanel.updateStats(statements[0], firstTab.result);
-                    }
                 }
 
                 if (statements.length > 1) {
@@ -864,9 +856,8 @@ async function executeStatement(
                 // Add to history
                 queryHistoryProvider.addQuery(query, result.rowCount);
 
-                // Show results and stats
-                await ResultsPanel.show(result);
-                QueryStatsPanel.updateStats(query, result);
+                // Show results
+                await ResultsPanel.show(result, query);
 
                 output.appendLine(`✅ Query executed successfully. ${result.rowCount} rows returned.`);
             }

@@ -1,0 +1,4 @@
+/* CSS-only bundle entry. esbuild inlines the glide-data-grid stylesheet (and its nested
+   @import rules) into media/results-grid-glide.css, loaded by the results panel via a
+   <link> permitted by the style-src CSP directive (no styled-components runtime). */
+@import "@glideapps/glide-data-grid/dist/index.css";

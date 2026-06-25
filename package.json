@@ -234,12 +234,6 @@
           "name": "Query Results",
           "icon": "$(table)",
           "type": "webview"
-        },
-        {
-          "id": "exasol.queryStats",
-          "name": "Query Info",
-          "icon": "$(graph)",
-          "type": "webview"
         }
       ]
     },
@@ -572,6 +566,8 @@
     "@types/jsdom": "^28.0.3",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
     "@types/vscode": "^1.95.0",
     "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.59.4",
@@ -591,7 +587,10 @@
   },
   "dependencies": {
     "@exasol/exasol-driver-ts": "github:mikhail-zhadanov/exasol-driver-ts#46d96eff6dd109aa201275b7347a94e9a5f52612",
+    "@glideapps/glide-data-grid": "^6.0.3",
     "async-mutex": "^0.5.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "sql-formatter": "^15.8.0",
     "ws": "^8.20.1"
   },

@@ -13,7 +13,7 @@ export default tseslint.config(
         ],
     },
     {
-        files: ['src/**/*.ts'],
+        files: ['src/**/*.ts', 'src/**/*.tsx'],
         extends: [
             ...tseslint.configs.recommended,
         ],

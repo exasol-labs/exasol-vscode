@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { QueryExecutor } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
-import { QueryStatsPanel } from './panels/queryStatsPanel';
 import { getColumnsFromResult, getRowsFromResult, rawQuery, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier } from './utils';
 
 export class ObjectActions {
@@ -49,8 +48,7 @@ export class ObjectActions {
                         };
                     }, connection.id);
 
-                    await ResultsPanel.show(queryResult);
-                    QueryStatsPanel.updateStats(query, queryResult);
+                    await ResultsPanel.show(queryResult, query);
                     if (showNotification) {
                         vscode.window.showInformationMessage(
                             `Preview: ${queryResult.rowCount} rows from ${schemaName}.${tableName}`
@@ -205,8 +203,7 @@ export class ObjectActions {
                 };
             }, connection.id);
 
-            ResultsPanel.show(queryResult);
-            QueryStatsPanel.updateStats(query, queryResult);
+            ResultsPanel.show(queryResult, query);
             vscode.window.showInformationMessage(`Table structure: ${schemaName}.${tableName}`);
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to describe table: ${error}`);
