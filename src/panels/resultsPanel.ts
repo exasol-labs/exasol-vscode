@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import { QueryResult } from '../queryExecutor';
-import { QueryStatsPanel } from './queryStatsPanel';
 import { TabManager, TabResult } from './tabManager';
 import { buildTabBarHtml, buildTabBarCss } from './tabBarRenderer';
 import { escapeHtml, createWebviewRenderContext } from '../utils';
@@ -13,6 +12,7 @@ interface ResultViewOptions {
 export class ResultsPanel implements vscode.WebviewViewProvider {
     private static instance: ResultsPanel | undefined;
     private static currentResult: QueryResult | undefined;
+    private static currentQuery: string | undefined;
     private static currentError: string | undefined;
     private view: vscode.WebviewView | undefined;
     private tabManager: TabManager = new TabManager();
@@ -38,11 +38,12 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         return provider;
     }
 
-    public static show(result: QueryResult) {
+    public static show(result: QueryResult, query?: string) {
         if (!ResultsPanel.instance) {
             return;
         }
         ResultsPanel.currentResult = result;
+        ResultsPanel.currentQuery = query;
         ResultsPanel.currentError = undefined;
         ResultsPanel.instance.tabManager.clearTabs();
         ResultsPanel.instance.updateWebview();
@@ -55,6 +56,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         }
         ResultsPanel.currentError = error;
         ResultsPanel.currentResult = undefined;
+        ResultsPanel.currentQuery = undefined;
         ResultsPanel.instance.tabManager.clearTabs();
         ResultsPanel.instance.updateWebview();
         ResultsPanel.instance.revealWithoutFocus();
@@ -65,6 +67,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             return;
         }
         ResultsPanel.currentResult = undefined;
+        ResultsPanel.currentQuery = undefined;
         ResultsPanel.currentError = undefined;
         ResultsPanel.instance.tabManager.setTabs(tabs);
         ResultsPanel.instance.updateWebview();
@@ -90,31 +93,44 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         this.view.webview.onDidReceiveMessage(async message => {
             if (message.command === 'export') {
                 await this.exportToCSV();
-            } else if (message.command === 'cellSelected') {
-                // Forward cell selection to query stats panel
-                QueryStatsPanel.updateCellInspector(message.column, message.value, message.type);
             } else if (message.command === 'switchTab') {
                 if (message.currentState) {
                     this.tabManager.updateTabState(this.tabManager.getActiveIndex(), message.currentState);
                 }
                 this.tabManager.switchTab(message.index);
                 this.updateWebview();
-                this.updateStatsForActiveTab();
             } else if (message.command === 'closeTab') {
                 this.tabManager.removeTab(message.index);
                 if (this.tabManager.getTabs().length === 0) {
                     this.tabManager.clearTabs();
                 }
                 this.updateWebview();
-                this.updateStatsForActiveTab();
             } else if (message.command === 'copy') {
                 // Copy to clipboard
                 await vscode.env.clipboard.writeText(message.text);
                 vscode.window.showInformationMessage(`Copied ${message.text.split('\n').length} cell(s) to clipboard`);
+            } else if (message.command === 'openExternal') {
+                this.openExternalLink(message.url);
             }
         });
 
         this.updateWebview();
+    }
+
+    private openExternalLink(url: unknown): void {
+        if (typeof url !== 'string') {
+            return;
+        }
+        let parsed: vscode.Uri;
+        try {
+            parsed = vscode.Uri.parse(url, true);
+        } catch {
+            return;
+        }
+        if (parsed.scheme !== 'http' && parsed.scheme !== 'https') {
+            return;
+        }
+        void vscode.env.openExternal(parsed);
     }
 
     private updateWebview() {
@@ -140,14 +156,17 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         this.view.webview.html = this.getResultHtml(ResultsPanel.currentResult, {
             title: 'Query Results',
             showExport: true
-        });
+        }, ResultsPanel.currentQuery);
     }
 
-    private updateStatsForActiveTab(): void {
-        const activeTab = this.tabManager.getActiveTab();
-        if (activeTab?.result) {
-            QueryStatsPanel.updateStats(activeTab.label, activeTab.result);
-        }
+    private buildQueryStats(result: QueryResult, query: string | undefined) {
+        return {
+            query: (query ?? '').trim(),
+            executionTime: result.executionTime,
+            rowCount: result.rowCount,
+            columnCount: result.columns.length,
+            timestamp: new Date().toISOString()
+        };
     }
 
     private getTabBarHtml(): string {
@@ -169,7 +188,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
                 return this.getErrorHtml(activeTab.error);
             }
             if (activeTab.result) {
-                return this.getResultHtml(activeTab.result, { title: 'Query Results', showExport: true });
+                return this.getResultHtml(activeTab.result, { title: 'Query Results', showExport: true }, activeTab.label);
             }
             return this.getEmptyHtml();
         }
@@ -179,7 +198,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         }
 
         if (activeTab.result) {
-            return this.getMultiTabResultHtml(activeTab.result);
+            return this.getMultiTabResultHtml(activeTab.result, activeTab.label);
         }
 
         return this.getEmptyHtml();
@@ -250,27 +269,13 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
                         <div class="error-message">${escapeHtml(error)}</div>
                     </div>
                 </div>
-                <script nonce="${ctx.nonce}" src="${ctx.mediaUri('results-grid.js')}"></script>
-                <script nonce="${ctx.nonce}">
-                    const vscode = window.__vscode;
-                    document.querySelectorAll('.tab-close').forEach(btn => {
-                        btn.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            vscode.postMessage({ command: 'closeTab', index: parseInt(btn.dataset.index) });
-                        });
-                    });
-                    document.querySelectorAll('.tab').forEach(tab => {
-                        tab.addEventListener('click', () => {
-                            vscode.postMessage({ command: 'switchTab', index: parseInt(tab.dataset.index) });
-                        });
-                    });
-                </script>
+                <script nonce="${ctx.nonce}" src="${ctx.mediaUri('results-grid-bundle.js')}"></script>
             </body>
             </html>
         `;
     }
 
-    private getMultiTabResultHtml(result: QueryResult): string {
+    private getMultiTabResultHtml(result: QueryResult, query: string): string {
         if (!result.columns || result.columns.length === 0) {
             return this.getMultiTabErrorHtml('Query executed successfully (no result set)');
         }
@@ -286,6 +291,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             <meta http-equiv="Content-Security-Policy" content="${ctx.csp}">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Query Results</title>
+            <link rel="stylesheet" href="${ctx.mediaUri('results-grid-glide.css')}">
             <link rel="stylesheet" href="${ctx.mediaUri('results-grid.css')}">
             ${this.getTabBarCss(ctx.nonce)}
             <style nonce="${ctx.nonce}">
@@ -306,60 +312,8 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             ${ctx.dataIsland('result-data', { columns: result.columns, columnMetadata: result.columnMetadata || [], rows: result.rows })}
             ${ctx.dataIsland('render-state', { filterId, initialSortColumn: tabState.sortColumn || null, initialSortDirection: tabState.sortDirection || 'asc' })}
             ${ctx.dataIsland('saved-tab-state', tabState)}
-            <script nonce="${ctx.nonce}" src="${ctx.mediaUri('results-grid.js')}"></script>
-            <script nonce="${ctx.nonce}">
-                (function () {
-                    const savedTabState = JSON.parse(document.getElementById('saved-tab-state').textContent);
-
-                    // Restore tab state after grid initializes
-                    const filterInput = document.getElementById(JSON.parse(document.getElementById('render-state').textContent).filterId);
-                    if (savedTabState.filterText && filterInput) {
-                        filterInput.value = savedTabState.filterText;
-                        filterInput.dispatchEvent(new Event('input'));
-                    }
-                    if (savedTabState.sortColumn) {
-                        window.__gridSortRows(savedTabState.sortColumn);
-                        if (savedTabState.sortDirection === 'desc') window.__gridSortRows(savedTabState.sortColumn);
-                    }
-
-                    window.__gridRender(window.__gridGetCurrentRows());
-
-                    if (savedTabState.scrollPosition) {
-                        const tc = document.getElementById('tableContainer');
-                        if (tc) tc.scrollTop = savedTabState.scrollPosition;
-                    }
-
-                    // Tab switching: reuse the vscode handle exposed by results-grid.js
-                    const vscode = window.__vscode;
-                    document.querySelectorAll('.tab-close').forEach(btn => {
-                        btn.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            vscode.postMessage({ command: 'closeTab', index: parseInt(btn.dataset.index) });
-                        });
-                    });
-                    document.querySelectorAll('.tab').forEach(tab => {
-                        tab.addEventListener('click', () => {
-                            const tableContainer = document.getElementById('tableContainer');
-                            const filterEl = document.querySelector('input[type="text"]');
-                            vscode.postMessage({
-                                command: 'switchTab',
-                                index: parseInt(tab.dataset.index),
-                                currentState: {
-                                    sortColumn: window.__gridGetSortColumn(),
-                                    sortDirection: window.__gridGetSortDirection(),
-                                    filterText: filterEl ? filterEl.value : '',
-                                    scrollPosition: tableContainer ? tableContainer.scrollTop : 0
-                                }
-                            });
-                        });
-                    });
-
-                    const exportBtn = document.getElementById('export');
-                    if (exportBtn) {
-                        exportBtn.addEventListener('click', () => { vscode.postMessage({ command: 'export' }); });
-                    }
-                })();
-            </script>
+            ${ctx.dataIsland('query-stats', this.buildQueryStats(result, query))}
+            <script nonce="${ctx.nonce}" src="${ctx.mediaUri('results-grid-bundle.js')}"></script>
         </body>
         </html>`;
     }
@@ -371,23 +325,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
                     <span id="count">${result.rowCount} rows</span>
                     ${exportButton}
                 </div>
-                <div class="table-container" tabindex="0" id="tableContainer">
-                    <table id="results">
-                        <thead>
-                            <tr>
-                                <th class="row-number-header">#</th>
-                                ${result.columns.map(col => `<th><span>${escapeHtml(col)}</span><div class="resizer"></div></th>`).join('')}
-                            </tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
-                <div id="contextMenu" class="context-menu">
-                    <div class="context-menu-item" data-action="copy">Copy</div>
-                    <div class="context-menu-item" data-action="copyWithHeaders">Copy with Headers</div>
-                    <div class="context-menu-item" data-action="copyAsCsv">Copy as CSV</div>
-                    <div class="context-menu-item" data-action="copyAsCsvWithHeaders">Copy as CSV with Headers</div>
-                </div>`;
+                <div id="grid-root" class="grid-root"></div>`;
     }
 
     private getErrorHtml(error: string): string {
@@ -523,7 +461,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         `;
     }
 
-    private getResultHtml(result: QueryResult, options: ResultViewOptions): string {
+    private getResultHtml(result: QueryResult, options: ResultViewOptions, query: string | undefined): string {
         if (!result.columns || result.columns.length === 0) {
             return getSuccessHtml(result);
         }
@@ -541,6 +479,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         <meta http-equiv="Content-Security-Policy" content="${ctx.csp}">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>${escapeHtml(options.title)}</title>
+        <link rel="stylesheet" href="${ctx.mediaUri('results-grid-glide.css')}">
         <link rel="stylesheet" href="${ctx.mediaUri('results-grid.css')}">
         <style nonce="${ctx.nonce}">body { padding: 10px; }</style>
     </head>
@@ -548,19 +487,8 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         ${ResultsPanel.getGridHtmlStructure(result, filterId, exportButton)}
         ${ctx.dataIsland('result-data', { columns: result.columns, columnMetadata: result.columnMetadata || [], rows: result.rows })}
         ${ctx.dataIsland('render-state', { filterId, initialSortColumn: null, initialSortDirection: 'asc' })}
-        <script nonce="${ctx.nonce}" src="${ctx.mediaUri('results-grid.js')}"></script>
-        <script nonce="${ctx.nonce}">
-            (function () {
-                window.__gridRender(window.__gridGetCurrentRows());
-
-                const exportBtn = document.getElementById('export');
-                if (exportBtn) {
-                    exportBtn.addEventListener('click', () => {
-                        window.__vscode.postMessage({ command: 'export' });
-                    });
-                }
-            })();
-        </script>
+        ${ctx.dataIsland('query-stats', this.buildQueryStats(result, query))}
+        <script nonce="${ctx.nonce}" src="${ctx.mediaUri('results-grid-bundle.js')}"></script>
     </body>
     </html>`;
     }
@@ -650,35 +578,4 @@ function getSuccessHtml(result: QueryResult): string {
     </body>
     </html>
     `;
-}
-
-/**
- * Exported for unit tests. Produces a self-contained HTML page with the full grid
- * DOM structure so tests can assert on column headers, filter input, export button
- * and row count without a live webview context.
- *
- * NOTE: In production, use ResultsPanel.show() which renders via the webview instance
- * and loads external media assets with a proper nonce-based CSP.
- */
-export function getResultHtml(result: QueryResult, options: ResultViewOptions): string {
-    if (!result.columns || result.columns.length === 0) {
-        return getSuccessHtml(result);
-    }
-
-    const filterId = `filter-${Date.now()}`;
-    const exportButton = options.showExport
-        ? '<button id="export">Export CSV</button>'
-        : '';
-
-    return `<!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>${escapeHtml(options.title)}</title>
-    </head>
-    <body>
-        ${ResultsPanel.getGridHtmlStructure(result, filterId, exportButton)}
-    </body>
-    </html>`;
 }

@@ -2,6 +2,17 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.6.0] - 2026-06-25
+
+### Changed
+- **Results grid rebuilt on a canvas data grid**: the query results panel now renders with a high-performance canvas grid, adding column sorting, resizing, reordering, and pinning, multi-cell selection with copy (plain/CSV, with or without headers), row hover, and click-to-expand viewing of long values; column widths auto-fit content
+- **Type-aware cell display**: numbers use locale grouping, dates and timestamps are normalised, booleans render as a read-only check glyph, and NULLs are visually dimmed; copy and CSV export always use the raw, unformatted values
+- **Query Info moved into the results panel**: query statistics and the cell inspector (with copy and open-URL actions) now live in a resizable, collapsible side panel inside the grid; the separate Query Info view has been removed
+- **Notebook output uses the new grid**: SQL notebook cell results render with the same canvas grid instead of a static HTML table
+
+### Security
+- Updated `ws` to 8.21.0 to resolve a memory-exhaustion advisory (GHSA-96hv-2xvq-fx4p)
+
 ## [1.5.1] - 2026-05-29
 
 ### Added

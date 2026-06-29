@@ -81,27 +81,24 @@ function parseDom(html: string): Document {
 
 suite('ResultsPanel.getGridHtmlStructure', () => {
 
-    test('renders column headers for a result with columns', () => {
+    test('renders a grid-root mount point for the canvas grid', () => {
         const result = makeResult(['id', 'name', 'age'], [
             { id: 1, name: 'Alice', age: 30 },
         ]);
         const html = ResultsPanel.getGridHtmlStructure(result, 'filter-1', '');
         const doc = parseDom(`<html><body>${html}</body></html>`);
 
-        const headers = Array.from(doc.querySelectorAll('th span'))
-            .map((el: any) => el.textContent);
-        assert.deepStrictEqual(headers, ['id', 'name', 'age']);
+        const gridRoot = doc.getElementById('grid-root');
+        assert.ok(gridRoot, 'expected #grid-root mount element');
     });
 
-    test('renders correct number of column headers including row-number header', () => {
+    test('does not render a server-side HTML table', () => {
         const result = makeResult(['col_a', 'col_b'], []);
         const html = ResultsPanel.getGridHtmlStructure(result, 'filter-1', '');
         const doc = parseDom(`<html><body>${html}</body></html>`);
 
-        const allTh = doc.querySelectorAll('th');
-        // row-number header (#) + 2 data columns
-        assert.strictEqual(allTh.length, 3);
-        assert.ok(allTh[0].classList.contains('row-number-header'));
+        assert.strictEqual(doc.querySelector('table'), null, 'canvas grid must not emit a <table>');
+        assert.strictEqual(doc.querySelector('th'), null, 'canvas grid must not emit <th> headers');
     });
 
     test('renders a filter input with the provided filterId', () => {
@@ -254,37 +251,30 @@ suite('TabManager.shouldShowTabBar', () => {
 });
 
 // ──────────────────────────────────────────────
-// Media asset files (results-grid.css / results-grid.js)
+// Media asset files (results-grid.css / grid bundle)
 // ──────────────────────────────────────────────
 
 const mediaDir = path.resolve(__dirname, '..', '..', '..', 'media');
 
 suite('media/results-grid.css', () => {
 
-    test('exists and contains expected selectors', () => {
+    test('exists and contains expected chrome selectors', () => {
         const cssPath = path.join(mediaDir, 'results-grid.css');
         assert.ok(fs.existsSync(cssPath), 'media/results-grid.css must exist');
         const css = fs.readFileSync(cssPath, 'utf8');
         assert.ok(css.length > 0, 'CSS should be non-empty');
-        assert.ok(css.includes('.table-container'), 'expected .table-container selector');
-        assert.ok(css.includes('.null-value'), 'expected .null-value selector');
-        assert.ok(css.includes('.context-menu'), 'expected .context-menu selector');
-        assert.ok(css.includes('th'), 'expected th selector');
-        assert.ok(css.includes('td'), 'expected td selector');
+        assert.ok(css.includes('.header'), 'expected .header selector');
+        assert.ok(css.includes('.grid-root'), 'expected .grid-root selector');
+        assert.ok(css.includes('.grid-context-menu'), 'expected .grid-context-menu selector');
+        assert.ok(css.includes('#count'), 'expected #count selector');
     });
 });
 
-suite('media/results-grid.js', () => {
+suite('media/results-grid-bundle.js', () => {
 
-    test('exists and contains expected function names', () => {
-        const jsPath = path.join(mediaDir, 'results-grid.js');
-        assert.ok(fs.existsSync(jsPath), 'media/results-grid.js must exist');
-        const script = fs.readFileSync(jsPath, 'utf8');
-        assert.ok(script.length > 0, 'script should be non-empty');
-        assert.ok(script.includes('sortRows'), 'expected sortRows function');
-        assert.ok(script.includes('render'), 'expected render function');
-        assert.ok(script.includes('filterInput'), 'expected filterInput reference');
-        assert.ok(script.includes('copyValues'), 'expected copyValues function');
+    test('the legacy vanilla grid script is removed', () => {
+        const legacyPath = path.join(mediaDir, 'results-grid.js');
+        assert.ok(!fs.existsSync(legacyPath), 'media/results-grid.js must no longer exist');
     });
 });
 

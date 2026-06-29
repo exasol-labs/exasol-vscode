@@ -3,7 +3,7 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "publisher": "exasol",
   "license": "MIT",
   "repository": {
@@ -64,6 +64,16 @@
           {
             "filenamePattern": "*.exabook"
           }
+        ]
+      }
+    ],
+    "notebookRenderer": [
+      {
+        "id": "exasol-grid-renderer",
+        "displayName": "Exasol Result Grid",
+        "entrypoint": "./media/notebook-renderer.js",
+        "mimeTypes": [
+          "application/x-exasol-grid+json"
         ]
       }
     ],
@@ -233,12 +243,6 @@
           "id": "exasol.results",
           "name": "Query Results",
           "icon": "$(table)",
-          "type": "webview"
-        },
-        {
-          "id": "exasol.queryStats",
-          "name": "Query Info",
-          "icon": "$(graph)",
           "type": "webview"
         }
       ]
@@ -531,19 +535,19 @@
         "command": "exasol.executeQuery",
         "key": "ctrl+enter",
         "mac": "cmd+enter",
-        "when": "editorLangId == exasol-sql"
+        "when": "editorLangId == exasol-sql && !notebookEditorFocused"
       },
       {
         "command": "exasol.executeSelectedQuery",
         "key": "ctrl+shift+enter",
         "mac": "cmd+shift+enter",
-        "when": "editorTextFocus && editorLangId == exasol-sql"
+        "when": "editorTextFocus && editorLangId == exasol-sql && !notebookEditorFocused"
       },
       {
         "command": "exasol.executeScript",
         "key": "ctrl+alt+enter",
         "mac": "cmd+alt+enter",
-        "when": "editorLangId == exasol-sql"
+        "when": "editorLangId == exasol-sql && !notebookEditorFocused"
       },
       {
         "command": "exasol.findObject",
@@ -572,6 +576,8 @@
     "@types/jsdom": "^28.0.3",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
     "@types/vscode": "^1.95.0",
     "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.59.4",
@@ -591,7 +597,10 @@
   },
   "dependencies": {
     "@exasol/exasol-driver-ts": "github:mikhail-zhadanov/exasol-driver-ts#46d96eff6dd109aa201275b7347a94e9a5f52612",
+    "@glideapps/glide-data-grid": "^6.0.3",
     "async-mutex": "^0.5.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "sql-formatter": "^15.8.0",
     "ws": "^8.20.1"
   },
