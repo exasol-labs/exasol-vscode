@@ -45,6 +45,7 @@ A Visual Studio Code extension for working with Exasol databases. Provides datab
 | `maxQueryHistorySize` | 1000 | Queries to keep in history |
 | `autoComplete` | true | Enable IntelliSense |
 | `separateResultTabs` | false | Show each statement result in a separate tab |
+| `executionPlan` | true | Enable execution plan capture and the Plan tab; new user connections automatically enable session profiling |
 | `formatter.*` | — | Keyword case, indent style, tab width, statement spacing |
 
 ## Development
@@ -80,7 +81,7 @@ A third warning, `npm warn skipping integrity check for git dependency ssh://git
 - Large result sets (>10,000 rows) may impact rendering performance
 - Query cancellation relies on driver support; some queries may not cancel immediately
 - Local file import from the extension is supported for CSV only, via `IMPORT INTO <table> FROM LOCAL CSV FILE '<path>'`. The extension intercepts the statement and streams the file to Exasol over the driver's TLS tunnel, so the cluster must be able to open a connection back to the client machine for the import tunnel. Other local formats (e.g. FBV) and multi-file local imports are not supported; cloud file imports continue to work via raw SQL. Cancelling an in-progress local import does not stop the load already streaming to the cluster
-- Execution plan CPU, network, and disk-write metrics require `ALTER SESSION SET PROFILE = 'ON'` before running the query; the Plan tab shows a hint when this wasn't enabled, but doesn't turn profiling on automatically
+- Execution plans require session profiling. When `executionPlan` is enabled, the extension runs `ALTER SESSION SET PROFILE = 'ON'` on new user connections; reconnect after changing the setting or after a profiling setup failure
 - The Plan tab is only available for single-statement results — not yet for the multi-statement "Result 1 / Result 2" tab bar
 
 ## Support

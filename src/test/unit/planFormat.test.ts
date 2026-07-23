@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { planCategoryBreakdown, hottestNodeId, planLacksDetailMetrics } from '../../plan/planFormat';
+import { fmtRows, planCategoryBreakdown, hottestNodeId, planLacksDetailMetrics } from '../../plan/planFormat';
 import { Plan, PlanNode, OperatorTraits } from '../../plan/planModel';
 
 const TRAITS: OperatorTraits = {
@@ -107,6 +107,12 @@ suite('planCategoryBreakdown', () => {
         const [bucket] = planCategoryBreakdown(plan);
         assert.strictEqual(bucket.label, 'Group By');
         assert.strictEqual(bucket.colorVar, '--vscode-charts-green');
+    });
+});
+
+suite('fmtRows', () => {
+    test('rounds values near one million to M instead of 1000k', () => {
+        assert.strictEqual(fmtRows(999_999), '1.0M');
     });
 });
 

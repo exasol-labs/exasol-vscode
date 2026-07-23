@@ -49,8 +49,9 @@ export function fmtRows(n: number | undefined): string {
     if (n === undefined) {
         return '—';
     }
-    if (n >= 1_000_000) {
-        return `${(n / 1_000_000).toFixed(n >= 100_000_000 ? 0 : 1)}M`;
+    const roundedThousands = n / 1_000;
+    if (n >= 1_000_000 || roundedThousands >= 999.5) {
+        return `${(n / 1_000_000).toFixed(n >= 99_950_000 ? 0 : 1)}M`;
     }
     if (n >= 1_000) {
         return `${(n / 1_000).toFixed(n >= 100_000 ? 0 : 1)}k`;
@@ -136,15 +137,8 @@ export function planCategoryBreakdown(plan: Plan): CategoryTime[] {
 }
 
 /**
- * True when NO node in the plan has a defined CPU or Net value — the
- * signature of a session that ran without `ALTER SESSION SET PROFILE = 'ON'`
- * first. Confirmed by direct reproduction against a live Exasol instance:
- * $EXA_PROFILE_DETAILS_LAST_DAY always populates PART_NAME/DURATION/OUT_ROWS
- * regardless of the PROFILE session parameter, but CPU/NET only ever appear
- * once PROFILE was explicitly turned on before the query ran — HDD_WRITE is
- * deliberately excluded from this check since it can legitimately stay
- * undefined even with profiling on, if nothing ever spilled to disk, so it
- * isn't a reliable signal either way.
+ * True when no node has recorded CPU or network data. This usually means
+ * profiling was not active for the session when the statement ran.
  */
 export function planLacksDetailMetrics(plan: Plan): boolean {
     return plan.nodes.length > 0 && plan.nodes.every(n => n.cpu === undefined && n.net === undefined);

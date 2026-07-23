@@ -55,14 +55,14 @@ suite('buildPlanTextSummary', () => {
 
     test('reports "not available" for node count when no per-node stats exist anywhere', () => {
         const text = buildPlanTextSummary(makePlan());
-        assert.ok(text.includes('Nodes: not available'));
+        assert.ok(text.includes('Nodes observed: not available'));
     });
 
     test('shows the max observed node count when per-node stats exist', () => {
         const text = buildPlanTextSummary(makePlan({
             nodes: [makeNode({ perNodeStats: { metric: 'rows', min: 1, max: 10, avg: 5, nodeCount: 8 } })]
         }));
-        assert.ok(text.includes('Nodes: 8'));
+        assert.ok(text.includes('Nodes observed: 8'));
     });
 
     test('numbers each operator in plan order and tags it with its PART_ID, one block per node', () => {

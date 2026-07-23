@@ -38,9 +38,10 @@ function detailsRow(sessionId: string, stmtId: string, partName = 'PIPE SCAN'): 
  */
 function makeFakeWebviewView() {
     let html = '';
+    let htmlSetCount = 0;
     let handler: ((message: any) => void | Promise<void>) | undefined;
     const webview: any = {
-        set html(value: string) { html = value; },
+        set html(value: string) { html = value; htmlSetCount++; },
         get html() { return html; },
         onDidReceiveMessage: (fn: any) => { handler = fn; return { dispose() {} }; },
         asWebviewUri: (uri: any) => uri,
@@ -50,6 +51,7 @@ function makeFakeWebviewView() {
     return {
         view,
         getHtml: () => html,
+        getHtmlSetCount: () => htmlSetCount,
         send: async (message: any) => { await handler!(message); }
     };
 }
@@ -68,6 +70,7 @@ function makeFakeConnectionManager(queryImpl: (sql: string) => any) {
     return {
         getActiveConnection: () => ({ id: 'conn-1', name: 'Test' }),
         getConnection: (id: string) => ({ id, name: 'Test' }),
+        isExecutionPlanAvailable: () => true,
         getDriver: async () => fakeDriver,
         executeWithRetry: async (fn: () => Promise<any>) => fn()
     };
@@ -166,6 +169,31 @@ suite('ResultsPanel plan tab', () => {
         const doc = parseDom(fakeView.getHtml());
         assert.ok(doc.querySelector('.rv-tab.error'), 'Plan tab should show the error state');
         assert.ok(doc.querySelector('.plan-status-message')!.textContent!.includes("doesn't have permission"));
+        assert.ok(doc.querySelector('[data-plan-retry]'), 'Plan errors should offer a retry path');
+    });
+
+    test('clicking the Plan tab again after an error retries the fetch', async () => {
+        let fetchCount = 0;
+        const { fakeView } = makeResultsPanel(sql => {
+            if (sql.includes('$EXA_PROFILE_DETAILS_LAST_DAY')) {
+                fetchCount++;
+                if (fetchCount === 1) {
+                    throw new Error('temporary VPN failure');
+                }
+                return createRawResult(DETAILS_COLUMNS, [detailsRow('42', '16')]);
+            }
+            return createEmptyRawResult(DETAILS_COLUMNS);
+        });
+        ResultsPanel.show(makeQueryResult());
+
+        await fakeView.send({ command: 'switchResultView', view: 'plan' });
+        assert.ok(parseDom(fakeView.getHtml()).body.textContent!.includes('temporary VPN failure'));
+
+        await fakeView.send({ command: 'switchResultView', view: 'plan' });
+
+        const doc = parseDom(fakeView.getHtml());
+        assert.strictEqual(fetchCount, 2, 'the error state must be retryable');
+        assert.ok(doc.querySelector('.hnode'), 'expected the retried plan to render');
     });
 
     test('re-clicking an already-fetched Plan tab does not re-issue the fetch', async () => {
@@ -300,6 +328,59 @@ suite('ResultsPanel plan tab', () => {
             `every driver call must target the originating connection; saw ${JSON.stringify(driverConnIds)}`
         );
         assert.ok(!driverConnIds.includes('conn-active'), 'must never fetch against the now-active connection');
+    });
+
+    test('a plan fetch resolving after the user switched back to Results does not rebuild the grid', async () => {
+        let releaseFetch!: () => void;
+        const fetchGate = new Promise<void>(resolve => { releaseFetch = resolve; });
+        const { fakeView } = makeResultsPanel(async sql => {
+            if (sql.includes('$EXA_PROFILE_DETAILS_LAST_DAY')) {
+                await fetchGate;
+                return createRawResult(DETAILS_COLUMNS, [detailsRow('42', '16')]);
+            }
+            return createEmptyRawResult(DETAILS_COLUMNS);
+        });
+        ResultsPanel.show(makeQueryResult());
+
+        const firstPlanRequest = fakeView.send({ command: 'switchResultView', view: 'plan' });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        await fakeView.send({ command: 'switchResultView', view: 'results' });
+        const htmlSetsBeforeResolve = fakeView.getHtmlSetCount();
+
+        releaseFetch();
+        await firstPlanRequest;
+
+        assert.strictEqual(
+            fakeView.getHtmlSetCount(),
+            htmlSetsBeforeResolve,
+            'fetch completion must not re-render while Results is active'
+        );
+        const doc = parseDom(fakeView.getHtml());
+        assert.ok(doc.querySelector('.rv-tab.active')!.textContent!.includes('Results'));
+        assert.ok(doc.querySelector('#grid-root'));
+
+        await fakeView.send({ command: 'switchResultView', view: 'plan' });
+        assert.ok(parseDom(fakeView.getHtml()).querySelector('.hnode'), 'cached plan should render on the next natural switch');
+    });
+
+    test('hides the Plan tab when execution plan profiling is unavailable for the result connection', () => {
+        const connectionManager: any = {
+            getActiveConnection: () => ({ id: 'conn-1', name: 'Test' }),
+            getConnection: (id: string) => ({ id, name: 'Test' }),
+            isExecutionPlanAvailable: () => false,
+            getDriver: async () => { throw new Error('must not fetch'); },
+            executeWithRetry: async (fn: () => Promise<any>) => fn()
+        };
+        const fakeContext: any = { extensionUri: {}, subscriptions: [] };
+        const provider = ResultsPanel.register(fakeContext, connectionManager);
+        const fakeView = makeFakeWebviewView();
+        provider.resolveWebviewView(fakeView.view);
+
+        ResultsPanel.show(makeQueryResult());
+
+        const doc = parseDom(fakeView.getHtml());
+        const tabs = Array.from(doc.querySelectorAll('.rv-tab')).map(tab => tab.textContent);
+        assert.deepStrictEqual(tabs, ['Results']);
     });
 
     test('a plan fetch that resolves after a newer query has run does not overwrite the newer query\'s view', async () => {

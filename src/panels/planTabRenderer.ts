@@ -10,13 +10,16 @@ import { escapeHtml } from '../utils';
 export type PlanTabStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type ResultView = 'results' | 'plan';
 
-export function buildResultPlanTabBarHtml(activeView: ResultView, planStatus: PlanTabStatus, nonce: string): string {
+export function buildResultPlanTabBarHtml(activeView: ResultView, planStatus: PlanTabStatus, nonce: string, showPlanTab = true): string {
     const planLabel = planStatus === 'loading' ? 'Plan (loading…)' : 'Plan';
     const planErrorClass = planStatus === 'error' ? ' error' : '';
+    const planTabHtml = showPlanTab
+        ? `<div class="rv-tab${activeView === 'plan' ? ' active' : ''}${planErrorClass}" data-view="plan"><span class="rv-tab-label">${escapeHtml(planLabel)}</span></div>`
+        : '';
 
     return `<div class="rv-tab-bar" id="rv-tab-bar">
         <div class="rv-tab${activeView === 'results' ? ' active' : ''}" data-view="results"><span class="rv-tab-label">Results</span></div>
-        <div class="rv-tab${activeView === 'plan' ? ' active' : ''}${planErrorClass}" data-view="plan"><span class="rv-tab-label">${escapeHtml(planLabel)}</span></div>
+        ${planTabHtml}
     </div>
     <script nonce="${nonce}">
     (function () {
@@ -27,6 +30,11 @@ export function buildResultPlanTabBarHtml(activeView: ResultView, planStatus: Pl
         bar.querySelectorAll('.rv-tab').forEach(function (tab) {
             tab.addEventListener('click', function () {
                 vscodeApi.postMessage({ command: 'switchResultView', view: tab.getAttribute('data-view') });
+            });
+        });
+        document.querySelectorAll('[data-plan-retry]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                vscodeApi.postMessage({ command: 'switchResultView', view: 'plan' });
             });
         });
     })();

@@ -133,7 +133,14 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
                 this.updateWebview();
             } else if (message.command === 'switchResultView') {
                 this.activeSubTab = message.view === 'plan' ? 'plan' : 'results';
-                if (this.activeSubTab === 'plan' && this.planViewState.status === 'idle') {
+                const currentResult = ResultsPanel.currentResult;
+                if (this.activeSubTab === 'plan' && currentResult && !this.isPlanAvailableForResult(currentResult)) {
+                    this.activeSubTab = 'results';
+                    this.updateWebview();
+                } else if (
+                    this.activeSubTab === 'plan'
+                    && (this.planViewState.status === 'idle' || this.planViewState.status === 'error')
+                ) {
                     await this.requestPlan();
                 } else {
                     this.updateWebview();
@@ -197,6 +204,10 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         this.planViewState = { status: 'idle' };
     }
 
+    private isPlanAvailableForResult(result: QueryResult): boolean {
+        return this.connectionManager.isExecutionPlanAvailable?.(result.connectionId) ?? true;
+    }
+
     /**
      * Fetches the execution plan for the currently displayed single-statement
      * result. Only wired for that path (not the multi-statement Result-N tab
@@ -212,7 +223,9 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
                 status: 'error',
                 message: 'No session/statement id was captured for this query, so its execution plan can\'t be looked up.'
             };
-            this.updateWebview();
+            if (this.activeSubTab === 'plan') {
+                this.updateWebview();
+            }
             return;
         }
 
@@ -232,7 +245,9 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
                     ? 'The connection this query ran on is no longer available, so its execution plan can\'t be looked up.'
                     : 'No active connection.'
             };
-            this.updateWebview();
+            if (this.activeSubTab === 'plan') {
+                this.updateWebview();
+            }
             return;
         }
 
@@ -251,7 +266,9 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             }
             this.planViewState = { status: 'error', message: formatError(error) };
         }
-        this.updateWebview();
+        if (this.activeSubTab === 'plan') {
+            this.updateWebview();
+        }
     }
 
     private getPlanBodyHtml(nonce: string): string {
@@ -259,7 +276,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             case 'loading':
                 return buildPlanLoadingHtml();
             case 'error':
-                return buildPlanErrorHtml({ message: this.planViewState.message });
+                return buildPlanErrorHtml({ message: this.planViewState.message, canRetry: true });
             case 'ready':
                 return buildPlanContentHtml(this.planViewState.plan, nonce);
             case 'idle':
@@ -291,7 +308,11 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
 
         const ctx = createWebviewRenderContext(this.view!.webview, this.extensionUri, vscode.Uri.joinPath);
         const filterId = `filter-${Date.now()}`;
-        const tabBarHtml = buildResultPlanTabBarHtml(this.activeSubTab, this.planViewState.status, ctx.nonce);
+        const showPlanTab = this.isPlanAvailableForResult(result);
+        if (!showPlanTab && this.activeSubTab === 'plan') {
+            this.activeSubTab = 'results';
+        }
+        const tabBarHtml = buildResultPlanTabBarHtml(this.activeSubTab, this.planViewState.status, ctx.nonce, showPlanTab);
 
         const bodyHtml = this.activeSubTab === 'plan'
             ? `<div class="plan-view">${this.getPlanBodyHtml(ctx.nonce)}</div>`

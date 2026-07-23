@@ -253,7 +253,8 @@ suite('PlanProvider.getPlan', () => {
                 assert.ok(error.message.includes('No profiling data found'));
                 assert.ok(error.message.includes('42'));
                 assert.ok(error.message.includes('3'));
-                assert.ok(error.message.includes('FLUSH STATISTICS'));
+                assert.ok(error.message.includes('execution plans are enabled'));
+                assert.ok(error.message.includes('reconnect'));
                 return true;
             }
         );

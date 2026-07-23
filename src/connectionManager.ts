@@ -3,7 +3,7 @@ import * as crypto from 'crypto';
 import * as tls from 'tls';
 import { Mutex } from 'async-mutex';
 import { ExasolDriver, ExaWebsocket } from '@exasol/exasol-driver-ts';
-import { rawQuery } from './utils';
+import { getRowsFromResult, rawQuery } from './utils';
 import { WebSocket } from 'ws';
 import { getOutputChannel } from './extension';
 import {
@@ -16,6 +16,7 @@ import {
     formatError,
     extractFingerprintError
 } from './connectionTypes';
+import { isExecutionPlanEnabled } from './settings';
 
 // Re-export for existing consumers
 export {
@@ -77,6 +78,8 @@ export class ConnectionManager {
     private backgroundLastUsed: Map<string, number> = new Map();
     /** Interval timer for background driver idle cleanup. */
     private backgroundIdleTimer: ReturnType<typeof setInterval> | undefined;
+    /** User-driver profiling availability per connection. False means ALTER SESSION PROFILE failed. */
+    private executionPlanAvailable: Map<string, boolean> = new Map();
     private readonly connectionsChangedEmitter = new vscode.EventEmitter<void>();
     readonly onDidChangeConnections = this.connectionsChangedEmitter.event;
     private readonly activeConnectionChangedEmitter = new vscode.EventEmitter<StoredConnection | undefined>();
@@ -302,6 +305,9 @@ export class ConnectionManager {
             // Validate the connection is still alive
             const isValid = await this.validateDriver(driver, id, role);
             if (isValid) {
+                if (role === 'user') {
+                    await this.ensureUserProfiling(driver, id, connection);
+                }
                 return driver;
             }
 
@@ -328,6 +334,11 @@ export class ConnectionManager {
         this.connectingPromises.get(id)!.set(role, promise);
         try {
             const driver = await promise;
+            if (role === 'user') {
+                await this.ensureUserProfiling(driver, id, connection);
+            } else {
+                await this.ensureBackgroundAutocommit(driver, connection);
+            }
             if (!this.drivers.has(id)) {
                 this.drivers.set(id, new Map());
             }
@@ -404,6 +415,9 @@ export class ConnectionManager {
             // Reset a specific role only
             this.recentFailures.get(id)?.delete(role);
             this.lastSuccessfulQuery.get(id)?.delete(role);
+            if (role === 'user') {
+                this.executionPlanAvailable.delete(id);
+            }
             const roleMap = this.drivers.get(id);
             const driver = roleMap?.get(role);
             if (driver) {
@@ -415,6 +429,7 @@ export class ConnectionManager {
             this.recentFailures.delete(id);
             this.lastSuccessfulQuery.delete(id);
             this.backgroundLastUsed.delete(id);
+            this.executionPlanAvailable.delete(id);
             const roleMap = this.drivers.get(id);
             if (roleMap) {
                 for (const driver of roleMap.values()) {
@@ -588,6 +603,44 @@ export class ConnectionManager {
     private runExclusive<T>(fn: () => Promise<T>, role: DriverRole = 'user'): Promise<T> {
         const mutex = role === 'background' ? this.backgroundMutex : this.userMutex;
         return mutex.runExclusive(fn);
+    }
+
+    isExecutionPlanAvailable(connectionId?: string): boolean {
+        const id = connectionId || this.activeConnection;
+        return isExecutionPlanEnabled() && (!id || this.executionPlanAvailable.get(id) !== false);
+    }
+
+    private async ensureUserProfiling(driver: ExasolDriver, connectionId: string, connection: StoredConnection): Promise<void> {
+        // Only attempt this once per connection, not once per query: getDriver()
+        // calls this on every reuse of an already-valid driver, and a *remembered
+        // failure* (false) must stick until reconnect (see executionPlanAvailable's
+        // .delete(id) on disconnect) — otherwise a user whose role lacks privilege
+        // to run ALTER SESSION would pay this round-trip, and repeat this log
+        // line, on every single query forever.
+        if (!isExecutionPlanEnabled() || this.executionPlanAvailable.has(connectionId)) {
+            return;
+        }
+        try {
+            const result = await rawQuery(driver, "ALTER SESSION SET PROFILE = 'ON'");
+            getRowsFromResult(result);
+            this.executionPlanAvailable.set(connectionId, true);
+        } catch (error) {
+            this.executionPlanAvailable.set(connectionId, false);
+            getOutputChannel().appendLine(
+                `Execution plan profiling could not be enabled for '${connection.name}': ${formatError(error)}`
+            );
+        }
+    }
+
+    private async ensureBackgroundAutocommit(driver: ExasolDriver, connection: StoredConnection): Promise<void> {
+        try {
+            const result = await rawQuery(driver, "ALTER SESSION SET AUTOCOMMIT = 'ON'");
+            getRowsFromResult(result);
+        } catch (error) {
+            getOutputChannel().appendLine(
+                `Could not confirm autocommit for background connection '${connection.name}': ${formatError(error)}`
+            );
+        }
     }
 
     private async validateDriver(driver: ExasolDriver, connectionId: string, role: DriverRole = 'user'): Promise<boolean> {

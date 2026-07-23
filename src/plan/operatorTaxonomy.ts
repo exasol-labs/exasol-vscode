@@ -60,9 +60,8 @@ const TYPE_RULES: Array<{ type: OperatorType; test: (name: string) => boolean }>
     { type: 'SORT', test: n => n.includes('SORT') || n.includes('ORDER BY') },
     {
         type: 'NETWORK',
-        // Not observed verbatim in a live profile trace during Step 0 research —
-        // included defensively for redistribution-style parts. Falls back to
-        // OTHER (never fabricated data) if the real string differs.
+        // Included defensively for redistribution-style parts. Falls back to
+        // OTHER if the real string differs.
         test: n => n.includes('NETWORK') || n.includes('DISTRIBUT') || n.includes('BROADCAST') || n.includes('REORGANIZE')
     },
     {

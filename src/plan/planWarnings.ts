@@ -9,16 +9,9 @@
  * (OBJECT_ROWS/OUT_ROWS are both post-execution actuals) — see honesty
  * constraint in the project brief.
  *
- * LARGE_REDISTRIBUTION deliberately flags by *share of total query time*,
- * not a fixed byte cutoff. Researched this before picking it: Snowflake's
- * Query Profile, BigQuery's query-plan docs, and Databricks' skew guidance
- * all flag operators by relative cost (% of total duration, or vs. other
- * stages/runs) — none use an absolute byte threshold in their plan UI. A
- * fixed MiB number can't scale across wildly different query/cluster sizes
- * (20 MiB is nothing in an hour-long query, everything in a 50ms one);
- * relative cost share does. Redshift is the one vendor with a fixed
- * constant for this (1,000,000 rows), and it lives in a separate
- * monitoring/alerting layer, not its plan viewer.
+ * LARGE_REDISTRIBUTION deliberately flags by share of total query time, not a
+ * fixed byte cutoff. A fixed MiB threshold would not scale across very
+ * different query sizes or cluster sizes.
  */
 import { OperatorTraits, PerNodeStat, PlanWarning } from './planModel';
 

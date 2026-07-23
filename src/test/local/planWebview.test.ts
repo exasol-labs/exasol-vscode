@@ -1127,7 +1127,7 @@ suite('buildPlanContentHtml', () => {
                 const doc = parseDom(buildPlanContentHtml(plan, 'n0nce'));
                 const hint = doc.querySelector('.plan-side-hint');
                 assert.ok(hint);
-                assert.ok(hint!.textContent!.includes("ALTER SESSION SET PROFILE = 'ON'"));
+                assert.ok(hint!.textContent!.includes('Reconnect with'));
             });
 
             test('omits the hint when at least one node has a defined CPU or Net', () => {
@@ -1198,6 +1198,11 @@ suite('buildPlanErrorHtml', () => {
         assert.ok(doc.querySelector('.plan-status-title'));
         assert.ok(doc.querySelector('.plan-status-message')!.textContent!.includes('boom'));
     });
+
+    test('renders a retry button when requested', () => {
+        const doc = parseDom(buildPlanErrorHtml({ message: 'boom', canRetry: true }));
+        assert.strictEqual(doc.querySelector('[data-plan-retry]')!.textContent, 'Retry');
+    });
 });
 
 suite('buildPlanLoadingHtml', () => {
@@ -1235,5 +1240,10 @@ suite('CSS builders', () => {
     test('buildPlanStatusCss returns non-empty CSS', () => {
         const css = buildPlanStatusCss();
         assert.ok(css.includes('.plan-status-container'));
+    });
+
+    test('the retry button has a visible :focus-visible outline, same as every other interactive control in this feature', () => {
+        const css = buildPlanStatusCss();
+        assert.ok(/\.plan-retry-btn:focus-visible\s*\{[^}]*outline/.test(css));
     });
 });

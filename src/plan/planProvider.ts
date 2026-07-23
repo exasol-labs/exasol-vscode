@@ -7,11 +7,9 @@
  * Fallback order, richest first (mirrors the attempt/fallback convention
  * already used by src/providers/objectTreeFetchers.ts):
  *   1. $EXA_PROFILE_DETAILS_LAST_DAY — per-node (IPROC) detail, requires the
- *      SELECT ANY DICTIONARY privilege. Verified to exist and be gated on
- *      that privilege against a live Exasol 2026.1.0 instance during Step 0
- *      research; it is an internal/undocumented object (absent from
- *      SYS.EXA_SYSCAT) so this fallback chain is what protects v1 from that
- *      object disappearing or being renamed in a future Exasol version.
+ *      SELECT ANY DICTIONARY privilege. It is an internal/undocumented object,
+ *      so this fallback chain protects v1 from that object disappearing or
+ *      being renamed in a future Exasol version.
  *   2. EXA_DBA_PROFILE_LAST_DAY — cluster-wide aggregate, any session, same
  *      privilege requirement as #1.
  *   3. EXA_USER_PROFILE_LAST_DAY — cluster-wide aggregate, own sessions only,
@@ -49,8 +47,7 @@ export interface PlanTarget {
     /**
      * Exact digit strings, not `number` — Exasol's SESSION_ID (DECIMAL(20,0))
      * routinely exceeds Number.MAX_SAFE_INTEGER, and converting it to a JS
-     * number silently rounds it (verified: a real session id's last three
-     * digits were lost this way during Step 0 testing). Validated as a plain
+	 * number silently rounds it. Validated as a plain
      * digit string in getPlan() below before being interpolated into SQL.
      */
     sessionId: string;
@@ -65,10 +62,8 @@ export interface PlanTarget {
 interface FetchAttempt {
     source: ProfileSource;
     table: string;
-    /** Only $EXA_PROFILE_DETAILS_LAST_DAY has an IPROC (per-node) column —
-     * EXA_DBA_PROFILE_LAST_DAY/EXA_USER_PROFILE_LAST_DAY don't (confirmed via
-     * DESCRIBE against a live instance). Ordering by it on those tiers fails
-     * with "object IPROC not found", verified live on a second instance. */
+    /** Only $EXA_PROFILE_DETAILS_LAST_DAY has an IPROC (per-node) column.
+     * Ordering by it on the aggregate views fails because they do not expose it. */
     hasIproc: boolean;
 }
 
@@ -271,8 +266,8 @@ export class PlanProvider {
 
         throw new Error(
             `No profiling data found for session ${target.sessionId} after statement ${target.afterStmtId}. ` +
-            `Make sure profiling was enabled (ALTER SESSION SET PROFILE = 'ON') before the query ran, ` +
-            `and that FLUSH STATISTICS has run since.` +
+            `Make sure execution plans are enabled, reconnect so session profiling is configured, ` +
+            `then run the query again.` +
             (lastError ? ` Last error: ${lastError}` : '')
         );
     }

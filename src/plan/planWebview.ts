@@ -188,16 +188,13 @@ function sideRailHtml(plan: Plan): string {
         ).join('')}</div>`
         : `<div class="hcat-empty">not available</div>`;
 
-    // Shown only when nothing in the plan has CPU/Net at all — that's the
-    // signature of a session that ran without PROFILE turned on first (see
-    // planLacksDetailMetrics). Educates the user on how to get that detail
-    // next time, rather than silently leaving every CPU/Net/HDD write row
-    // looking broken with no explanation.
+    // Shown only when nothing in the plan has CPU/Net at all, which usually
+    // means profiling was not active for the session when this statement ran.
     const profileHintHtml = planLacksDetailMetrics(plan)
         ? `<div class="plan-side-card plan-side-hint">
             <h4>Want more detail?</h4>
-            <p>CPU, network, and disk metrics weren't captured for this run. Run
-            <code>ALTER SESSION SET PROFILE = 'ON'</code> before your query to see them next time.</p>
+            <p>CPU, network, and disk metrics weren't captured for this run. Reconnect with
+            execution plans enabled, then run the query again.</p>
         </div>`
         : '';
 
@@ -207,7 +204,7 @@ function sideRailHtml(plan: Plan): string {
             <h4>Profile overview</h4>
             <div class="plan-side-row"><span>Source</span><span>${escapeHtml(planSourceLabel(plan.source))}</span></div>
             <div class="plan-side-row"><span>Total time</span><span>${fmtMs(plan.totalDuration)}</span></div>
-            <div class="plan-side-row"><span>Nodes</span><span>${clusterSize !== undefined ? clusterSize : 'not available'}</span></div>
+            <div class="plan-side-row"><span>Nodes observed</span><span>${clusterSize !== undefined ? clusterSize : 'not available'}</span></div>
         </div>
         <div class="plan-side-card">
             <h4>Time by category</h4>
@@ -321,9 +318,7 @@ export function buildPlanContentHtml(plan: Plan, nonce: string): string {
         // edge-packing only lines up with the previous row by coincidence,
         // since a row's real content width is whatever fit before it
         // wrapped, which is essentially never exactly the track's full
-        // width (confirmed against a real screenshot: the drop arrow and
-        // the next row's node both landed visibly off-center from the ring
-        // above them).
+        // width.
         function layoutFlowRows() {
             if (!flowTrack) { return; }
             resetFlowRows();
@@ -647,12 +642,8 @@ export function buildPlanContentCss(): string {
            on the wrong side of it once the row reads right-to-left. -- */
         .hflow-row { display: flex; align-items: flex-start; width: 100%; }
         /* No justify-content here: row-reverse already swaps which edge is
-           "main-start" to the right, so the default flex-start packs this
-           row's content flush against the right edge on its own. Adding an
-           explicit flex-end would target "main-end", which row-reverse has
-           just swapped to mean the LEFT edge — undoing the whole point of
-           reversing the row (confirmed against a real screenshot: it sent
-           the row's lone item straight back to the far left). */
+           "main-start" to the right, so default flex-start packs this row's
+           content flush against the right edge on its own. */
         .hflow-row-reverse { flex-direction: row-reverse; }
         .hflow-row-reverse .hstep { flex-direction: row-reverse; }
         .hflow-row-reverse .hconn-line::after {
@@ -663,11 +654,9 @@ export function buildPlanContentCss(): string {
            below) — this vertical stub replaces it. Both its horizontal
            position (margin-left) and the following row's own position
            (transform: translateX, on .hflow-row/.hflow-row-reverse above)
-           are computed in script, from the actual measured position of the
-           ring the previous row ended on — not packed against the track's
-           edge, which only lines up by coincidence (confirmed against a
-           real screenshot: edge-packing left both the arrow and the next
-           row's node visibly off-center from the ring above them). */
+           are computed in script from the actual measured position of the
+           ring the previous row ended on, not packed against the track's
+           edge. */
         .hflow-drop { display: flex; width: 100%; margin: 2px 0; }
         .hflow-drop-connector {
             width: 118px; flex: none; display: flex; flex-direction: column; align-items: center; padding: 2px 0 6px;
@@ -855,12 +844,17 @@ export function buildPlanContentCss(): string {
 
 export interface PlanErrorViewOptions {
     message: string;
+    canRetry?: boolean;
 }
 
 export function buildPlanErrorHtml(options: PlanErrorViewOptions): string {
+    const retryHtml = options.canRetry
+        ? '<button type="button" class="plan-retry-btn" data-plan-retry>Retry</button>'
+        : '';
     return `<div class="plan-status-container">
         <div class="plan-status-title">⚠ Couldn't load the execution plan</div>
         <div class="plan-status-message">${escapeHtml(options.message)}</div>
+        ${retryHtml}
     </div>`;
 }
 
@@ -879,6 +873,22 @@ export function buildPlanStatusCss(): string {
             font-size: 12px;
             white-space: pre-wrap;
             color: var(--vscode-descriptionForeground);
+        }
+        .plan-retry-btn {
+            margin-top: 12px;
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 4px;
+            border: 1px solid var(--vscode-button-border, var(--vscode-panel-border));
+            background-color: var(--vscode-button-secondaryBackground, transparent);
+            color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+            cursor: pointer;
+        }
+        .plan-retry-btn:hover {
+            background-color: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+        }
+        .plan-retry-btn:focus-visible {
+            outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px;
         }
     `;
 }

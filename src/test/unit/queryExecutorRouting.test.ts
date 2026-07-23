@@ -101,8 +101,8 @@ suite('QueryExecutor.execute routing: local CSV import interception', () => {
         assert.strictEqual(calls.importFromCsvFile.length, 0, 'must not intercept a cloud import');
         // IMPORT is classified as a non-result-set command, so it routes to execute().
         assert.strictEqual(calls.execute.length, 1, 'cloud import should go through raw execute()');
-        // The one query() call is the post-execution SESSION_ID/STMT_ID capture
-        // (captureStatementIdentity), not a second attempt at the import itself.
+        // The one query() call is the pre-execution SESSION_ID/STMT_ID capture
+        // (captureBaselineStatementIdentity), not a second attempt at the import itself.
         assert.strictEqual(calls.query.length, 1);
         assert.ok(calls.query[0][0].includes('CURRENT_SESSION'));
     });

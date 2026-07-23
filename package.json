@@ -513,6 +513,11 @@
           "default": false,
           "description": "When enabled, multi-statement executions display each result in a separate tab"
         },
+        "exasol.executionPlan": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable execution plan capture and the Plan tab. When enabled, new user connections run ALTER SESSION SET PROFILE = 'ON'."
+        },
         "exasol.searchIncludesColumns": {
           "type": "boolean",
           "default": false,

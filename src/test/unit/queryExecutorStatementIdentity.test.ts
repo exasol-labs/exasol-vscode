@@ -15,7 +15,7 @@ import { createEmptyRawResult, createRawResult } from '../helpers/mockConnection
  * SESSION_ID/STMT_ID rows for the baseline identity-capture query
  * captureBaselineStatementIdentity() issues *before* the real statement.
  */
-function makeExecutor(options: { mainResult: any; identityRows?: any[] | 'throw' }): { qe: any; queryCalls: string[] } {
+function makeExecutor(options: { mainResult: any; identityRows?: any[] | 'throw'; executionPlanAvailable?: boolean }): { qe: any; queryCalls: string[] } {
     const queryCalls: string[] = [];
 
     const fakeDriver = {
@@ -34,6 +34,7 @@ function makeExecutor(options: { mainResult: any; identityRows?: any[] | 'throw'
 
     const fakeConnectionManager = {
         getActiveConnection: () => ({ id: 'conn-1', name: 'Test' }),
+        isExecutionPlanAvailable: () => options.executionPlanAvailable ?? true,
         getDriver: async () => fakeDriver,
         executeWithRetry: async (fn: () => Promise<any>) => fn()
     };
@@ -143,6 +144,40 @@ suite('QueryExecutor.execute: baseline statement identity capture', () => {
 
         const result = await qe.execute('SELECT 1 AS X');
 
+        assert.strictEqual(result.sessionId, undefined);
+        assert.strictEqual(result.baselineStmtId, undefined);
+    });
+
+    test('does not capture identity when execution plans are disabled', async () => {
+        (vscodeMock as any).workspace = {
+            getConfiguration: () => ({
+                get: (key: string, fallback?: unknown) => key === 'executionPlan' ? false : fallback
+            })
+        };
+        const { qe, queryCalls } = makeExecutor({
+            mainResult: createRawResult(['X'], [[1]]),
+            identityRows: [[42, 7]]
+        });
+
+        const result = await qe.execute('SELECT 1 AS X');
+
+        assert.strictEqual(queryCalls.length, 1, 'only the real SELECT should run');
+        assert.ok(!queryCalls[0].includes('CURRENT_SESSION'));
+        assert.strictEqual(result.sessionId, undefined);
+        assert.strictEqual(result.baselineStmtId, undefined);
+    });
+
+    test('does not capture identity when connection-time profiling setup failed', async () => {
+        const { qe, queryCalls } = makeExecutor({
+            mainResult: createRawResult(['X'], [[1]]),
+            identityRows: [[42, 7]],
+            executionPlanAvailable: false
+        });
+
+        const result = await qe.execute('SELECT 1 AS X');
+
+        assert.strictEqual(queryCalls.length, 1, 'only the real SELECT should run');
+        assert.ok(!queryCalls[0].includes('CURRENT_SESSION'));
         assert.strictEqual(result.sessionId, undefined);
         assert.strictEqual(result.baselineStmtId, undefined);
     });

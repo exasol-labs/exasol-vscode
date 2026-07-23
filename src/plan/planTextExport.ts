@@ -63,7 +63,7 @@ export function buildPlanTextSummary(plan: Plan): string {
         `Execution plan — session ${plan.sessionId}, statement ${plan.stmtId}`,
         `Source: ${planSourceLabel(plan.source)}`,
         `Total time: ${fmtMs(plan.totalDuration)}`,
-        `Nodes: ${clusterSize !== undefined ? clusterSize : 'not available'}`
+        `Nodes observed: ${clusterSize !== undefined ? clusterSize : 'not available'}`
     ].join('\n');
 
     if (plan.nodes.length === 0) {

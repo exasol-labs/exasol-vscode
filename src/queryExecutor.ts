@@ -4,6 +4,7 @@ import { ConnectionManager } from './connectionManager';
 import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, ColumnMetadata, stripCommentsPreservingStrings, safeFetch } from './utils';
 import { parseLocalCsvImport, resolveImportPath } from './localCsvImport';
 import { getOutputChannel } from './extension';
+import { isExecutionPlanEnabled } from './settings';
 
 export type { ColumnMetadata };
 
@@ -89,15 +90,12 @@ export class QueryExecutor {
             // a stalled import instead of hanging forever.
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver();
+                const shouldCapturePlanIdentity = isExecutionPlanEnabled()
+                    && (this.connectionManager.isExecutionPlanAvailable?.(activeConnection.id) ?? true);
 
-                // Same identity capture as every other execution path below
-                // (see captureBaselineStatementIdentity). A local CSV import
-                // is still a real IMPORT statement from Exasol's own
-                // perspective and still gets profiled — this branch just
-                // predates the Plan feature and was never wired up to record
-                // where to look the profile up afterward, unlike every other
-                // statement type.
-                const identity = await captureBaselineStatementIdentity(driver);
+                const identity = shouldCapturePlanIdentity
+                    ? await captureBaselineStatementIdentity(driver)
+                    : {};
                 const importStartTime = Date.now();
 
                 const absPath = resolveImportPath(localImport.filePath);
@@ -122,14 +120,21 @@ export class QueryExecutor {
             finalQuery += ` LIMIT ${maxRows}`;
         }
 
-        // Use centralized retry logic from ConnectionManager
+        // Use centralized retry logic from ConnectionManager. executeWithRetry
+        // acquires this connection's mutex (see runExclusive) before invoking
+        // this callback at all, and queryStartTime below is set only after
+        // getDriver() and the identity capture both finish — so executionTime
+        // reflects only the real statement's own round-trip, excluding both
+        // the identity-capture query and any time spent queued behind another
+        // in-flight operation on the same connection.
         return await this.connectionManager.executeWithRetry(async () => {
             const driver = await this.connectionManager.getDriver();
+            const shouldCapturePlanIdentity = isExecutionPlanEnabled()
+                && (this.connectionManager.isExecutionPlanAvailable?.(activeConnection.id) ?? true);
 
-            // Captured before the query runs (see captureBaselineStatementIdentity
-            // for why), on a fresh timer so this round-trip never inflates the
-            // executionTime shown to the user.
-            const identity = await captureBaselineStatementIdentity(driver);
+            const identity = shouldCapturePlanIdentity
+                ? await captureBaselineStatementIdentity(driver)
+                : {};
             const queryStartTime = Date.now();
 
             // Classify the query to determine which driver method to use
