@@ -289,7 +289,7 @@ export function buildPlanContentHtml(plan: Plan, nonce: string): string {
 
         // The x-center of an item's ring (its actual visual anchor), not the
         // item box as a whole — measured relative to the track, so it stays
-        // valid across whatever transform-shifting layoutFlowRows() below
+        // valid across whatever position-shifting layoutFlowRows() below
         // applies to earlier rows.
         function ringCenterX(item, trackRect) {
             var ring = item.querySelector('.hnode-ring') || item;
@@ -392,7 +392,15 @@ export function buildPlanContentHtml(plan: Plan, nonce: string): string {
                     dropConn.style.marginLeft = (targetX - dropWidth / 2) + 'px';
 
                     var currentX = ringCenterX(rowItems[0], trackRect);
-                    rowEl.style.transform = 'translateX(' + (targetX - currentX) + 'px)';
+                    // Must not be a CSS transform: a transform creates a new
+                    // stacking context on this row, which traps the open
+                    // popover's z-index inside that row's own context —
+                    // later sibling rows (also stacking contexts, painted
+                    // later in DOM order) then draw over a popover that's
+                    // supposed to be on top. position: relative + left
+                    // shifts the row the same way without creating one.
+                    rowEl.style.position = 'relative';
+                    rowEl.style.left = (targetX - currentX) + 'px';
                 }
 
                 prevLastItem = rowItems[rowItems.length - 1];
@@ -653,10 +661,11 @@ export function buildPlanContentCss(): string {
            of the next no longer means anything spatially (see hconn-hidden
            below) — this vertical stub replaces it. Both its horizontal
            position (margin-left) and the following row's own position
-           (transform: translateX, on .hflow-row/.hflow-row-reverse above)
-           are computed in script from the actual measured position of the
-           ring the previous row ended on, not packed against the track's
-           edge. */
+           (position: relative + left, on .hflow-row/.hflow-row-reverse
+           above — NOT transform, which would create a stacking context
+           and trap a popover's z-index inside this row) are computed in
+           script from the actual measured position of the ring the
+           previous row ended on, not packed against the track's edge. */
         .hflow-drop { display: flex; width: 100%; margin: 2px 0; }
         .hflow-drop-connector {
             width: 118px; flex: none; display: flex; flex-direction: column; align-items: center; padding: 2px 0 6px;

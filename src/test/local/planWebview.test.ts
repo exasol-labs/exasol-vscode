@@ -831,7 +831,41 @@ suite('buildPlanContentHtml', () => {
             assert.strictEqual(dropConn.style.marginLeft, '400px', 'expected the drop connector centered under B\'s ring, 400px from the track\'s own left edge');
 
             const rowEl = track.querySelectorAll('.hflow-row')[1] as HTMLElement;
-            assert.strictEqual(rowEl.style.transform, 'translateX(350px)', 'expected row 1 shifted by exactly the gap between C\'s unshifted position (50) and B\'s ring (400)');
+            assert.strictEqual(rowEl.style.left, '350px', 'expected row 1 shifted by exactly the gap between C\'s unshifted position (50) and B\'s ring (400)');
+        });
+
+        test('shifts a wrapped row via position:relative + left, never via transform (transform would trap a popover\'s z-index inside the row\'s own stacking context)', () => {
+            // Regression test for a real bug (caught against real
+            // screenshots): a popover opened on an earlier row painted
+            // BELOW the content of later rows. `transform` creates a new
+            // stacking context on the row it's applied to, so the
+            // popover's z-index only ever won within that row's own
+            // context — later sibling rows (also stacking contexts,
+            // painted later in DOM order) drew over it regardless of
+            // z-index. `position: relative` + `left` moves a row
+            // identically without creating a stacking context, so a
+            // popover's z-index is free to compete at the track level
+            // against every row, not just its own.
+            const dom = buildInteractiveDom(fiveNodePlan());
+            const doc = dom.window.document;
+            const track = doc.querySelector('.hflow-track')!;
+            stubRows(flowItemsOf(dom), [2, 3]);
+
+            stubRect(track, { top: 0, bottom: 1000, left: 1000, right: 2000 });
+            const nodeB = doc.querySelector('.hnode[data-node-id="2"]')!.closest('.hstep')!;
+            const nodeC = doc.querySelector('.hnode[data-node-id="3"]')!.closest('.hstep')!;
+            stubRingCenter(nodeB, 1400);
+            stubRingCenter(nodeC, 1050);
+
+            resize(dom);
+
+            const rows = Array.from(track.querySelectorAll('.hflow-row')) as HTMLElement[];
+            rows.forEach(row => {
+                assert.strictEqual(row.style.transform, '', 'no .hflow-row may carry a transform: it would create a stacking context that traps the popover z-index inside that row');
+            });
+            assert.strictEqual(rows[0].style.position, '', 'row 0 is never shifted, so it gets no inline position either');
+            assert.strictEqual(rows[1].style.position, 'relative', 'the shifted row must use position:relative, not a transform, to move without creating a stacking context');
+            assert.strictEqual(rows[1].style.left, '350px');
         });
 
         test('hides (not removes) the original connector for the node that now starts a new row, and carries its rows-out label onto the drop connector', () => {
