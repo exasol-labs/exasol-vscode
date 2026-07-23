@@ -431,10 +431,10 @@ suite('ResultsPanel plan tab', () => {
         assert.deepStrictEqual(tabs, ['Results']);
     });
 
-    test('hides the Plan tab for a result with no captured session/statement id (as produced by preview/describe table)', () => {
-        // objectActions.ts builds preview-table and describe-table results
-        // directly, without ever capturing sessionId/baselineStmtId — only
-        // queryExecutor.ts does that. Such results must render only Results.
+    test('hides the Plan tab for a result with no captured session/statement id (as produced by describe table)', () => {
+        // objectActions.ts's describeTable builds its result directly,
+        // without ever capturing sessionId/baselineStmtId — it's a metadata
+        // lookup, not a profiled statement. Such results must render only Results.
         const { fakeView } = makeResultsPanel(() => createEmptyRawResult(DETAILS_COLUMNS));
         ResultsPanel.show(makeQueryResult({ sessionId: undefined, baselineStmtId: undefined, connectionId: undefined }));
 

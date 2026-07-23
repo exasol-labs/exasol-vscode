@@ -44,8 +44,10 @@ export interface QueryResult {
  * forward from a known point rather than guess how many implicit
  * COMMIT/ROLLBACK statements land between this query and the identity
  * capture. Never throws — a failure here should never fail the query itself.
+ * Exported for objectActions.ts's previewTableData, which needs the same
+ * capture on its own driver/gating.
  */
-async function captureBaselineStatementIdentity(driver: ExasolDriver): Promise<{ sessionId?: string; baselineStmtId?: string }> {
+export async function captureBaselineStatementIdentity(driver: ExasolDriver): Promise<{ sessionId?: string; baselineStmtId?: string }> {
     return safeFetch('Failed to capture baseline session/statement id for plan lookup', async () => {
         const result = await rawQuery(driver, 'SELECT CURRENT_SESSION AS SID, CURRENT_STATEMENT AS STID');
         const rows = getRowsFromResult(result);

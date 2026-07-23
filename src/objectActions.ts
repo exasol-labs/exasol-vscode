@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from './connectionManager';
-import { QueryExecutor } from './queryExecutor';
+import { QueryExecutor, captureBaselineStatementIdentity } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
 import { getColumnsFromResult, getRowsFromResult, rawQuery, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier } from './utils';
+import { isExecutionPlanEnabled } from './settings';
 
 export class ObjectActions {
     constructor(
@@ -29,7 +30,12 @@ export class ObjectActions {
                     const query = `SELECT * FROM "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(tableName)}" LIMIT ${limit}`;
                     const queryResult = await this.connectionManager.executeWithRetry(async () => {
                         const driver = await this.connectionManager.getDriver(connection.id);
+                        const shouldCapturePlanIdentity = isExecutionPlanEnabled()
+                            && (this.connectionManager.isExecutionPlanAvailable?.(connection.id) ?? true);
 
+                        const identity = shouldCapturePlanIdentity
+                            ? await captureBaselineStatementIdentity(driver)
+                            : {};
                         const startTime = Date.now();
                         const result = await rawQuery(driver, query);
                         const executionTime = Date.now() - startTime;
@@ -44,7 +50,9 @@ export class ObjectActions {
                             columnMetadata,
                             rows,
                             rowCount: rows.length,
-                            executionTime
+                            executionTime,
+                            connectionId: connection.id,
+                            ...identity
                         };
                     }, connection.id);
 

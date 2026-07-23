@@ -205,9 +205,10 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
     }
 
     private isPlanAvailableForResult(result: QueryResult): boolean {
-        // Results built directly from an object-tree action (preview table,
-        // describe table) never capture a session/statement id, so there's
-        // no profile to look up regardless of connection support.
+        // describeTable's result (objectActions.ts) never captures a
+        // session/statement id — it's a metadata lookup, not a profiled
+        // statement — so there's no profile to look up regardless of
+        // connection support.
         const hasCapturedIdentity = !!result.sessionId && !!result.baselineStmtId;
         return hasCapturedIdentity && (this.connectionManager.isExecutionPlanAvailable?.(result.connectionId) ?? true);
     }
@@ -300,13 +301,14 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
      * see operatorTaxonomy.ts's DML rule), and queryExecutor.ts already
      * captures that identity regardless of whether the statement returned any
      * columns (see captureBaselineStatementIdentity; the local-CSV-import
-     * path captures the same identity too, for the same reason) — there's no
-     * technical reason to hide the Plan tab just because there's no grid to
-     * show next to it. Results built by objectActions.ts (preview table,
-     * describe table) never capture that identity, so isPlanAvailableForResult
-     * hides the tab for them instead. requestPlan() remains a backstop for
-     * the rarer case where a queryExecutor.ts result should have captured an
-     * identity but didn't.
+     * path captures the same identity too, for the same reason, and
+     * objectActions.ts's previewTableData reuses the same capture on its own
+     * driver) — there's no technical reason to hide the Plan tab just because
+     * there's no grid to show next to it. describeTable's result never
+     * captures that identity — it's a metadata lookup, not a profiled
+     * statement — so isPlanAvailableForResult hides the tab for it instead.
+     * requestPlan() remains a backstop for the rarer case where a result that
+     * should have captured an identity didn't.
      */
     private getSingleResultHtml(result: QueryResult, query: string | undefined): string {
         const hasResultSet = !!result.columns && result.columns.length > 0;
