@@ -144,7 +144,12 @@ suite('ResultsPanel plan tab', () => {
         assert.strictEqual(doc.querySelector('.hnode'), null);
     });
 
-    test('a query with no captured session/stmt id shows a clear plan error instead of fetching', async () => {
+    test('a query with no captured session/stmt id never shows a Plan tab, and a stray switch to it does not fetch', async () => {
+        // isPlanAvailableForResult gates both tab rendering and this
+        // switchResultView guard, so a stray 'plan' message for such a
+        // result is redirected back to Results before requestPlan() (whose
+        // own "no session/statement id" message stays as a backstop for
+        // callers that reach it some other way) ever runs.
         let queryCallCount = 0;
         const { fakeView } = makeResultsPanel(() => { queryCallCount++; return createEmptyRawResult(DETAILS_COLUMNS); });
         ResultsPanel.show(makeQueryResult({ sessionId: undefined, baselineStmtId: undefined }));
@@ -153,7 +158,9 @@ suite('ResultsPanel plan tab', () => {
 
         assert.strictEqual(queryCallCount, 0, 'must not attempt a plan fetch without ids');
         const doc = parseDom(fakeView.getHtml());
-        assert.ok(doc.querySelector('.plan-status-message')!.textContent!.includes('session/statement id'));
+        const tabs = Array.from(doc.querySelectorAll('.rv-tab')).map(tab => tab.textContent);
+        assert.deepStrictEqual(tabs, ['Results']);
+        assert.ok(doc.querySelector('.rv-tab.active')!.textContent!.includes('Results'));
     });
 
     test('a fetch failure surfaces the underlying error message, not a crash', async () => {
@@ -418,6 +425,18 @@ suite('ResultsPanel plan tab', () => {
         provider.resolveWebviewView(fakeView.view);
 
         ResultsPanel.show(makeQueryResult());
+
+        const doc = parseDom(fakeView.getHtml());
+        const tabs = Array.from(doc.querySelectorAll('.rv-tab')).map(tab => tab.textContent);
+        assert.deepStrictEqual(tabs, ['Results']);
+    });
+
+    test('hides the Plan tab for a result with no captured session/statement id (as produced by preview/describe table)', () => {
+        // objectActions.ts builds preview-table and describe-table results
+        // directly, without ever capturing sessionId/baselineStmtId — only
+        // queryExecutor.ts does that. Such results must render only Results.
+        const { fakeView } = makeResultsPanel(() => createEmptyRawResult(DETAILS_COLUMNS));
+        ResultsPanel.show(makeQueryResult({ sessionId: undefined, baselineStmtId: undefined, connectionId: undefined }));
 
         const doc = parseDom(fakeView.getHtml());
         const tabs = Array.from(doc.querySelectorAll('.rv-tab')).map(tab => tab.textContent);

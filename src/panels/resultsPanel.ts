@@ -205,7 +205,11 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
     }
 
     private isPlanAvailableForResult(result: QueryResult): boolean {
-        return this.connectionManager.isExecutionPlanAvailable?.(result.connectionId) ?? true;
+        // Results built directly from an object-tree action (preview table,
+        // describe table) never capture a session/statement id, so there's
+        // no profile to look up regardless of connection support.
+        const hasCapturedIdentity = !!result.sessionId && !!result.baselineStmtId;
+        return hasCapturedIdentity && (this.connectionManager.isExecutionPlanAvailable?.(result.connectionId) ?? true);
     }
 
     /**
@@ -289,19 +293,20 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
      * Renders the single-statement result view: a "Results | Plan" tab strip
      * above either the results grid (or, for a statement with no result set —
      * DDL/DML, IMPORT/EXPORT, etc. — the same success summary getSuccessHtml
-     * shows standalone) and the plan timeline. The tab strip always shows:
-     * Exasol profiles any statement that runs through the SQL engine (every
-     * DML/DDL/IMPORT/EXPORT gets at least COMPILE/EXECUTE system steps, often
-     * a real operator too — see operatorTaxonomy.ts's DML rule), and
-     * queryExecutor.ts already captures the session/statement id needed to
-     * look that profile up regardless of whether the statement returned any
-     * columns (see captureBaselineStatementIdentity) — there's no technical
-     * reason to hide the Plan tab just because there's no grid to show next
-     * to it (queryExecutor.ts's local-CSV-import path captures the same
-     * identity too, for the same reason). requestPlan() itself is still the
-     * real gate: a statement that genuinely captured no identity (e.g. the
-     * capture round-trip itself failed) surfaces its own clear error there
-     * instead.
+     * shows standalone) and the plan timeline. The tab strip shows for any
+     * result carrying a captured session/statement id: Exasol profiles any
+     * statement that runs through the SQL engine (every DML/DDL/IMPORT/EXPORT
+     * gets at least COMPILE/EXECUTE system steps, often a real operator too —
+     * see operatorTaxonomy.ts's DML rule), and queryExecutor.ts already
+     * captures that identity regardless of whether the statement returned any
+     * columns (see captureBaselineStatementIdentity; the local-CSV-import
+     * path captures the same identity too, for the same reason) — there's no
+     * technical reason to hide the Plan tab just because there's no grid to
+     * show next to it. Results built by objectActions.ts (preview table,
+     * describe table) never capture that identity, so isPlanAvailableForResult
+     * hides the tab for them instead. requestPlan() remains a backstop for
+     * the rarer case where a queryExecutor.ts result should have captured an
+     * identity but didn't.
      */
     private getSingleResultHtml(result: QueryResult, query: string | undefined): string {
         const hasResultSet = !!result.columns && result.columns.length > 0;
