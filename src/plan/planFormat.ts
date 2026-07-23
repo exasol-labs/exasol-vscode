@@ -49,6 +49,10 @@ export function fmtRows(n: number | undefined): string {
     if (n === undefined) {
         return '—';
     }
+    const roundedMillions = n / 1_000_000;
+    if (n >= 1_000_000_000 || roundedMillions >= 999.5) {
+        return `${(n / 1_000_000_000).toFixed(n >= 99_950_000_000 ? 0 : 1)}B`;
+    }
     const roundedThousands = n / 1_000;
     if (n >= 1_000_000 || roundedThousands >= 999.5) {
         return `${(n / 1_000_000).toFixed(n >= 99_950_000 ? 0 : 1)}M`;

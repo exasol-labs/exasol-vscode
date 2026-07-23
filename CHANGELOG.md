@@ -2,6 +2,14 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.7.0] - 2026-07-23
+
+### Added
+- **Execution plan viewer**: a "Plan" tab alongside single-statement query results showing Exasol's per-operator profile (cost share, duration, rows, CPU/network/disk) with warnings for skew, disk spills, and large redistributions; works for any profiled statement including DDL, DML, IMPORT and EXPORT. Gated by the new `exasol.executionPlan` setting (default on); when enabled, new user connections run `ALTER SESSION SET PROFILE = 'ON'` automatically
+
+### Changed
+- Reported execution time now measures only the statement's own round trip, excluding connection-queue wait and reconnect time
+
 ## [1.6.0] - 2026-06-25
 
 ### Changed

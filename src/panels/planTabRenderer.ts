@@ -32,10 +32,15 @@ export function buildResultPlanTabBarHtml(activeView: ResultView, planStatus: Pl
                 vscodeApi.postMessage({ command: 'switchResultView', view: tab.getAttribute('data-view') });
             });
         });
-        document.querySelectorAll('[data-plan-retry]').forEach(function (button) {
-            button.addEventListener('click', function () {
+        // The retry button lives in the plan error body, rendered later
+        // inside .plan-view — not yet in the document when this script runs
+        // — so this binds via delegation on the document instead of
+        // querying for the button directly.
+        document.addEventListener('click', function (e) {
+            var target = e.target && e.target.closest && e.target.closest('[data-plan-retry]');
+            if (target) {
                 vscodeApi.postMessage({ command: 'switchResultView', view: 'plan' });
-            });
+            }
         });
     })();
     </script>`;

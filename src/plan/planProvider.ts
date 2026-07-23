@@ -47,7 +47,7 @@ export interface PlanTarget {
     /**
      * Exact digit strings, not `number` — Exasol's SESSION_ID (DECIMAL(20,0))
      * routinely exceeds Number.MAX_SAFE_INTEGER, and converting it to a JS
-	 * number silently rounds it. Validated as a plain
+     * number silently rounds it. Validated as a plain
      * digit string in getPlan() below before being interpolated into SQL.
      */
     sessionId: string;

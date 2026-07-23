@@ -3,7 +3,7 @@ import * as crypto from 'crypto';
 import * as tls from 'tls';
 import { Mutex } from 'async-mutex';
 import { ExasolDriver, ExaWebsocket } from '@exasol/exasol-driver-ts';
-import { getRowsFromResult, rawQuery } from './utils';
+import { getRowsFromResult, rawExecute, rawQuery } from './utils';
 import { WebSocket } from 'ws';
 import { getOutputChannel } from './extension';
 import {
@@ -315,6 +315,10 @@ export class ConnectionManager {
             const outputChannel = getOutputChannel();
             outputChannel.appendLine(`Connection ${connection.name} (${role}) appears stale, reconnecting...`);
             roleMap.delete(role);
+            if (role === 'user') {
+                // Profiling is session-scoped, so a remembered result is invalid once the session is replaced.
+                this.executionPlanAvailable.delete(id);
+            }
             this.lastSuccessfulQuery.get(id)?.delete(role);
             try { await withTimeout(driver.close(), 2000, 'Driver close timeout'); } catch { /* ignore close errors */ }
             isReconnect = true;
@@ -336,8 +340,6 @@ export class ConnectionManager {
             const driver = await promise;
             if (role === 'user') {
                 await this.ensureUserProfiling(driver, id, connection);
-            } else {
-                await this.ensureBackgroundAutocommit(driver, connection);
             }
             if (!this.drivers.has(id)) {
                 this.drivers.set(id, new Map());
@@ -621,24 +623,13 @@ export class ConnectionManager {
             return;
         }
         try {
-            const result = await rawQuery(driver, "ALTER SESSION SET PROFILE = 'ON'");
+            const result = await rawExecute(driver, "ALTER SESSION SET PROFILE = 'ON'");
             getRowsFromResult(result);
             this.executionPlanAvailable.set(connectionId, true);
         } catch (error) {
             this.executionPlanAvailable.set(connectionId, false);
             getOutputChannel().appendLine(
                 `Execution plan profiling could not be enabled for '${connection.name}': ${formatError(error)}`
-            );
-        }
-    }
-
-    private async ensureBackgroundAutocommit(driver: ExasolDriver, connection: StoredConnection): Promise<void> {
-        try {
-            const result = await rawQuery(driver, "ALTER SESSION SET AUTOCOMMIT = 'ON'");
-            getRowsFromResult(result);
-        } catch (error) {
-            getOutputChannel().appendLine(
-                `Could not confirm autocommit for background connection '${connection.name}': ${formatError(error)}`
             );
         }
     }

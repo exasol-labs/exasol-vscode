@@ -172,6 +172,47 @@ suite('ResultsPanel plan tab', () => {
         assert.ok(doc.querySelector('[data-plan-retry]'), 'Plan errors should offer a retry path');
     });
 
+    test('clicking the rendered Retry button actually posts switchResultView, not just tab re-clicks', async () => {
+        // Regression: the tab-bar's own inline script used to bind the click
+        // handler via querySelectorAll('[data-plan-retry]') at parse time,
+        // before this button (rendered later, inside .plan-view) existed in
+        // the document — matching nothing. Executing the real rendered
+        // document's scripts and dispatching a real click is the only way to
+        // catch that; asserting the button's presence and posting the
+        // message directly (as the other tests here do) cannot.
+        const { fakeView } = makeResultsPanel(() => {
+            throw new Error('insufficient privileges for accessing view');
+        });
+        ResultsPanel.show(makeQueryResult());
+        await fakeView.send({ command: 'switchResultView', view: 'plan' });
+
+        const html = fakeView.getHtml();
+        assert.ok(html.includes('data-plan-retry'), 'expected the plan error body to render a retry button');
+
+        // Stub acquireVsCodeApi before any of the document's own scripts run,
+        // the same way VS Code injects it into a real webview.
+        const stubbedHtml = html.replace('<head>', `<head><script>
+            window.__posted = [];
+            window.acquireVsCodeApi = function () {
+                return { postMessage: function (message) { window.__posted.push(message); } };
+            };
+        </script>`);
+
+        const dom = new JSDOM(stubbedHtml, { runScripts: 'dangerously' });
+        const button = dom.window.document.querySelector('[data-plan-retry]');
+        assert.ok(button, 'expected the retry button in the fully rendered document');
+
+        button!.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+
+        // The posted message is an object from the JSDOM window's own realm,
+        // so compare fields directly rather than via deepStrictEqual (which
+        // treats cross-realm objects as unequal despite identical shape).
+        const posted = (dom.window as any).__posted;
+        assert.strictEqual(posted.length, 1, 'expected exactly one postMessage call');
+        assert.strictEqual(posted[0].command, 'switchResultView');
+        assert.strictEqual(posted[0].view, 'plan');
+    });
+
     test('clicking the Plan tab again after an error retries the fetch', async () => {
         let fetchCount = 0;
         const { fakeView } = makeResultsPanel(sql => {

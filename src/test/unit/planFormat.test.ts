@@ -114,6 +114,14 @@ suite('fmtRows', () => {
     test('rounds values near one million to M instead of 1000k', () => {
         assert.strictEqual(fmtRows(999_999), '1.0M');
     });
+
+    test('rounds values near one billion to B instead of 1000M', () => {
+        assert.strictEqual(fmtRows(999_950_000), '1.0B');
+    });
+
+    test('formats a value comfortably within the B range with one decimal', () => {
+        assert.strictEqual(fmtRows(1_500_000_000), '1.5B');
+    });
 });
 
 suite('hottestNodeId', () => {
