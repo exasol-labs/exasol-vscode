@@ -45,7 +45,7 @@ export function activate(context: vscode.ExtensionContext) {
     const queryHistoryProvider = new QueryHistoryProvider(context);
 
     // Register panel views
-    ResultsPanel.register(context);
+    ResultsPanel.register(context, connectionManager);
 
     // Register notebook support
     const notebookSerializer = vscode.workspace.registerNotebookSerializer(

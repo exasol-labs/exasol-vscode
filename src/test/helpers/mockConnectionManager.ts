@@ -30,6 +30,23 @@ export function createRawResult(columns: string[], rows: any[][]): any {
     };
 }
 
+/**
+ * A raw-mode SQL-error response, exactly as the real driver hands one back
+ * for responseType: 'raw' — status: 'error' with NO throw (verified against
+ * node_modules/@exasol/exasol-driver-ts: it only calls verifyNoError(), which
+ * does the throwing, for the 'default' response type; 'raw' responses are
+ * returned as-is). Only getRowsFromResult() (or an equivalent explicit
+ * status check) surfaces this as a thrown error — a caller that discards a
+ * raw response without checking it will not see this failure at all.
+ */
+export function createRawErrorResult(sqlCode: string, text: string): any {
+    return {
+        status: 'error',
+        responseData: {},
+        exception: { sqlCode, text }
+    };
+}
+
 export function createEmptyRawResult(columns: string[]): any {
     return {
         status: 'ok',
