@@ -7,7 +7,7 @@
  * what Exasol's profile columns are named.
  */
 import { Plan, PlanNode, PerNodeStat } from './planModel';
-import { classifyOperator } from './operatorTaxonomy';
+import { classifyOperator, OperatorClassification } from './operatorTaxonomy';
 import { computeWarnings, WarningThresholds, DEFAULT_WARNING_THRESHOLDS } from './planWarnings';
 
 /** One profile row, field names shared verbatim across all three source views
@@ -29,6 +29,8 @@ export interface RawProfileRow {
     cpu: number | undefined;
     tempDbRamPeak: number | undefined;
     hddWrite: number | undefined;
+    /** HDD_READ, MiB/s — see PlanNode.hddRead in planModel.ts. */
+    hddRead: number | undefined;
     net: number | undefined;
     remarks: string | undefined;
     sqlText: string | undefined;
@@ -73,6 +75,7 @@ export function mapDbRowToRawProfileRow(row: Record<string, unknown>): RawProfil
         cpu: toNumber(row.CPU),
         tempDbRamPeak: toNumber(row.TEMP_DB_RAM_PEAK),
         hddWrite: toNumber(row.HDD_WRITE),
+        hddRead: toNumber(row.HDD_READ),
         net: toNumber(row.NET),
         remarks: toStringOrUndefined(row.REMARKS),
         sqlText: toStringOrUndefined(row.SQL_TEXT)
@@ -89,38 +92,53 @@ function max(values: Array<number | undefined>): number | undefined {
     return defined.length > 0 ? Math.max(...defined) : undefined;
 }
 
+interface CollapsedGroup {
+    collapsed: RawProfileRow;
+    perNodeStats: PerNodeStat | undefined;
+    perNodeDurationStats: PerNodeStat | undefined;
+}
+
 /**
  * Collapses the rows for one PART_ID into a single representative row plus
  * (when the rows came from $EXA_PROFILE_DETAILS_LAST_DAY, i.e. carry IPROC)
- * a real per-node PerNodeStat on OUT_ROWS. Never invents a PerNodeStat for
- * rows that didn't actually carry a node identifier.
+ * real per-node PerNodeStats on OUT_ROWS and DURATION. Never invents a
+ * PerNodeStat for rows that didn't actually carry a node identifier.
  */
-function collapseGroup(rows: RawProfileRow[]): { collapsed: RawProfileRow; perNodeStats: PerNodeStat | undefined } {
+function collapseGroup(rows: RawProfileRow[]): CollapsedGroup {
     const first = rows[0];
     const isPerNode = rows.every(r => r.iproc !== undefined);
 
     const collapsed: RawProfileRow = {
         ...first,
-        objectRows: max(rows.map(r => r.objectRows)),
+        // Selectivity's numerator (see PlanNode.objectRows): in the
+        // per-IPROC details tier, OBJECT_ROWS is the node-local shard row
+        // count (verified live: a 176,792-row temp table reported
+        // OBJECT_ROWS 44,632 per node across 4 nodes), i.e. the same
+        // per-node scale as OUT_ROWS — so it must sum across rows exactly
+        // like OUT_ROWS does, not max. Summary tiers (one row per part, no
+        // IPROC) are unaffected either way. A prior max-vs-sum mismatch here
+        // mixed a per-node scale with a cluster scale and could render
+        // selectivity over 100%.
+        objectRows: sum(rows.map(r => r.objectRows)),
         outRows: sum(rows.map(r => r.outRows)),
         // The operator isn't done until its slowest node finishes.
         duration: max(rows.map(r => r.duration)),
         cpu: max(rows.map(r => r.cpu)),
         tempDbRamPeak: max(rows.map(r => r.tempDbRamPeak)),
         hddWrite: sum(rows.map(r => r.hddWrite)),
+        // HDD_READ is a per-node RATE (MiB/s), not a volume — summing rates
+        // across nodes would not mean anything, so it collapses the same way
+        // as duration/cpu: the max observed rate across nodes.
+        hddRead: max(rows.map(r => r.hddRead)),
         net: sum(rows.map(r => r.net))
     };
 
     if (!isPerNode) {
-        return { collapsed, perNodeStats: undefined };
+        return { collapsed, perNodeStats: undefined, perNodeDurationStats: undefined };
     }
 
     const rowCounts = rows.map(r => r.outRows).filter((v): v is number => v !== undefined);
-    if (rowCounts.length === 0) {
-        return { collapsed, perNodeStats: undefined };
-    }
-
-    const perNodeStats: PerNodeStat = {
+    const perNodeStats: PerNodeStat | undefined = rowCounts.length > 0 ? {
         metric: 'rows',
         min: Math.min(...rowCounts),
         max: Math.max(...rowCounts),
@@ -132,25 +150,47 @@ function collapseGroup(rows: RawProfileRow[]): { collapsed: RawProfileRow; perNo
         // fields summarize (e.g. an avg over 2 real values mislabeled as
         // spanning 3 nodes, understating the true skew ratio in the process).
         nodeCount: rowCounts.length
-    };
+    } : undefined;
 
-    return { collapsed, perNodeStats };
+    // Independent of perNodeStats above: a node group can have per-node
+    // DURATION values (every real IPROC row carries one) even when OUT_ROWS
+    // itself is missing, so this is computed from its own defined population
+    // rather than gated on rowCounts.
+    const durations = rows.map(r => r.duration).filter((v): v is number => v !== undefined);
+    const perNodeDurationStats: PerNodeStat | undefined = durations.length > 0 ? {
+        metric: 'duration',
+        min: Math.min(...durations),
+        max: Math.max(...durations),
+        avg: durations.reduce((a, b) => a + b, 0) / durations.length,
+        nodeCount: durations.length
+    } : undefined;
+
+    return { collapsed, perNodeStats, perNodeDurationStats };
 }
 
 function buildNode(
     partId: number,
     collapsed: RawProfileRow,
     perNodeStats: PerNodeStat | undefined,
+    perNodeDurationStats: PerNodeStat | undefined,
+    classification: OperatorClassification,
     totalDuration: number,
+    nonSystemDuration: number,
     thresholds: WarningThresholds
 ): PlanNode {
-    const { operatorType, traits } = classifyOperator(collapsed.partName);
-    const costPercent = totalDuration > 0 && collapsed.duration !== undefined
-        ? (collapsed.duration / totalDuration) * 100
+    const { operatorType, traits } = classification;
+    // See PlanNode.costPercent in planModel.ts: system steps divide by the
+    // whole plan (there is no more meaningful denominator for COMPILE/
+    // EXECUTE); every other node divides by totalDuration with system-step
+    // time already subtracted out, so bookkeeping no longer deflates every
+    // real operator's share.
+    const denominator = traits.isSystemStep ? totalDuration : nonSystemDuration;
+    const costPercent = denominator > 0 && collapsed.duration !== undefined
+        ? (collapsed.duration / denominator) * 100
         : undefined;
 
     const warnings = computeWarnings(
-        { traits, hddWrite: collapsed.hddWrite, net: collapsed.net, perNodeStats, costPercent },
+        { traits, hddWrite: collapsed.hddWrite, net: collapsed.net, perNodeStats, perNodeDurationStats, costPercent },
         thresholds
     );
 
@@ -163,14 +203,17 @@ function buildNode(
         objectName: collapsed.objectName,
         partInfo: collapsed.partInfo,
         remarks: collapsed.remarks,
+        objectRows: collapsed.objectRows,
         rowsOut: collapsed.outRows,
         duration: collapsed.duration,
         cpu: collapsed.cpu,
         net: collapsed.net,
         tempDbRamPeak: collapsed.tempDbRamPeak,
         hddWrite: collapsed.hddWrite,
+        hddRead: collapsed.hddRead,
         costPercent,
         perNodeStats,
+        perNodeDurationStats,
         warnings,
         // No parent/child column exists in any of these profile views — see
         // planModel.ts. Node ordering (by PART_ID) is the real signal.
@@ -206,10 +249,25 @@ export function normalizeProfileRows(
     const partIds = Array.from(byPartId.keys()).sort((a, b) => a - b);
     const collapsedByPartId = partIds.map(partId => ({ partId, ...collapseGroup(byPartId.get(partId)!) }));
 
-    const totalDuration = sum(collapsedByPartId.map(g => g.collapsed.duration)) ?? 0;
+    // Classified up front (not inside buildNode) because the F2 denominator
+    // below needs isSystemStep for every node before any node can be built.
+    const classifications = collapsedByPartId.map(g => classifyOperator(g.collapsed.partName));
 
-    const nodes = collapsedByPartId.map(g =>
-        buildNode(g.partId, g.collapsed, g.perNodeStats, totalDuration, thresholds)
+    // Plan.totalDuration itself is untouched by this — it stays wall-time
+    // over every node (system steps included) for the overview's "Total
+    // time" figure. nonSystemDuration is only ever used as costPercent's
+    // denominator for non-system nodes (see buildNode above).
+    const totalDuration = sum(collapsedByPartId.map(g => g.collapsed.duration)) ?? 0;
+    const systemDuration = sum(
+        collapsedByPartId.map((g, i) => classifications[i].traits.isSystemStep ? g.collapsed.duration : undefined)
+    ) ?? 0;
+    const nonSystemDuration = totalDuration - systemDuration;
+
+    const nodes = collapsedByPartId.map((g, i) =>
+        buildNode(
+            g.partId, g.collapsed, g.perNodeStats, g.perNodeDurationStats,
+            classifications[i], totalDuration, nonSystemDuration, thresholds
+        )
     );
 
     const perNodeStatsAvailable = nodes.some(n => n.perNodeStats !== undefined);

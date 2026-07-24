@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { buildPlanTextSummary } from '../../plan/planTextExport';
+import { buildPlanTextSummary, operatorBlock } from '../../plan/planTextExport';
 import { Plan, PlanNode, OperatorTraits } from '../../plan/planModel';
 
 const PASSTHROUGH_TRAITS: OperatorTraits = {
@@ -17,14 +17,17 @@ function makeNode(overrides: Partial<PlanNode> = {}): PlanNode {
         objectName: undefined,
         partInfo: undefined,
         remarks: undefined,
+        objectRows: undefined,
         rowsOut: 1000,
         duration: 0.5,
         cpu: 50,
         net: undefined,
         tempDbRamPeak: undefined,
         hddWrite: undefined,
+        hddRead: undefined,
         costPercent: 50,
         perNodeStats: undefined,
+        perNodeDurationStats: undefined,
         warnings: [],
         children: [],
         ...overrides
@@ -88,23 +91,40 @@ suite('buildPlanTextSummary', () => {
         assert.ok(text.includes('1. JOIN [part 1]\n'), 'the operator line must not carry a trailing " — ..." suffix');
     });
 
-    test('includes duration, CPU, cost share, and rows out on the primary metrics line', () => {
+    test('includes duration, duration share, CPU, and rows out on the primary metrics line', () => {
         const text = buildPlanTextSummary(makePlan({
             nodes: [makeNode({ duration: 0.12, cpu: 38, costPercent: 33, rowsOut: 4500 })]
         }));
         assert.ok(text.includes('Duration: 120 ms'));
-        assert.ok(text.includes('CPU: 38%'));
-        assert.ok(text.includes('Cost: 33%'));
+        assert.ok(text.includes('Share (of query): 33%'), 'F12: the primary metrics line renamed "Cost:" to "Share:"');
+        assert.ok(text.includes('CPU (max node): 38%'), 'F24: CPU is labeled as a per-node max');
         assert.ok(text.includes('Rows out: 4.5k'));
+    });
+
+    suite('share denominator suffix (finding B)', () => {
+        test('a non-system node reads "Share (of query)"', () => {
+            const text = buildPlanTextSummary(makePlan({
+                nodes: [makeNode({ costPercent: 45, traits: { ...PASSTHROUGH_TRAITS, isSystemStep: false } })]
+            }));
+            assert.ok(text.includes('Share (of query): 45%'));
+        });
+
+        test('a system-step node reads "Share (of total)" instead', () => {
+            const text = buildPlanTextSummary(makePlan({
+                nodes: [makeNode({ costPercent: 31, traits: { ...PASSTHROUGH_TRAITS, isSystemStep: true } })]
+            }));
+            assert.ok(text.includes('Share (of total): 31%'));
+            assert.ok(!text.includes('Share (of query)'));
+        });
     });
 
     test('shows a dash for CPU when the profile row did not report it, not a fake 0%', () => {
         const text = buildPlanTextSummary(makePlan({ nodes: [makeNode({ cpu: undefined })] }));
-        assert.ok(text.includes('CPU: —'));
-        assert.ok(!text.includes('CPU: 0%'));
+        assert.ok(text.includes('CPU (max node): —'));
+        assert.ok(!text.includes('CPU (max node): 0%'));
     });
 
-    test('shows Net, HDD write, and Temp DB RAM peak on their own line, including real zero values', () => {
+    test('shows Net, Temp DB RAM peak, and HDD write on their own line, including real zero values', () => {
         const text = buildPlanTextSummary(makePlan({
             nodes: [makeNode({ net: 0, hddWrite: 340.2, tempDbRamPeak: 12 })]
         }));
@@ -135,6 +155,55 @@ suite('buildPlanTextSummary', () => {
         assert.ok(!text.includes('Temp DB RAM peak:'));
     });
 
+    suite('HDD read (finding 7)', () => {
+        test('is shown, as a rate, only when greater than zero', () => {
+            const text = buildPlanTextSummary(makePlan({ nodes: [makeNode({ hddRead: 3.2 })] }));
+            assert.ok(text.includes('HDD read: 3.2 MiB/s'));
+        });
+
+        test('is omitted when zero — the overwhelming common case, not worth showing as noise', () => {
+            const text = buildPlanTextSummary(makePlan({ nodes: [makeNode({ hddRead: 0 })] }));
+            assert.ok(!text.includes('HDD read:'));
+        });
+
+        test('is omitted when undefined (not measured)', () => {
+            const text = buildPlanTextSummary(makePlan({ nodes: [makeNode({ hddRead: undefined })] }));
+            assert.ok(!text.includes('HDD read:'));
+        });
+    });
+
+    suite('scan selectivity (finding 3)', () => {
+        test('shows objectRows -> rowsOut with a one-decimal percentage when both are defined', () => {
+            const text = buildPlanTextSummary(makePlan({
+                nodes: [makeNode({ objectRows: 10000, rowsOut: 250 })]
+            }));
+            assert.ok(text.includes('Scanned: 10,000 rows → 250 (2.5%)'));
+        });
+
+        test('omits the Scanned line when objectRows is undefined', () => {
+            const text = buildPlanTextSummary(makePlan({ nodes: [makeNode({ objectRows: undefined, rowsOut: 250 })] }));
+            assert.ok(!text.includes('Scanned:'));
+        });
+
+        test('omits the Scanned line when rowsOut is undefined', () => {
+            const text = buildPlanTextSummary(makePlan({ nodes: [makeNode({ objectRows: 10000, rowsOut: undefined })] }));
+            assert.ok(!text.includes('Scanned:'));
+        });
+
+        test('omits the Scanned line when objectRows is zero, guarding the division', () => {
+            const text = buildPlanTextSummary(makePlan({ nodes: [makeNode({ objectRows: 0, rowsOut: 0 })] }));
+            assert.ok(!text.includes('Scanned:'));
+        });
+
+        test('shows the raw row counts but omits the percentage when rowsOut exceeds objectRows (inconsistent data, not >100% selectivity)', () => {
+            const text = buildPlanTextSummary(makePlan({
+                nodes: [makeNode({ objectRows: 1594, rowsOut: 6314 })]
+            }));
+            assert.ok(text.includes('Scanned: 1,594 rows → 6,314'), 'the raw row counts must still be shown');
+            assert.ok(!/Scanned:[^\n]*%/.test(text), 'must never render a >100% selectivity percentage');
+        });
+    });
+
     test('shows "not available" for per-node rows when no per-node stats exist for that operator', () => {
         const text = buildPlanTextSummary(makePlan({ nodes: [makeNode({ perNodeStats: undefined })] }));
         assert.ok(text.includes('Per-node rows: not available'));
@@ -145,6 +214,47 @@ suite('buildPlanTextSummary', () => {
             nodes: [makeNode({ perNodeStats: { metric: 'rows', min: 4180, max: 4340, avg: 4300, nodeCount: 4 } })]
         }));
         assert.ok(text.includes('Per-node rows: min 4180 / max 4340 / avg 4300 / nodes 4'));
+    });
+
+    suite('per-node durations (finding 4)', () => {
+        test('is omitted entirely when perNodeDurationStats is undefined', () => {
+            const text = buildPlanTextSummary(makePlan({ nodes: [makeNode({ perNodeDurationStats: undefined })] }));
+            assert.ok(!text.includes('Per-node durations:'));
+        });
+
+        test('shows the min/max/avg/nodes breakdown, formatted the same way as Duration, when present', () => {
+            const text = buildPlanTextSummary(makePlan({
+                nodes: [makeNode({ perNodeDurationStats: { metric: 'duration', min: 0.01, max: 0.34, avg: 0.12, nodeCount: 4 } })]
+            }));
+            assert.ok(text.includes('Per-node durations: min 10.0 ms / max 340 ms / avg 120 ms / nodes 4'));
+        });
+
+        suite('1ms noise floor (finding C)', () => {
+            test('shows the line when the slowest node is exactly at the 1ms floor', () => {
+                const text = buildPlanTextSummary(makePlan({
+                    nodes: [makeNode({ perNodeDurationStats: { metric: 'duration', min: 0.0001, max: 0.001, avg: 0.0005, nodeCount: 4 } })]
+                }));
+                assert.ok(text.includes('Per-node durations:'), 'a 1ms max meets the floor and must render');
+            });
+
+            test('omits the line when the slowest node is just under the 1ms floor — measurement noise, not a real distribution', () => {
+                const text = buildPlanTextSummary(makePlan({
+                    nodes: [makeNode({ perNodeDurationStats: { metric: 'duration', min: 0.0001, max: 0.0009, avg: 0.0005, nodeCount: 4 } })]
+                }));
+                assert.ok(!text.includes('Per-node durations:'), 'a 0.9ms max is below the floor');
+            });
+
+            test('per-node ROWS behavior is unaffected by the duration floor', () => {
+                const text = buildPlanTextSummary(makePlan({
+                    nodes: [makeNode({
+                        perNodeStats: { metric: 'rows', min: 1, max: 2, avg: 1.5, nodeCount: 4 },
+                        perNodeDurationStats: { metric: 'duration', min: 0.0001, max: 0.0009, avg: 0.0005, nodeCount: 4 }
+                    })]
+                }));
+                assert.ok(text.includes('Per-node rows: min 1 / max 2 / avg 2 / nodes 4'), 'the rows line must still render regardless of the duration floor');
+                assert.ok(!text.includes('Per-node durations:'));
+            });
+        });
     });
 
     test('includes part info and remarks when present, omits them when absent', () => {
@@ -180,5 +290,23 @@ suite('buildPlanTextSummary', () => {
     test('a plan with no nodes says so plainly instead of an empty operator list', () => {
         const text = buildPlanTextSummary(makePlan({ nodes: [] }));
         assert.ok(text.includes('This statement produced no profiled operators.'));
+    });
+});
+
+suite('operatorBlock (finding 11 — per-node copy)', () => {
+    test('is exported directly, with no separate wrapper function', () => {
+        assert.strictEqual(typeof operatorBlock, 'function');
+    });
+
+    test('renders exactly the block buildPlanTextSummary embeds for that node, at the same index', () => {
+        const nodeA = makeNode({ id: '2', operatorLabel: 'PIPE SCAN', duration: 0.05, costPercent: 20 });
+        const nodeB = makeNode({ id: '5', operatorLabel: 'JOIN (HASH)', duration: 0.2, costPercent: 80 });
+        const plan = makePlan({ nodes: [nodeA, nodeB] });
+
+        const fullText = buildPlanTextSummary(plan);
+        const blockForB = operatorBlock(nodeB, 1);
+
+        assert.ok(fullText.includes(blockForB), 'the standalone block for node B must appear verbatim inside the full export');
+        assert.ok(blockForB.startsWith('2. JOIN (HASH) [part 5]'), 'the index parameter numbers the block the same way as the full export');
     });
 });

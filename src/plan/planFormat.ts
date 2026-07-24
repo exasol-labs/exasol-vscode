@@ -12,7 +12,7 @@ import { OperatorType, Plan } from './planModel';
  * (uncategorized, not an error) were chosen over a bare "·"/"?" after those
  * read as barely-visible and alarming respectively in real screenshots. */
 export const OPERATOR_BADGE: Record<OperatorType, string> = {
-    SCAN: 'S', JOIN: 'J', GROUP_BY: 'G', SORT: 'O', NETWORK: 'N', DML: 'D', SYSTEM: '⚙', OTHER: '⋯'
+    SCAN: 'S', JOIN: 'J', GROUP_BY: 'G', SORT: 'O', NETWORK: 'N', DML: 'D', SYSTEM: '⚙', SYNC: '‖', OTHER: '⋯'
 };
 
 export const OPERATOR_COLOR_VAR: Record<OperatorType, string> = {
@@ -23,12 +23,16 @@ export const OPERATOR_COLOR_VAR: Record<OperatorType, string> = {
     NETWORK: '--vscode-charts-orange',
     DML: '--vscode-charts-red',
     SYSTEM: '--vscode-descriptionForeground',
+    // Every other slot in VS Code's charts palette is already claimed above
+    // (orange: NETWORK, yellow: SORT); charts.pink is the next distinct,
+    // themed color VS Code exposes rather than reusing another type's hue.
+    SYNC: '--vscode-charts-pink',
     OTHER: '--vscode-foreground'
 };
 
 export const OPERATOR_TYPE_LABEL: Record<OperatorType, string> = {
     SCAN: 'Scan', JOIN: 'Join', GROUP_BY: 'Group By', SORT: 'Sort',
-    NETWORK: 'Network', DML: 'DML', SYSTEM: 'System', OTHER: 'Other'
+    NETWORK: 'Network', DML: 'DML', SYSTEM: 'System', SYNC: 'Sync', OTHER: 'Other'
 };
 
 export function fmtMs(seconds: number | undefined): string {
@@ -157,7 +161,14 @@ export function planLacksDetailMetrics(plan: Plan): boolean {
 export function hottestNodeId(plan: Plan): string | undefined {
     let hottest: { id: string; costPercent: number } | undefined;
     for (const node of plan.nodes) {
-        if (node.costPercent === undefined) {
+        // System steps (COMPILE, EXECUTE, ...) carry share-of-total while
+        // user operators carry share-of-query (see PlanNode.costPercent /
+        // finding 2) — mixing the two denominators here would let a system
+        // step outrank an actionable operator on numbers that aren't
+        // comparable. System overhead also isn't an actionable "hot spot" to
+        // chase; it's already visible via its own ring share and the
+        // category rail, so it's excluded from the hot-node race entirely.
+        if (node.traits.isSystemStep || node.costPercent === undefined) {
             continue;
         }
         if (!hottest || node.costPercent > hottest.costPercent) {

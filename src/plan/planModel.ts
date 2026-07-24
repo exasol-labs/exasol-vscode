@@ -12,7 +12,7 @@
  * types just need a traits declaration (see operatorTaxonomy.ts) and every
  * consumer (warnings, rendering) picks up correct behavior automatically.
  */
-export type OperatorType = 'SCAN' | 'JOIN' | 'GROUP_BY' | 'SORT' | 'NETWORK' | 'DML' | 'SYSTEM' | 'OTHER';
+export type OperatorType = 'SCAN' | 'JOIN' | 'GROUP_BY' | 'SORT' | 'NETWORK' | 'DML' | 'SYSTEM' | 'SYNC' | 'OTHER';
 
 export interface OperatorTraits {
     /** Reads base/temporary table rows into the pipeline (e.g. SCAN). */
@@ -40,14 +40,19 @@ export interface OperatorTraits {
  * not "zero skew".
  */
 export interface PerNodeStat {
-    metric: 'rows';
+    metric: 'rows' | 'duration';
     min: number;
     max: number;
     avg: number;
     nodeCount: number;
 }
 
-export type WarningType = 'HIGH_SKEW' | 'SPILLED_TO_DISK' | 'LARGE_REDISTRIBUTION' | 'ROW_ESTIMATE_MISMATCH';
+export type WarningType =
+    | 'HIGH_SKEW'
+    | 'HIGH_DURATION_SKEW'
+    | 'SPILLED_TO_DISK'
+    | 'LARGE_REDISTRIBUTION'
+    | 'ROW_ESTIMATE_MISMATCH';
 
 export interface PlanWarning {
     type: WarningType;
@@ -68,16 +73,40 @@ export interface PlanNode {
     /** Free-text detail from PART_INFO/REMARKS, shown in the detail panel/tooltip. */
     partInfo: string | undefined;
     remarks: string | undefined;
+    /** OBJECT_ROWS: rows available in the scanned object before this node's
+     * own filtering/output — paired with rowsOut to show scan selectivity. */
+    objectRows: number | undefined;
     rowsOut: number | undefined;
     duration: number | undefined;
     cpu: number | undefined;
     net: number | undefined;
     tempDbRamPeak: number | undefined;
     hddWrite: number | undefined;
-    /** Share of the statement's total duration, derived by the normalizer (not a raw column). */
+    /** HDD_READ, MiB/s — a per-node read RATE, not a volume, per Exasol's
+     * profile view docs. Collapsed as a max across nodes, same as other
+     * per-node rate-like fields. Nonzero in a small minority of real rows
+     * (~5.7%), so it is only ever surfaced when > 0 (see planWebview.ts /
+     * planTextExport.ts) rather than shown as a constant, uninformative 0. */
+    hddRead: number | undefined;
+    /**
+     * Share of duration this node accounts for, but the denominator differs
+     * by node kind: for a system step (traits.isSystemStep) it is share of
+     * Plan.totalDuration (every node, bookkeeping included) — there is no
+     * more meaningful denominator for COMPILE/EXECUTE/etc. For every other
+     * node it is share of totalDuration MINUS the summed duration of all
+     * system steps, so COMPILE/EXECUTE overhead no longer deflates every
+     * real operator's share (see profileRowNormalizer.ts). Plan.totalDuration
+     * itself is unaffected by this and stays wall-time-true for the "Total
+     * time" overview figure.
+     */
     costPercent: number | undefined;
     /** undefined when per-node rows were not available for this plan (see Plan.perNodeStatsAvailable). */
     perNodeStats: PerNodeStat | undefined;
+    /** Per-node distribution of this node's own DURATION, computed under the
+     * same per-node-availability condition as perNodeStats above. A single
+     * straggler node driving up an operator's duration is otherwise invisible
+     * once collapsed to a max (see profileRowNormalizer.ts collapseGroup). */
+    perNodeDurationStats: PerNodeStat | undefined;
     warnings: PlanWarning[];
     /**
      * Operator ids this one consumes from. Left empty in v1: Exasol's profile

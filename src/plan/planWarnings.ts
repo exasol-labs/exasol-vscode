@@ -16,16 +16,29 @@
 import { OperatorTraits, PerNodeStat, PlanWarning } from './planModel';
 
 export interface WarningThresholds {
-    /** (max - avg) / avg across nodes, above which HIGH_SKEW fires. */
+    /** (max - avg) / avg across nodes, above which HIGH_SKEW/HIGH_DURATION_SKEW fire. */
     skewRatio: number;
     /** Share of the query's total duration (0-100) an operator must both
      * exceed and move real network data over, to get LARGE_REDISTRIBUTION. */
     redistributionCostSharePercent: number;
+    /** Noise floor for HIGH_SKEW: real per-node ROWS distributions are only
+     * worth flagging once the busiest node handled at least this many rows.
+     * Live data showed the median part outputs 1 row and 38.6% output under
+     * 10 — without this floor, HIGH_SKEW fired constantly on statistically
+     * meaningless row counts (e.g. "0-1 rows across 4 nodes"), training users
+     * to ignore the warnings rail entirely. */
+    skewMinRows: number;
+    /** Noise floor for HIGH_DURATION_SKEW, in seconds: the busiest node must
+     * have taken at least this long, so a skewed-but-trivial (sub-50ms)
+     * duration spread doesn't fire alongside the real row-skew floor above. */
+    durationSkewMinSeconds: number;
 }
 
 export const DEFAULT_WARNING_THRESHOLDS: WarningThresholds = {
     skewRatio: 0.3,
-    redistributionCostSharePercent: 20
+    redistributionCostSharePercent: 20,
+    skewMinRows: 1000,
+    durationSkewMinSeconds: 0.05
 };
 
 export interface WarningInputs {
@@ -33,6 +46,8 @@ export interface WarningInputs {
     hddWrite: number | undefined;
     net: number | undefined;
     perNodeStats: PerNodeStat | undefined;
+    /** Per-node DURATION distribution — see PlanNode.perNodeDurationStats. */
+    perNodeDurationStats: PerNodeStat | undefined;
     /** Share of the query's total duration this node accounts for — the
      * same number shown on its card. Undefined only when totalDuration
      * itself is 0 (see profileRowNormalizer.ts), in which case
@@ -78,7 +93,11 @@ export function computeWarnings(
 
     if (node.perNodeStats && node.perNodeStats.nodeCount > 1 && node.perNodeStats.avg > 0) {
         const ratio = (node.perNodeStats.max - node.perNodeStats.avg) / node.perNodeStats.avg;
-        if (ratio > thresholds.skewRatio) {
+        // skewMinRows: see WarningThresholds doc — without this floor, a
+        // handful of rows split unevenly across nodes (statistically
+        // meaningless) fired the same warning as a genuine multi-million-row
+        // skew.
+        if (ratio > thresholds.skewRatio && node.perNodeStats.max >= thresholds.skewMinRows) {
             warnings.push({
                 type: 'HIGH_SKEW',
                 message: `Rows per node ranged ${node.perNodeStats.min}-${node.perNodeStats.max} ` +
@@ -88,6 +107,40 @@ export function computeWarnings(
                     max: node.perNodeStats.max,
                     avg: node.perNodeStats.avg,
                     nodeCount: node.perNodeStats.nodeCount,
+                    ratio
+                }
+            });
+        }
+    }
+
+    // Duration skew: restricted to blocking, non-system data-flow operators.
+    // Non-blocking (pipelined) operators don't wait on their slowest node the
+    // same way, and system steps are excluded on the same basis as HIGH_SKEW.
+    // Sync barriers (SYNC: producesRows/consumesRows both false) are also
+    // excluded even though they're blocking and non-system: a sync barrier's
+    // own per-node duration spread just mirrors whatever skew already exists
+    // upstream (already warned on the real data-flow operator that caused
+    // it), so flagging it too is redundant noise, not a second finding.
+    if (
+        node.traits.blocking &&
+        !node.traits.isSystemStep &&
+        (node.traits.producesRows || node.traits.consumesRows) &&
+        node.perNodeDurationStats &&
+        node.perNodeDurationStats.nodeCount > 1 &&
+        node.perNodeDurationStats.avg > 0
+    ) {
+        const stats = node.perNodeDurationStats;
+        const ratio = (stats.max - stats.avg) / stats.avg;
+        if (ratio > thresholds.skewRatio && stats.max >= thresholds.durationSkewMinSeconds) {
+            warnings.push({
+                type: 'HIGH_DURATION_SKEW',
+                message: `Slowest node took ${(stats.max * 1000).toFixed(0)}ms vs ` +
+                    `${(stats.avg * 1000).toFixed(0)}ms average across ${stats.nodeCount} nodes`,
+                detail: {
+                    minSeconds: stats.min,
+                    maxSeconds: stats.max,
+                    avgSeconds: stats.avg,
+                    nodeCount: stats.nodeCount,
                     ratio
                 }
             });

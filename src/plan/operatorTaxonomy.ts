@@ -44,6 +44,16 @@ const TRAITS_BY_TYPE: Record<OperatorType, OperatorTraits> = {
         producesRows: false, consumesRows: false, canSpill: false,
         movesDataOverNetwork: false, blocking: false, isSystemStep: true
     },
+    // Inter-node synchronization barrier. Deliberately NOT isSystemStep: it
+    // is real query time (frequently the single hottest node on a real plan)
+    // rather than execution-engine bookkeeping, so it must stay inside the
+    // user/data-flow denominator that costPercent divides by for non-system
+    // nodes (see PlanNode.costPercent in planModel.ts) instead of vanishing
+    // into the system-step total the way COMPILE/EXECUTE do.
+    SYNC: {
+        producesRows: false, consumesRows: false, canSpill: false,
+        movesDataOverNetwork: false, blocking: true, isSystemStep: false
+    },
     // Conservative default for anything unrecognized: treated as an
     // ordinary pass-through pipeline step, since we have no basis to
     // claim it can spill or move data over the network.
@@ -54,15 +64,26 @@ const TRAITS_BY_TYPE: Record<OperatorType, OperatorTraits> = {
 };
 
 const TYPE_RULES: Array<{ type: OperatorType; test: (name: string) => boolean }> = [
+    // Must precede the plain SCAN rule below (and any future SYSTEM keyword
+    // additions further down this list): a SYSTEM TABLE part reads a system
+    // catalog object and produces rows exactly like any other scan — despite
+    // the word SYSTEM in its name it is not execution-engine bookkeeping.
+    // Live census: 11.7% of profile rows were SYSTEM TABLE parts, all
+    // falling through to OTHER before this rule existed.
+    { type: 'SCAN', test: n => n.includes('SYSTEM TABLE') },
     { type: 'SCAN', test: n => n.includes('SCAN') },
     { type: 'JOIN', test: n => n.includes('JOIN') },
     { type: 'GROUP_BY', test: n => n.includes('GROUP') || n.includes('AGGREGAT') },
     { type: 'SORT', test: n => n.includes('SORT') || n.includes('ORDER BY') },
+    // Inter-node synchronization barrier — see the SYNC traits above for why
+    // this is deliberately not classified/traited as a system step.
+    { type: 'SYNC', test: n => n.includes('NODE SYNC') },
     {
         type: 'NETWORK',
         // Included defensively for redistribution-style parts. Falls back to
         // OTHER if the real string differs.
-        test: n => n.includes('NETWORK') || n.includes('DISTRIBUT') || n.includes('BROADCAST') || n.includes('REORGANIZE')
+        test: n => n.includes('NETWORK') || n.includes('DISTRIBUT') || n.includes('BROADCAST') ||
+            n.includes('REORGANIZE') || n.includes('REPLICATE')
     },
     {
         type: 'DML',

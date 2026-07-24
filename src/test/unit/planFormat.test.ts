@@ -7,6 +7,11 @@ const TRAITS: OperatorTraits = {
     movesDataOverNetwork: true, blocking: true, isSystemStep: false
 };
 
+const SYSTEM_TRAITS: OperatorTraits = {
+    producesRows: false, consumesRows: false, canSpill: false,
+    movesDataOverNetwork: false, blocking: false, isSystemStep: true
+};
+
 function makeNode(overrides: Partial<PlanNode> = {}): PlanNode {
     return {
         id: '1',
@@ -17,14 +22,17 @@ function makeNode(overrides: Partial<PlanNode> = {}): PlanNode {
         objectName: undefined,
         partInfo: undefined,
         remarks: undefined,
+        objectRows: undefined,
         rowsOut: 100,
         duration: 1,
         cpu: 50,
         net: undefined,
         tempDbRamPeak: undefined,
         hddWrite: undefined,
+        hddRead: undefined,
         costPercent: 25,
         perNodeStats: undefined,
+        perNodeDurationStats: undefined,
         warnings: [],
         children: [],
         ...overrides
@@ -160,6 +168,23 @@ suite('hottestNodeId', () => {
 
     test('returns undefined for a plan with no nodes', () => {
         assert.strictEqual(hottestNodeId(makePlan([])), undefined);
+    });
+
+    test('a system step never wins, even with the largest costPercent — its denominator (share of total) is not comparable to a user operator\'s (share of query)', () => {
+        const plan = makePlan([
+            makeNode({ id: 'compile', traits: SYSTEM_TRAITS, costPercent: 35 }),
+            makeNode({ id: 'execute', traits: SYSTEM_TRAITS, costPercent: 43 }),
+            makeNode({ id: 'scan', costPercent: 22 })
+        ]);
+        assert.strictEqual(hottestNodeId(plan), 'scan', 'the only non-system node must win regardless of the system steps\' larger numbers');
+    });
+
+    test('returns undefined when every node is a system step — no actionable data-flow operator to ring', () => {
+        const plan = makePlan([
+            makeNode({ id: 'compile', traits: SYSTEM_TRAITS, costPercent: 35 }),
+            makeNode({ id: 'execute', traits: SYSTEM_TRAITS, costPercent: 65 })
+        ]);
+        assert.strictEqual(hottestNodeId(plan), undefined);
     });
 });
 

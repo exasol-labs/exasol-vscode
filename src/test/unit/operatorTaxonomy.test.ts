@@ -75,6 +75,34 @@ suite('classifyOperator', () => {
         test('MERGE classifies as DML', () => {
             assert.strictEqual(classifyOperator('MERGE').operatorType, 'DML');
         });
+
+        test('SYSTEM TABLE classifies as SCAN, not SYSTEM or OTHER (finding 14)', () => {
+            // Live census: 11.7% of profile rows were SYSTEM TABLE parts,
+            // all landing in OTHER before this rule existed. It reads a
+            // system catalog object and produces rows exactly like any
+            // other scan — the word SYSTEM in its name is not bookkeeping.
+            const { operatorType, traits } = classifyOperator('SYSTEM TABLE');
+            assert.strictEqual(operatorType, 'SCAN');
+            assert.strictEqual(traits.producesRows, true);
+            assert.strictEqual(traits.isSystemStep, false);
+        });
+
+        test('REPLICATE classifies as NETWORK (finding 14)', () => {
+            assert.strictEqual(classifyOperator('REPLICATE').operatorType, 'NETWORK');
+        });
+
+        test('NODE SYNC classifies as SYNC — blocking, but deliberately not a system step (finding 14)', () => {
+            // Real query time (frequently the single hottest node on a real
+            // plan), not execution-engine bookkeeping — it must stay inside
+            // the F2 user/data-flow cost-share denominator rather than
+            // vanishing into the system-step total the way COMPILE/EXECUTE do.
+            const { operatorType, traits } = classifyOperator('NODE SYNC');
+            assert.strictEqual(operatorType, 'SYNC');
+            assert.strictEqual(traits.blocking, true);
+            assert.strictEqual(traits.isSystemStep, false);
+            assert.strictEqual(traits.producesRows, false);
+            assert.strictEqual(traits.consumesRows, false);
+        });
     });
 
     suite('finer PART_NAME values ($EXA_PROFILE_DETAILS_LAST_DAY)', () => {
