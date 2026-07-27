@@ -2,6 +2,14 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.7.1] - 2026-07-27
+
+### Changed
+- Replaced all 53 remaining explicit `any` types with real types, notably a `getRowsFromResult<T>()` generic that lets each query declare the row shape its SELECT produces; `@typescript-eslint/no-explicit-any` is now an error rather than a warning ([#65](https://github.com/exasol-labs/exasol-vscode/issues/65))
+
+### Security
+- Updated `brace-expansion`, `fast-uri`, `js-yaml`, and `linkify-it` to patched versions
+
 ## [1.7.0] - 2026-07-23
 
 ### Added
