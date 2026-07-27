@@ -6,7 +6,7 @@ function makeResult(rowCount: number = 1): QueryResult {
     return {
         columns: ['col1'],
         columnMetadata: [{ name: 'col1', type: 'VARCHAR' }],
-        rows: Array.from({ length: rowCount }, (_, i) => [i]),
+        rows: Array.from({ length: rowCount }, (_, i) => ({ col1: i })),
         rowCount,
         executionTime: 10
     };

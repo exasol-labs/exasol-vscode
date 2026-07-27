@@ -43,4 +43,4 @@ export {
     extractColumnName,
     extractColumnMetadata
 } from './driver';
-export type { ColumnMetadata } from './driver';
+export type { ColumnMetadata, SqlRow } from './driver';

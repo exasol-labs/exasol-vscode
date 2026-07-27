@@ -580,8 +580,12 @@ export class ConnectionManager {
         try {
             // Access the internal WebSocket connection to check its state
             // The driver has a connection property that may contain the WebSocket
-            const driverAny = driver as any;
-            const connection = driverAny._connection || driverAny.connection || driverAny._ws || driverAny.ws;
+            // The driver keeps its socket private and the field name has moved
+            // between releases, so probe every name we have seen.
+            const internals = driver as unknown as Partial<
+                Record<'_connection' | 'connection' | '_ws' | 'ws', { readyState?: number }>
+            >;
+            const connection = internals._connection || internals.connection || internals._ws || internals.ws;
 
             if (connection && connection.readyState !== undefined) {
                 // WebSocket.OPEN = 1

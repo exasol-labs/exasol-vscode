@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConnectionManager, ExasolConnection, FingerprintRequiredError, FingerprintMismatchError, normalizeFingerprint, extractFingerprintError, TlsMode, formatError } from '../connectionManager';
+import { ConnectionManager, ExasolConnection, FingerprintRequiredError, FingerprintMismatchError, normalizeFingerprint, extractFingerprintError, StoredConnection, TlsMode, formatError } from '../connectionManager';
 
 import { createWebviewRenderContext } from '../utils';
 
@@ -14,7 +14,7 @@ export class ConnectionPanel {
         private readonly extensionUri: vscode.Uri,
         private connectionManager: ConnectionManager,
         private outputChannel: vscode.OutputChannel,
-        private existingConnection?: any
+        private existingConnection?: StoredConnection
     ) {
         this._panel = panel;
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
@@ -33,7 +33,7 @@ export class ConnectionPanel {
         extensionUri: vscode.Uri,
         connectionManager: ConnectionManager,
         outputChannel: vscode.OutputChannel,
-        existingConnection: any
+        existingConnection: StoredConnection
     ): Promise<{ name: string; id: string } | undefined> {
         return ConnectionPanel.showPanel(extensionUri, connectionManager, outputChannel, existingConnection);
     }
@@ -42,7 +42,7 @@ export class ConnectionPanel {
         extensionUri: vscode.Uri,
         connectionManager: ConnectionManager,
         outputChannel: vscode.OutputChannel,
-        existingConnection?: any
+        existingConnection?: StoredConnection
     ): Promise<{ name: string; id: string } | undefined> {
         return new Promise((resolve) => {
             const column = vscode.ViewColumn.One;

@@ -17,7 +17,7 @@ export function formatError(error: unknown): string {
     }
     if (error instanceof Error) {
         // Some errors (e.g. from ws/Node.js net) have an empty message but a useful .code
-        const code = (error as any).code;
+        const code = (error as { code?: unknown }).code;
         if (error.message && code) {
             return `${error.message} (${code})`;
         }
@@ -107,7 +107,7 @@ export function extractFingerprintError(error: unknown): FingerprintRequiredErro
     }
     if (msg.includes('Server certificate fingerprint has changed')) {
         // Try to reconstruct from the cause chain first
-        const cause = (error as any)?.cause;
+        const cause = (error as { cause?: unknown })?.cause;
         if (cause instanceof FingerprintMismatchError) {
             return cause;
         }

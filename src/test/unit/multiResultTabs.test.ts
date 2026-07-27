@@ -1,8 +1,9 @@
 import * as assert from 'assert';
 import { TabManager, TabResult, TabState } from '../../panels/tabManager';
 import { QueryResult } from '../../queryExecutor';
+import { SqlRow } from '../../utils';
 
-function makeQueryResult(columns: string[] = ['col1'], rows: any[][] = [[1]]): QueryResult {
+function makeQueryResult(columns: string[] = ['col1'], rows: SqlRow[] = [{ col1: 1 }]): QueryResult {
     return {
         columns,
         columnMetadata: columns.map(name => ({ name, type: 'VARCHAR' })),

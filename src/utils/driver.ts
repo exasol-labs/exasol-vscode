@@ -1,8 +1,24 @@
 /**
  * Exasol driver wrappers, result extraction, and column metadata helpers.
  */
-import type { ExasolDriver, SQLQueriesResponse, SQLQueryColumn, SQLResponse } from '@exasol/exasol-driver-ts';
+import type {
+    ExasolDriver,
+    ResultSet,
+    SQLQueriesResponse,
+    SQLQueryColumn,
+    SQLQueryColumnType,
+    SQLResponse
+} from '@exasol/exasol-driver-ts';
 import type * as vscode from 'vscode';
+
+/**
+ * One row of a query result, keyed by column name.
+ * Exasol normalizes identifiers to uppercase, so keys are uppercase unless the
+ * query aliased them with a quoted identifier. Values are `unknown` because the
+ * shape depends on the query; callers that know their SELECT list should pass a
+ * concrete row type to {@link getRowsFromResult}.
+ */
+export type SqlRow = Record<string, unknown>;
 
 /**
  * Execute an async operation, logging any error to the given output channel and
@@ -58,7 +74,7 @@ function throwSqlError(response: SQLResponse<SQLQueriesResponse>): never {
 /**
  * Convert a ResultSet returned by the Exasol driver into an array of row objects.
  */
-function convertResultSetToRows(resultSet: any): Record<string, unknown>[] {
+function convertResultSetToRows(resultSet: ResultSet | undefined): SqlRow[] {
     if (!resultSet) {
         return [];
     }
@@ -67,9 +83,9 @@ function convertResultSetToRows(resultSet: any): Record<string, unknown>[] {
     const columnData: Array<Array<string | number | boolean | null>> = resultSet.data || [];
     const rowCount = columnData[0]?.length ?? 0;
 
-    const rows: Record<string, unknown>[] = [];
+    const rows: SqlRow[] = [];
     for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
-        const row: Record<string, unknown> = {};
+        const row: SqlRow = {};
         columns.forEach((column, columnIndex) => {
             const values = columnData[columnIndex] || [];
             const columnName = column.name || `COLUMN_${columnIndex + 1}`;
@@ -82,17 +98,33 @@ function convertResultSetToRows(resultSet: any): Record<string, unknown>[] {
 }
 
 /**
+ * The QueryResult shape the driver returns outside 'raw' mode, plus the older
+ * plain-property variant. Both are still accepted by the extractors below.
+ */
+interface QueryResultLike {
+    getRows?: () => SqlRow[];
+    getColumns?: () => SQLQueryColumn[];
+    rows?: SqlRow[];
+    columns?: SQLQueryColumn[];
+}
+
+/**
  * Extract rows from QueryResult or raw SQL response.
  * Handles both old (.rows property) and new (.getRows() method) API as well as raw responses.
  * Also handles empty results and errors.
+ *
+ * Pass a row type when the SELECT list is known, e.g.
+ * `getRowsFromResult<{ SCHEMA_NAME: string }>(result)`. The cast is unchecked:
+ * the database, not the compiler, decides the shape.
  */
-export function getRowsFromResult(result: any): any[] {
+export function getRowsFromResult<T = SqlRow>(result: unknown): T[] {
     if (!result) {
         return [];
     }
 
-    if (typeof result.getRows === 'function') {
-        return result.getRows();
+    const queryResult = result as QueryResultLike;
+    if (typeof queryResult.getRows === 'function') {
+        return queryResult.getRows() as T[];
     }
 
     if (isRawResponse(result)) {
@@ -105,10 +137,10 @@ export function getRowsFromResult(result: any): any[] {
             return [];
         }
 
-        return convertResultSetToRows(firstResult.resultSet);
+        return convertResultSetToRows(firstResult.resultSet) as T[];
     }
 
-    return result.rows || [];
+    return (queryResult.rows ?? []) as T[];
 }
 
 /**
@@ -116,13 +148,14 @@ export function getRowsFromResult(result: any): any[] {
  * Handles both old (.columns property) and new (.getColumns() method) API as well as raw responses.
  * Also handles empty results and errors.
  */
-export function getColumnsFromResult(result: any): any[] {
+export function getColumnsFromResult(result: unknown): SQLQueryColumn[] {
     if (!result) {
         return [];
     }
 
-    if (typeof result.getColumns === 'function') {
-        return result.getColumns();
+    const queryResult = result as QueryResultLike;
+    if (typeof queryResult.getColumns === 'function') {
+        return queryResult.getColumns();
     }
 
     if (isRawResponse(result)) {
@@ -135,10 +168,10 @@ export function getColumnsFromResult(result: any): any[] {
             return [];
         }
 
-        return firstResult.resultSet?.columns || [];
+        return firstResult.resultSet?.columns ?? [];
     }
 
-    return result.columns || [];
+    return queryResult.columns ?? [];
 }
 
 export function executeWithoutResult(
@@ -161,18 +194,27 @@ export interface ColumnMetadata {
  * Handles both driver-returned objects (col.name) and system-table row objects (col.COLUMN_NAME),
  * with a final fallback to the raw value for primitive column names.
  */
-export function extractColumnName(col: any): string {
-    return col.name ?? col.COLUMN_NAME ?? col;
+export function extractColumnName(col: unknown): string {
+    if (col !== null && typeof col === 'object') {
+        const { name, COLUMN_NAME } = col as { name?: unknown; COLUMN_NAME?: unknown };
+        if (name !== null && name !== undefined) {
+            return String(name);
+        }
+        if (COLUMN_NAME !== null && COLUMN_NAME !== undefined) {
+            return String(COLUMN_NAME);
+        }
+    }
+    return String(col);
 }
 
 /**
  * Map an array of raw column metadata objects to the typed ColumnMetadata shape.
  * Shared by QueryExecutor and ObjectActions to avoid duplication.
  */
-export function extractColumnMetadata(columnsMeta: any[]): ColumnMetadata[] {
-    return columnsMeta.map((col: any) => {
+export function extractColumnMetadata(columnsMeta: readonly unknown[]): ColumnMetadata[] {
+    return columnsMeta.map(col => {
         const name = extractColumnName(col);
-        const dataType = col.dataType;
+        const dataType = (col as { dataType?: SQLQueryColumnType } | null | undefined)?.dataType;
 
         if (dataType && typeof dataType === 'object') {
             return {

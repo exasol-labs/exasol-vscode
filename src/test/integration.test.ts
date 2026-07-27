@@ -78,7 +78,7 @@ suite('Integration Test Suite', () => {
         // 3. Verify data
         assert.strictEqual(result.rows[0].ID, 1);
         assert.strictEqual(result.rows[0].NAME, 'Item1');
-        assert.strictEqual(parseFloat(result.rows[0].AMOUNT), 10.5);
+        assert.strictEqual(Number(result.rows[0].AMOUNT), 10.5);
     });
 
     test('Session management workflow', async function() {
@@ -161,8 +161,8 @@ suite('Integration Test Suite', () => {
         assert.ok(result.columns.includes('AMOUNT_RANK'), 'Should have AMOUNT_RANK column');
 
         // Verify window function results
-        assert.ok(result.rows[0].RUNNING_TOTAL > 0, 'Running total should be calculated');
-        assert.ok(result.rows[0].AMOUNT_RANK > 0, 'Rank should be calculated');
+        assert.ok(Number(result.rows[0].RUNNING_TOTAL) > 0, 'Running total should be calculated');
+        assert.ok(Number(result.rows[0].AMOUNT_RANK) > 0, 'Rank should be calculated');
     });
 
     test('Transaction workflow', async function() {

@@ -75,7 +75,7 @@ export class SessionManager {
             const rows = await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(undefined, 'background');
                 const result = await rawQuery(driver, 'SELECT CURRENT_SCHEMA');
-                return getRowsFromResult(result);
+                return getRowsFromResult<{ CURRENT_SCHEMA?: string }>(result);
             }, undefined, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
             if (rows.length > 0) {
                 this.currentSchema = rows[0].CURRENT_SCHEMA;

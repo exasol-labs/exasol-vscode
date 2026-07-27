@@ -18,8 +18,9 @@ export default tseslint.config(
             ...tseslint.configs.recommended,
         ],
         rules: {
-            // Warn, not error: codebase uses `: any` for VS Code API surface types
-            '@typescript-eslint/no-explicit-any': 'warn',
+            // `any` is fully eliminated from src/; keep it that way.
+            // Query results are typed via the SqlRow generic on getRowsFromResult().
+            '@typescript-eslint/no-explicit-any': 'error',
 
             // Error on unused vars; allow underscore-prefixed args
             '@typescript-eslint/no-unused-vars': [

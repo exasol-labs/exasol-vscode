@@ -57,3 +57,6 @@ openspec/
 !.vscode/launch.json
 !.vscode/extensions.json
 .serena/
+
+# esbuild sourcemaps from dev builds (production bundles ship without them)
+media/*.map
