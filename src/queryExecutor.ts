@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
+import type { ExasolDriver } from '@exasol/exasol-driver-ts';
 import { ConnectionManager } from './connectionManager';
-import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, ColumnMetadata, stripCommentsPreservingStrings } from './utils';
+import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, ColumnMetadata, stripCommentsPreservingStrings, safeFetch } from './utils';
 import { parseLocalCsvImport, resolveImportPath } from './localCsvImport';
+import { getOutputChannel } from './extension';
+import { isExecutionPlanEnabled } from './settings';
 
 export type { ColumnMetadata };
 
@@ -11,6 +14,48 @@ export interface QueryResult {
     rows: any[];
     rowCount: number;
     executionTime: number;
+    /**
+     * SESSION_ID for this connection, and CURRENT_STATEMENT read *before* this
+     * query ran (exact digit strings — see plan/planModel.ts for why not
+     * `number`). Not the query's own STMT_ID: Exasol has no "id of the
+     * statement that just ran" primitive, since CURRENT_STATEMENT returns the
+     * id of whatever statement asks the question. planProvider.ts searches
+     * forward from this baseline for the query's real STMT_ID. Undefined if
+     * capture failed — the plan feature just won't be available for this
+     * result, everything else about the query is unaffected.
+     */
+    sessionId?: string;
+    baselineStmtId?: string;
+    /**
+     * Id of the connection this query actually ran on, captured at execution
+     * time. The plan lookup must run against *this* connection/session, not
+     * whichever connection happens to be active when the user later opens the
+     * Plan tab (a profile is only visible from the session that produced it —
+     * or, cross-session, only after propagation/flush). Undefined only for
+     * code paths that never populate session/statement ids anyway.
+     */
+    connectionId?: string;
+}
+
+/**
+ * Best-effort capture of the identifiers needed to look up this statement's
+ * profile data later (see src/plan/planProvider.ts). Runs as a round-trip on
+ * the same driver/session *before* the query, so planProvider can search
+ * forward from a known point rather than guess how many implicit
+ * COMMIT/ROLLBACK statements land between this query and the identity
+ * capture. Never throws — a failure here should never fail the query itself.
+ * Exported for objectActions.ts's previewTableData, which needs the same
+ * capture on its own driver/gating.
+ */
+export async function captureBaselineStatementIdentity(driver: ExasolDriver): Promise<{ sessionId?: string; baselineStmtId?: string }> {
+    return safeFetch('Failed to capture baseline session/statement id for plan lookup', async () => {
+        const result = await rawQuery(driver, 'SELECT CURRENT_SESSION AS SID, CURRENT_STATEMENT AS STID');
+        const rows = getRowsFromResult(result);
+        if (rows.length === 0) {
+            return {};
+        }
+        return { sessionId: String(rows[0].SID), baselineStmtId: String(rows[0].STID) };
+    }, {}, getOutputChannel());
 }
 
 export class QueryExecutor {
@@ -27,8 +72,6 @@ export class QueryExecutor {
         const config = vscode.workspace.getConfiguration('exasol');
         const maxRows = config.get<number>('maxResultRows', 10000);
         const queryTimeoutMs = config.get<number>('queryTimeout', 300) * 1000;
-
-        const startTime = Date.now();
 
         // Clean the query - remove trailing semicolons and trim
         let finalQuery = query.trim().replace(/;+\s*$/, '').trim();
@@ -49,17 +92,27 @@ export class QueryExecutor {
             // a stalled import instead of hanging forever.
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver();
+                const shouldCapturePlanIdentity = isExecutionPlanEnabled()
+                    && (this.connectionManager.isExecutionPlanAvailable?.(activeConnection.id) ?? true);
+
+                const identity = shouldCapturePlanIdentity
+                    ? await captureBaselineStatementIdentity(driver)
+                    : {};
+                const importStartTime = Date.now();
+
                 const absPath = resolveImportPath(localImport.filePath);
                 const rowCount = await driver.importFromCsvFile(localImport.table, absPath, localImport.options);
 
-                const executionTime = Date.now() - startTime;
+                const executionTime = Date.now() - importStartTime;
 
                 return {
                     columns: [],
                     columnMetadata: [],
                     rows: [],
                     rowCount,
-                    executionTime
+                    executionTime,
+                    connectionId: activeConnection.id,
+                    ...identity
                 };
             }, undefined, { timeoutMs: queryTimeoutMs, ...(cancellationToken ? { cancellationToken } : {}) });
         }
@@ -69,9 +122,22 @@ export class QueryExecutor {
             finalQuery += ` LIMIT ${maxRows}`;
         }
 
-        // Use centralized retry logic from ConnectionManager
+        // Use centralized retry logic from ConnectionManager. executeWithRetry
+        // acquires this connection's mutex (see runExclusive) before invoking
+        // this callback at all, and queryStartTime below is set only after
+        // getDriver() and the identity capture both finish — so executionTime
+        // reflects only the real statement's own round-trip, excluding both
+        // the identity-capture query and any time spent queued behind another
+        // in-flight operation on the same connection.
         return await this.connectionManager.executeWithRetry(async () => {
             const driver = await this.connectionManager.getDriver();
+            const shouldCapturePlanIdentity = isExecutionPlanEnabled()
+                && (this.connectionManager.isExecutionPlanAvailable?.(activeConnection.id) ?? true);
+
+            const identity = shouldCapturePlanIdentity
+                ? await captureBaselineStatementIdentity(driver)
+                : {};
+            const queryStartTime = Date.now();
 
             // Classify the query to determine which driver method to use
             const isResultSet = this.isResultSetQuery(finalQuery);
@@ -84,7 +150,7 @@ export class QueryExecutor {
                 // correctly and surface proper SQL error messages.
                 const result = await rawQuery(driver, finalQuery);
 
-                const executionTime = Date.now() - startTime;
+                const executionTime = Date.now() - queryStartTime;
                 const columnsMeta = getColumnsFromResult(result);
                 const rows = getRowsFromResult(result);
                 const columns = columnsMeta.map(extractColumnName);
@@ -95,13 +161,15 @@ export class QueryExecutor {
                     columnMetadata,
                     rows,
                     rowCount: rows.length,
-                    executionTime
+                    executionTime,
+                    connectionId: activeConnection.id,
+                    ...identity
                 };
             } else {
                 // Non-result-set commands (CREATE, ALTER, DROP, RENAME, INSERT, etc.) - use execute()
                 const rawExecuteResult = await rawExecute(driver, finalQuery);
 
-                const executionTime = Date.now() - startTime;
+                const executionTime = Date.now() - queryStartTime;
                 const columnsMeta = getColumnsFromResult(rawExecuteResult);
                 const rows = getRowsFromResult(rawExecuteResult);
                 const columns = columnsMeta.map(extractColumnName);
@@ -116,7 +184,9 @@ export class QueryExecutor {
                     columnMetadata,
                     rows,
                     rowCount: affectedRows,
-                    executionTime
+                    executionTime,
+                    connectionId: activeConnection.id,
+                    ...identity
                 };
             }
         }, undefined, cancellationToken ? { cancellationToken } : undefined);

@@ -16,6 +16,7 @@ import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helper
 };
 (vscodeMock as any).workspace = {
     openTextDocument: (_opts: any) => Promise.resolve({ languageId: 'exasol-sql' }),
+    getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback }),
 };
 
 registerVscodeMock();
@@ -24,6 +25,8 @@ registerExtensionMock();
 // Load ObjectActions after the vscode mock is configured.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { ObjectActions } = require('../../objectActions');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { ResultsPanel } = require('../../panels/resultsPanel');
 
 import { createRawResult, createEmptyRawResult, MockConnectionManager, TEST_CONNECTION } from '../helpers/mockConnectionManager';
 
@@ -88,6 +91,7 @@ suite('ObjectActions SQL injection escaping', () => {
         };
         (vscodeMock as any).workspace = {
             openTextDocument: (_opts: any) => Promise.resolve({ languageId: 'exasol-sql' }),
+            getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback }),
         };
     });
 
@@ -237,11 +241,95 @@ suite('ObjectActions SQL injection escaping', () => {
         await oa.previewTableData(TEST_CONNECTION, 'SCHEMA"WITH"QUOTES', 'MY_TABLE', 100, false);
 
         assert.ok(capturedSql.length > 0, 'Driver should have been called');
-        const sql = capturedSql[0];
+        // The baseline identity-capture query (CURRENT_SESSION/CURRENT_STATEMENT)
+        // now runs before the preview query itself, so the preview's own SQL is
+        // the last call rather than necessarily the first.
+        const sql = capturedSql[capturedSql.length - 1];
         assert.ok(
             sql.includes('"SCHEMA""WITH""QUOTES"'),
             `Double quotes in identifier must be doubled. Got: ${sql}`
         );
+    });
+});
+
+suite('ObjectActions.previewTableData: baseline statement identity capture', () => {
+
+    let savedWindow: any;
+    let savedWorkspace: any;
+
+    setup(() => {
+        savedWindow = (vscodeMock as any).window;
+        savedWorkspace = (vscodeMock as any).workspace;
+        (vscodeMock as any).window = {
+            showInformationMessage: () => Promise.resolve(undefined),
+            showErrorMessage: () => Promise.resolve(undefined),
+            withProgress: (_opts: any, task: () => Promise<any>) => task(),
+        };
+        (vscodeMock as any).workspace = {
+            getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback }),
+        };
+    });
+
+    teardown(() => {
+        (vscodeMock as any).window = savedWindow;
+        (vscodeMock as any).workspace = savedWorkspace;
+    });
+
+    /**
+     * Builds an ObjectActions instance whose fake driver returns `identityRows`
+     * (or throws, if 'throw') for the baseline SESSION_ID/STMT_ID capture query,
+     * and a plain one-row result for the preview query itself.
+     */
+    function makeObjectActionsForIdentity(identityRows: any[] | 'throw'): { oa: any } {
+        const mockDriver = {
+            query: async (sql: string) => {
+                if (sql.includes('CURRENT_SESSION')) {
+                    if (identityRows === 'throw') {
+                        throw new Error('simulated identity capture failure');
+                    }
+                    return createRawResult(['SID', 'STID'], identityRows);
+                }
+                return createRawResult(['COL'], [[1]]);
+            }
+        };
+        const mockCM = new MockConnectionManager(mockDriver);
+        return { oa: new ObjectActions(mockCM, {}, { fsPath: '/mock' } as any) };
+    }
+
+    /**
+     * Runs previewTableData with ResultsPanel.show stubbed to capture the
+     * QueryResult it was handed, since previewTableData does not return it directly.
+     */
+    async function previewAndCapture(oa: any): Promise<any> {
+        let captured: any;
+        const originalShow = ResultsPanel.show;
+        (ResultsPanel as any).show = (result: any) => { captured = result; };
+        try {
+            await oa.previewTableData(TEST_CONNECTION, 'MY_SCHEMA', 'MY_TABLE', 100, false);
+        } finally {
+            (ResultsPanel as any).show = originalShow;
+        }
+        return captured;
+    }
+
+    test('carries sessionId/baselineStmtId/connectionId when capture succeeds', async () => {
+        const { oa } = makeObjectActionsForIdentity([[42, 7]]);
+
+        const result = await previewAndCapture(oa);
+
+        assert.strictEqual(result.sessionId, '42');
+        assert.strictEqual(result.baselineStmtId, '7');
+        assert.strictEqual(result.connectionId, TEST_CONNECTION.id, 'must record which connection actually ran the preview query');
+    });
+
+    test('omits sessionId/baselineStmtId (without throwing) when identity capture fails', async () => {
+        const { oa } = makeObjectActionsForIdentity('throw');
+
+        const result = await previewAndCapture(oa);
+
+        assert.strictEqual(result.sessionId, undefined);
+        assert.strictEqual(result.baselineStmtId, undefined);
+        assert.strictEqual(result.rowCount, 1, 'the preview query itself must still succeed');
     });
 });
 

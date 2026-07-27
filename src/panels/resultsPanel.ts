@@ -1,13 +1,31 @@
 import * as vscode from 'vscode';
 import { QueryResult } from '../queryExecutor';
+import { ConnectionManager } from '../connectionManager';
+import { formatError } from '../connectionTypes';
 import { TabManager, TabResult } from './tabManager';
 import { buildTabBarHtml, buildTabBarCss } from './tabBarRenderer';
+import { buildResultPlanTabBarHtml, buildResultPlanTabBarCss, ResultView } from './planTabRenderer';
+import { PlanProvider } from '../plan/planProvider';
+import { Plan } from '../plan/planModel';
+import {
+    buildPlanContentHtml,
+    buildPlanContentCss,
+    buildPlanErrorHtml,
+    buildPlanLoadingHtml,
+    buildPlanStatusCss
+} from '../plan/planWebview';
 import { escapeHtml, createWebviewRenderContext } from '../utils';
 
 interface ResultViewOptions {
     title: string;
     showExport: boolean;
 }
+
+type PlanViewState =
+    | { status: 'idle' }
+    | { status: 'loading' }
+    | { status: 'ready'; plan: Plan }
+    | { status: 'error'; message: string };
 
 export class ResultsPanel implements vscode.WebviewViewProvider {
     private static instance: ResultsPanel | undefined;
@@ -16,11 +34,16 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
     private static currentError: string | undefined;
     private view: vscode.WebviewView | undefined;
     private tabManager: TabManager = new TabManager();
+    private activeSubTab: ResultView = 'results';
+    private planViewState: PlanViewState = { status: 'idle' };
+    private readonly planProvider: PlanProvider;
 
-    private constructor(private readonly extensionUri: vscode.Uri) {}
+    private constructor(private readonly extensionUri: vscode.Uri, private readonly connectionManager: ConnectionManager) {
+        this.planProvider = new PlanProvider(connectionManager);
+    }
 
-    public static register(context: vscode.ExtensionContext): ResultsPanel {
-        const provider = new ResultsPanel(context.extensionUri);
+    public static register(context: vscode.ExtensionContext, connectionManager: ConnectionManager): ResultsPanel {
+        const provider = new ResultsPanel(context.extensionUri, connectionManager);
         ResultsPanel.instance = provider;
 
         context.subscriptions.push(
@@ -46,6 +69,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         ResultsPanel.currentQuery = query;
         ResultsPanel.currentError = undefined;
         ResultsPanel.instance.tabManager.clearTabs();
+        ResultsPanel.instance.resetPlanView();
         ResultsPanel.instance.updateWebview();
         ResultsPanel.instance.revealWithoutFocus();
     }
@@ -58,6 +82,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         ResultsPanel.currentResult = undefined;
         ResultsPanel.currentQuery = undefined;
         ResultsPanel.instance.tabManager.clearTabs();
+        ResultsPanel.instance.resetPlanView();
         ResultsPanel.instance.updateWebview();
         ResultsPanel.instance.revealWithoutFocus();
     }
@@ -70,6 +95,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         ResultsPanel.currentQuery = undefined;
         ResultsPanel.currentError = undefined;
         ResultsPanel.instance.tabManager.setTabs(tabs);
+        ResultsPanel.instance.resetPlanView();
         ResultsPanel.instance.updateWebview();
         ResultsPanel.instance.revealWithoutFocus();
     }
@@ -105,10 +131,27 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
                     this.tabManager.clearTabs();
                 }
                 this.updateWebview();
+            } else if (message.command === 'switchResultView') {
+                this.activeSubTab = message.view === 'plan' ? 'plan' : 'results';
+                const currentResult = ResultsPanel.currentResult;
+                if (this.activeSubTab === 'plan' && currentResult && !this.isPlanAvailableForResult(currentResult)) {
+                    this.activeSubTab = 'results';
+                    this.updateWebview();
+                } else if (
+                    this.activeSubTab === 'plan'
+                    && (this.planViewState.status === 'idle' || this.planViewState.status === 'error')
+                ) {
+                    await this.requestPlan();
+                } else {
+                    this.updateWebview();
+                }
             } else if (message.command === 'copy') {
                 // Copy to clipboard
                 await vscode.env.clipboard.writeText(message.text);
                 vscode.window.showInformationMessage(`Copied ${message.text.split('\n').length} cell(s) to clipboard`);
+            } else if (message.command === 'copyPlanText') {
+                await vscode.env.clipboard.writeText(message.text);
+                vscode.window.showInformationMessage('Execution plan copied to clipboard.');
             } else if (message.command === 'openExternal') {
                 this.openExternalLink(message.url);
             }
@@ -153,10 +196,170 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
             return;
         }
 
-        this.view.webview.html = this.getResultHtml(ResultsPanel.currentResult, {
-            title: 'Query Results',
-            showExport: true
-        }, ResultsPanel.currentQuery);
+        this.view.webview.html = this.getSingleResultHtml(ResultsPanel.currentResult, ResultsPanel.currentQuery);
+    }
+
+    private resetPlanView(): void {
+        this.activeSubTab = 'results';
+        this.planViewState = { status: 'idle' };
+    }
+
+    private isPlanAvailableForResult(result: QueryResult): boolean {
+        // describeTable's result (objectActions.ts) never captures a
+        // session/statement id — it's a metadata lookup, not a profiled
+        // statement — so there's no profile to look up regardless of
+        // connection support.
+        const hasCapturedIdentity = !!result.sessionId && !!result.baselineStmtId;
+        return hasCapturedIdentity && (this.connectionManager.isExecutionPlanAvailable?.(result.connectionId) ?? true);
+    }
+
+    /**
+     * Fetches the execution plan for the currently displayed single-statement
+     * result. Only wired for that path (not the multi-statement Result-N tab
+     * bar) — see planTabRenderer.ts for why.
+     */
+    private async requestPlan(): Promise<void> {
+        this.planViewState = { status: 'loading' };
+        this.updateWebview();
+
+        const result = ResultsPanel.currentResult;
+        if (!result?.sessionId || !result?.baselineStmtId) {
+            this.planViewState = {
+                status: 'error',
+                message: 'No session/statement id was captured for this query, so its execution plan can\'t be looked up.'
+            };
+            if (this.activeSubTab === 'plan') {
+                this.updateWebview();
+            }
+            return;
+        }
+
+        // The plan must be fetched against the connection this query actually
+        // ran on — not whichever connection is active now. If the user switched
+        // the active connection between running the query and opening the Plan
+        // tab, getActiveConnection() would look the profile up in the wrong
+        // session (or a different server entirely), silently returning "no
+        // profiling data" or another session's plan.
+        const connection = result.connectionId
+            ? this.connectionManager.getConnection(result.connectionId)
+            : this.connectionManager.getActiveConnection();
+        if (!connection) {
+            this.planViewState = {
+                status: 'error',
+                message: result.connectionId
+                    ? 'The connection this query ran on is no longer available, so its execution plan can\'t be looked up.'
+                    : 'No active connection.'
+            };
+            if (this.activeSubTab === 'plan') {
+                this.updateWebview();
+            }
+            return;
+        }
+
+        try {
+            const plan = await this.planProvider.getPlan(connection, { sessionId: result.sessionId, afterStmtId: result.baselineStmtId });
+            // A newer query may have completed (and reset the plan view) while
+            // this fetch was in flight — discard the stale outcome rather than
+            // showing one query's plan under another's result tab.
+            if (ResultsPanel.currentResult !== result) {
+                return;
+            }
+            this.planViewState = { status: 'ready', plan };
+        } catch (error) {
+            if (ResultsPanel.currentResult !== result) {
+                return;
+            }
+            this.planViewState = { status: 'error', message: formatError(error) };
+        }
+        if (this.activeSubTab === 'plan') {
+            this.updateWebview();
+        }
+    }
+
+    private getPlanBodyHtml(nonce: string): string {
+        switch (this.planViewState.status) {
+            case 'loading':
+                return buildPlanLoadingHtml();
+            case 'error':
+                return buildPlanErrorHtml({ message: this.planViewState.message, canRetry: true });
+            case 'ready':
+                return buildPlanContentHtml(this.planViewState.plan, nonce);
+            case 'idle':
+            default:
+                return buildPlanLoadingHtml();
+        }
+    }
+
+    /**
+     * Renders the single-statement result view: a "Results | Plan" tab strip
+     * above either the results grid (or, for a statement with no result set —
+     * DDL/DML, IMPORT/EXPORT, etc. — the same success summary getSuccessHtml
+     * shows standalone) and the plan timeline. The tab strip shows for any
+     * result carrying a captured session/statement id: Exasol profiles any
+     * statement that runs through the SQL engine (every DML/DDL/IMPORT/EXPORT
+     * gets at least COMPILE/EXECUTE system steps, often a real operator too —
+     * see operatorTaxonomy.ts's DML rule), and queryExecutor.ts already
+     * captures that identity regardless of whether the statement returned any
+     * columns (see captureBaselineStatementIdentity; the local-CSV-import
+     * path captures the same identity too, for the same reason, and
+     * objectActions.ts's previewTableData reuses the same capture on its own
+     * driver) — there's no technical reason to hide the Plan tab just because
+     * there's no grid to show next to it. describeTable's result never
+     * captures that identity — it's a metadata lookup, not a profiled
+     * statement — so isPlanAvailableForResult hides the tab for it instead.
+     * requestPlan() remains a backstop for the rarer case where a result that
+     * should have captured an identity didn't.
+     */
+    private getSingleResultHtml(result: QueryResult, query: string | undefined): string {
+        const hasResultSet = !!result.columns && result.columns.length > 0;
+
+        const ctx = createWebviewRenderContext(this.view!.webview, this.extensionUri, vscode.Uri.joinPath);
+        const filterId = `filter-${Date.now()}`;
+        const showPlanTab = this.isPlanAvailableForResult(result);
+        if (!showPlanTab && this.activeSubTab === 'plan') {
+            this.activeSubTab = 'results';
+        }
+        const tabBarHtml = buildResultPlanTabBarHtml(this.activeSubTab, this.planViewState.status, ctx.nonce, showPlanTab);
+
+        const bodyHtml = this.activeSubTab === 'plan'
+            ? `<div class="plan-view">${this.getPlanBodyHtml(ctx.nonce)}</div>`
+            : hasResultSet
+                ? `<div class="result-content">${ResultsPanel.getGridHtmlStructure(result, filterId, '<button id="export">Export CSV</button>')}</div>`
+                : `<div class="result-content">${getSuccessBodyHtml(result)}</div>`;
+
+        const gridScripts = this.activeSubTab === 'results' && hasResultSet
+            ? `${ctx.dataIsland('result-data', { columns: result.columns, columnMetadata: result.columnMetadata || [], rows: result.rows })}
+               ${ctx.dataIsland('render-state', { filterId, initialSortColumn: null, initialSortDirection: 'asc' })}
+               ${ctx.dataIsland('query-stats', this.buildQueryStats(result, query))}
+               <script nonce="${ctx.nonce}" src="${ctx.mediaUri('results-grid-bundle.js')}"></script>`
+            : '';
+
+        return `<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta http-equiv="Content-Security-Policy" content="${ctx.csp}">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Query Results</title>
+        <link rel="stylesheet" href="${ctx.mediaUri('results-grid-glide.css')}">
+        <link rel="stylesheet" href="${ctx.mediaUri('results-grid.css')}">
+        <style nonce="${ctx.nonce}">
+            html, body { height: 100%; }
+            body { display: flex; flex-direction: column; padding: 0; }
+            .result-content { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 10px; }
+            .plan-view { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+            ${buildResultPlanTabBarCss()}
+            ${buildPlanContentCss()}
+            ${buildPlanStatusCss()}
+            ${getSuccessBodyCss()}
+        </style>
+    </head>
+    <body>
+        ${tabBarHtml}
+        ${bodyHtml}
+        ${gridScripts}
+    </body>
+    </html>`;
     }
 
     private buildQueryStats(result: QueryResult, query: string | undefined) {
@@ -494,71 +697,14 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
     }
 }
 
-function getSuccessHtml(result: QueryResult): string {
+/** Shared with getSingleResultHtml's "Results" tab body for a statement with
+ * no result set (DDL/DML, IMPORT/EXPORT, etc.) — same content, embedded
+ * inside that page's tab strip instead of standing alone. */
+function getSuccessBodyHtml(result: QueryResult): string {
     const executionTimeMs = result.executionTime;
     const executionTimeSec = (executionTimeMs / 1000).toFixed(2);
 
-    return `<!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Query Executed</title>
-        <style>
-            html, body {
-                margin: 0;
-                padding: 0;
-                height: 100%;
-                overflow: hidden;
-                font-family: var(--vscode-font-family);
-                color: var(--vscode-foreground);
-                background-color: var(--vscode-editor-background);
-            }
-            body {
-                padding: 16px;
-                box-sizing: border-box;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            .success-container {
-                background-color: var(--vscode-inputValidation-infoBackground);
-                border: 1px solid var(--vscode-inputValidation-infoBorder);
-                border-radius: 4px;
-                padding: 20px 24px;
-                max-width: 500px;
-            }
-            .success-title {
-                color: var(--vscode-charts-green);
-                font-weight: 600;
-                margin-bottom: 12px;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                font-size: 16px;
-            }
-            .success-icon {
-                font-size: 24px;
-            }
-            .success-details {
-                font-size: 13px;
-                line-height: 1.6;
-                color: var(--vscode-foreground);
-            }
-            .detail-row {
-                display: flex;
-                justify-content: space-between;
-                padding: 4px 0;
-            }
-            .detail-label {
-                color: var(--vscode-descriptionForeground);
-            }
-            .detail-value {
-                font-weight: 500;
-            }
-        </style>
-    </head>
-    <body>
+    return `<div class="success-container-outer">
         <div class="success-container">
             <div class="success-title">
                 <span class="success-icon">&#x2713;</span>
@@ -575,6 +721,84 @@ function getSuccessHtml(result: QueryResult): string {
                 </div>
             </div>
         </div>
+    </div>`;
+}
+
+function getSuccessBodyCss(): string {
+    return `
+        .success-container-outer {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            box-sizing: border-box;
+        }
+        .success-container {
+            background-color: var(--vscode-inputValidation-infoBackground);
+            border: 1px solid var(--vscode-inputValidation-infoBorder);
+            border-radius: 4px;
+            padding: 20px 24px;
+            max-width: 500px;
+        }
+        .success-title {
+            color: var(--vscode-charts-green);
+            font-weight: 600;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 16px;
+        }
+        .success-icon {
+            font-size: 24px;
+        }
+        .success-details {
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--vscode-foreground);
+        }
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+        }
+        .detail-label {
+            color: var(--vscode-descriptionForeground);
+        }
+        .detail-value {
+            font-weight: 500;
+        }
+    `;
+}
+
+/** Standalone success page for contexts that don't have a Plan tab to offer
+ * — the multi-statement Result-N tab bar (getResultHtml below), which
+ * doesn't support the Plan view at all yet (see planTabRenderer.ts). */
+function getSuccessHtml(result: QueryResult): string {
+    return `<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Query Executed</title>
+        <style>
+            html, body {
+                margin: 0;
+                padding: 0;
+                height: 100%;
+                overflow: hidden;
+                font-family: var(--vscode-font-family);
+                color: var(--vscode-foreground);
+                background-color: var(--vscode-editor-background);
+            }
+            body { display: flex; flex-direction: column; }
+            ${getSuccessBodyCss()}
+        </style>
+    </head>
+    <body>
+        ${getSuccessBodyHtml(result)}
     </body>
     </html>
     `;

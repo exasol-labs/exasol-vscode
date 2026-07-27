@@ -2,50 +2,33 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { JSDOM } from 'jsdom';
+import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helpers/vscodeMock';
 
-// Mock vscode module before any source imports that depend on it.
-const NodeModule = require('module');
-const originalResolveFilename = NodeModule._resolveFilename;
-NodeModule._resolveFilename = function (request: string, ...args: any[]) {
-    if (request === 'vscode') {
-        return 'vscode';
-    }
-    return originalResolveFilename.call(this, request, ...args);
+// resultsPanel.ts now transitively imports planProvider.ts -> connectionManager.ts
+// -> ./extension (for getOutputChannel), which in turn imports the full set of
+// tree/completion/notebook providers. registerExtensionMock() swaps out
+// ./extension with a lightweight fake before anything requires it, so that
+// whole chain never has to actually load under this test's minimal vscode mock.
+(vscodeMock as any).Uri = { ...(vscodeMock as any).Uri, joinPath: () => ({}) };
+(vscodeMock as any).window = {
+    registerWebviewViewProvider: () => ({ dispose: () => {} }),
+    showSaveDialog: async () => undefined,
+    showInformationMessage: () => {},
+    showWarningMessage: () => {},
 };
-
-const vscodeMock = {
-    Uri: { joinPath: () => ({}) },
-    window: {
-        registerWebviewViewProvider: () => ({ dispose: () => {} }),
-        showSaveDialog: async () => undefined,
-        showInformationMessage: () => {},
-        showWarningMessage: () => {},
-    },
-    commands: {
-        registerCommand: () => ({ dispose: () => {} }),
-        executeCommand: () => {},
-    },
-    workspace: {
-        getConfiguration: () => ({
-            get: () => undefined,
-        }),
-        fs: { writeFile: async () => {} },
-    },
-    env: { clipboard: { writeText: async () => {} } },
-    CancellationTokenSource: class {},
+(vscodeMock as any).commands = {
+    registerCommand: () => ({ dispose: () => {} }),
+    executeCommand: () => {},
 };
+(vscodeMock as any).workspace = {
+    getConfiguration: () => ({ get: () => undefined }),
+    fs: { writeFile: async () => {} },
+};
+(vscodeMock as any).env = { clipboard: { writeText: async () => {} } };
+(vscodeMock as any).CancellationTokenSource = class {};
 
-require.cache['vscode'] = {
-    id: 'vscode',
-    filename: 'vscode',
-    loaded: true,
-    exports: vscodeMock,
-    paths: [],
-    children: [],
-    path: '',
-    require: require,
-    isPreloading: false,
-} as any;
+registerVscodeMock();
+registerExtensionMock();
 
 // Now import source modules that transitively depend on vscode.
 const { ResultsPanel } = require('../../panels/resultsPanel');

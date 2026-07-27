@@ -1,9 +1,18 @@
 import * as assert from 'assert';
-import { registerVscodeMock, vscodeMock } from '../helpers/vscodeMock';
+import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helpers/vscodeMock';
 
 // QueryExecutor reads exasol config (maxResultRows, queryTimeout) at execute()
 // time; the per-test setup() below installs the config getter it needs.
+// registerExtensionMock() is also required here (not just registerVscodeMock):
+// queryExecutor.ts imports ./extension, which imports completionProvider.ts,
+// whose static initializer touches vscode fields the minimal vscodeMock alone
+// doesn't provide. Without this, the file crashes at load time when run on
+// its own — it was previously only passing because another test file loaded
+// earlier in the shared mocha process had already populated require.cache
+// for ./extension, which is not something this file's own setup should rely
+// on (confirmed by running `mocha ... queryExecutorRouting.test.ts` alone).
 registerVscodeMock();
+registerExtensionMock();
 
 // Load after the vscode mock is configured.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -62,7 +71,7 @@ suite('QueryExecutor.execute routing: local CSV import interception', () => {
         };
     });
 
-    test('a LOCAL CSV import calls importFromCsvFile and bypasses raw execute/query', async () => {
+    test('a LOCAL CSV import calls importFromCsvFile, bypasses raw execute(), but still captures plan identity', async () => {
         const { qe, calls } = makeExecutor();
 
         const result = await qe.execute("IMPORT INTO t FROM LOCAL CSV FILE '/abs/x.csv'");
@@ -73,7 +82,13 @@ suite('QueryExecutor.execute routing: local CSV import interception', () => {
         assert.strictEqual(absPath, '/abs/x.csv');
 
         assert.strictEqual(calls.execute.length, 0, 'must not hit raw execute()');
-        assert.strictEqual(calls.query.length, 0, 'must not hit raw query()');
+        // The one query() call is the baseline SESSION_ID/STMT_ID capture
+        // (captureBaselineStatementIdentity) — a local CSV import is still a
+        // real IMPORT statement from Exasol's own perspective and still gets
+        // profiled, so this path captures the same plan-lookup identity as
+        // every other statement type, not a second attempt at the import.
+        assert.strictEqual(calls.query.length, 1);
+        assert.ok(calls.query[0][0].includes('CURRENT_SESSION'));
 
         assert.strictEqual(result.rowCount, 42);
     });
@@ -86,6 +101,9 @@ suite('QueryExecutor.execute routing: local CSV import interception', () => {
         assert.strictEqual(calls.importFromCsvFile.length, 0, 'must not intercept a cloud import');
         // IMPORT is classified as a non-result-set command, so it routes to execute().
         assert.strictEqual(calls.execute.length, 1, 'cloud import should go through raw execute()');
-        assert.strictEqual(calls.query.length, 0);
+        // The one query() call is the pre-execution SESSION_ID/STMT_ID capture
+        // (captureBaselineStatementIdentity), not a second attempt at the import itself.
+        assert.strictEqual(calls.query.length, 1);
+        assert.ok(calls.query[0][0].includes('CURRENT_SESSION'));
     });
 });
