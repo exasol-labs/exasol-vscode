@@ -41,9 +41,9 @@ registerVscodeMock();
 registerExtensionMock();
 
 // Now import source modules that transitively depend on vscode.
-const { ResultsPanel } = require('../../panels/resultsPanel');
-const { buildTabBarHtml, buildTabBarCss } = require('../../panels/tabBarRenderer');
-const { TabManager } = require('../../panels/tabManager');
+const { ResultsPanel } = require('../../panels/resultsPanel') as typeof import('../../panels/resultsPanel');
+const { buildTabBarHtml, buildTabBarCss } = require('../../panels/tabBarRenderer') as typeof import('../../panels/tabBarRenderer');
+const { TabManager } = require('../../panels/tabManager') as typeof import('../../panels/tabManager');
 
 type QueryResult = Pick<FullQueryResult, 'columns' | 'columnMetadata' | 'rows' | 'rowCount' | 'executionTime'>;
 

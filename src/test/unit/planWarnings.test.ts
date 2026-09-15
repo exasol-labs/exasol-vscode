@@ -59,7 +59,7 @@ suite('computeWarnings', () => {
 
         test('the message shows one decimal place, so a cost share just over the threshold reads as distinct from it', () => {
             // Regression test: with toFixed(0), costPercent=20.4 against the
-            // default 20% threshold rendered as "20% ... threshold 20%" —
+            // default 20% threshold rendered as "20% ... threshold 20%",
             // identical numbers, reading as if the warning fired for no
             // reason. One decimal place makes the real margin visible.
             const warnings = computeWarnings({ traits: JOIN_TRAITS, hddWrite: undefined, net: 12.34, perNodeStats: undefined, perNodeDurationStats: undefined, costPercent: 20.4 });
@@ -129,7 +129,7 @@ suite('computeWarnings', () => {
         });
 
         suite('skewMinRows noise floor (finding 1)', () => {
-            // Live data: median part outputs 1 row, 38.6% under 10 — a
+            // Live data: median part outputs 1 row, 38.6% under 10, a
             // skewed-but-tiny row count (e.g. "0-1 rows across 4 nodes") is
             // statistically meaningless, not a real signal, and used to fire
             // just as loudly as a genuine multi-million-row skew.
@@ -191,7 +191,7 @@ suite('computeWarnings', () => {
             assert.strictEqual(warnings.length, 0);
         });
 
-        test('does not fire on a SYNC-shaped operator (blocking, not a system step, but produces/consumes nothing) — its spread just mirrors upstream skew already warned on elsewhere', () => {
+        test('does not fire on a SYNC-shaped operator (blocking, not a system step, but produces/consumes nothing); its spread just mirrors upstream skew already warned on elsewhere', () => {
             const warnings = computeWarnings({
                 traits: SYNC_TRAITS, hddWrite: undefined, net: undefined, costPercent: undefined, perNodeStats: undefined,
                 perNodeDurationStats: { metric: 'duration', min: 0.05, max: 2, avg: 0.5, nodeCount: 4 }
@@ -260,7 +260,7 @@ suite('computeWarnings', () => {
     });
 
     suite('ROW_ESTIMATE_MISMATCH', () => {
-        test('never fires in v1 — no estimated-rows input exists to compare against', () => {
+        test('never fires in v1, no estimated-rows input exists to compare against', () => {
             const warnings = computeWarnings({
                 traits: JOIN_TRAITS, hddWrite: 100, net: 500, costPercent: 50,
                 perNodeStats: { metric: 'rows', min: 1, max: 5000, avg: 1000, nodeCount: 4 },

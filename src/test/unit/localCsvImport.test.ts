@@ -5,8 +5,7 @@ import { RowSeparator, TrimMode } from '@exasol/exasol-driver-ts';
 registerVscodeMock();
 
 // Load after the vscode mock is configured, since localCsvImport imports 'vscode'.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { parseLocalCsvImport } = require('../../localCsvImport');
+const { parseLocalCsvImport } = require('../../localCsvImport') as typeof import('../../localCsvImport');
 
 suite('parseLocalCsvImport: detection and extraction', () => {
     test('detects a basic local CSV import and extracts table and path', () => {
@@ -96,10 +95,13 @@ suite('parseLocalCsvImport: option parsing', () => {
 
     test('parses TRIM, LTRIM, RTRIM into TrimMode', () => {
         const trim = parseLocalCsvImport("IMPORT INTO t FROM LOCAL CSV FILE '/data/in.csv' TRIM");
+        assert.ok(trim);
         assert.strictEqual(trim.options.trim, TrimMode.BOTH);
         const ltrim = parseLocalCsvImport("IMPORT INTO t FROM LOCAL CSV FILE '/data/in.csv' LTRIM");
+        assert.ok(ltrim);
         assert.strictEqual(ltrim.options.trim, TrimMode.LEADING);
         const rtrim = parseLocalCsvImport("IMPORT INTO t FROM LOCAL CSV FILE '/data/in.csv' RTRIM");
+        assert.ok(rtrim);
         assert.strictEqual(rtrim.options.trim, TrimMode.TRAILING);
     });
 

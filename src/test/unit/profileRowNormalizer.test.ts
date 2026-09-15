@@ -85,7 +85,7 @@ suite('normalizeProfileRows', () => {
             assert.strictEqual(plan.source, 'DBA_SUMMARY');
         });
 
-        test('edges is always empty in v1 — no parent/child column exists in these views', () => {
+        test('edges is always empty in v1, no parent/child column exists in these views', () => {
             const plan = normalizeProfileRows([row({ PART_ID: 1 })], { sessionId: '1', stmtId: '5', source: 'USER_SUMMARY' });
             assert.deepStrictEqual(plan.edges, []);
             assert.deepStrictEqual(plan.nodes[0].children, []);
@@ -148,7 +148,7 @@ suite('normalizeProfileRows', () => {
             // Regression test: nodeCount used to be rows.length (every IPROC
             // row, including ones with an undefined OUT_ROWS), while
             // min/max/avg were computed only from the rows that actually had
-            // a defined OUT_ROWS — an internally-inconsistent stat (e.g. an
+            // a defined OUT_ROWS, an internally-inconsistent stat (e.g. an
             // avg over 2 real values mislabeled as spanning 3 nodes), which
             // also understates the true skew ratio if the missing node was
             // actually the outlier.
@@ -184,7 +184,7 @@ suite('normalizeProfileRows', () => {
             assert.strictEqual(plan.nodes[0].perNodeDurationStats, undefined);
         });
 
-        test('is computed independently of perNodeStats — present even when OUT_ROWS is missing entirely', () => {
+        test('is computed independently of perNodeStats, present even when OUT_ROWS is missing entirely', () => {
             const rows = [
                 row({ PART_ID: 1, PART_NAME: 'PIPE JOIN', IPROC: 0, DURATION: 0.1, OUT_ROWS: undefined }),
                 row({ PART_ID: 1, PART_NAME: 'PIPE JOIN', IPROC: 1, DURATION: 0.3, OUT_ROWS: undefined })
@@ -215,7 +215,7 @@ suite('normalizeProfileRows', () => {
             assert.strictEqual(plan.nodes[0].rowsOut, 250);
         });
 
-        test('collapses OBJECT_ROWS as a SUM across per-node rows, same as OUT_ROWS — not a max', () => {
+        test('collapses OBJECT_ROWS as a SUM across per-node rows, same as OUT_ROWS, not a max', () => {
             // In the per-IPROC details tier, OBJECT_ROWS is the node-local
             // shard row count (verified live: a 176,792-row temp table
             // reported OBJECT_ROWS 44,632 per node across 4 nodes), the same
@@ -255,7 +255,7 @@ suite('normalizeProfileRows', () => {
             assert.strictEqual(plan.nodes[0].hddRead, 3.2);
         });
 
-        test('collapses HDD_READ as a max across per-node rows — it is a rate (MiB/s), not a volume, so summing would not mean anything', () => {
+        test('collapses HDD_READ as a max across per-node rows; it is a rate (MiB/s), not a volume, so summing would not mean anything', () => {
             const rows = [
                 row({ PART_ID: 1, PART_NAME: 'PIPE SCAN', IPROC: 0, HDD_READ: 1.5 }),
                 row({ PART_ID: 1, PART_NAME: 'PIPE SCAN', IPROC: 1, HDD_READ: 4.2 })

@@ -84,7 +84,7 @@ require.cache['vscode'] = {
     isPreloading: false,
 };
 
-// Now import the real FormattingProvider -- it will get our vscode mock.
+// Now import the real FormattingProvider; it will get our vscode mock.
 const { FormattingProvider } = require('../../providers/formattingProvider') as typeof import('../../providers/formattingProvider');
 
 function makeMockDocument(text: string, lineCount?: number): vscode.TextDocument {

@@ -1,47 +1,106 @@
 import * as assert from 'assert';
+import type * as vscode from 'vscode';
 import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helpers/vscodeMock';
+import type { QueryExecutor, QueryResult } from '../../queryExecutor';
 
-// Set up all vscode mock properties needed by ObjectActions at module load time,
-// BEFORE requiring objectActions. This ensures the properties exist on vscodeMock
-// when __importStar is called inside objectActions, creating live getters that
-// reflect subsequent changes made in setup/teardown.
-(vscodeMock as any).ProgressLocation = { Notification: 15 };
-(vscodeMock as any).window = {
-    showInformationMessage: () => Promise.resolve(undefined),
-    showErrorMessage: () => Promise.resolve(undefined),
-    showWarningMessage: () => Promise.resolve(undefined),
-    showTextDocument: () => Promise.resolve(undefined),
-    withProgress: (_opts: any, task: () => Promise<any>) => task(),
-    activeTextEditor: null,
-};
-(vscodeMock as any).workspace = {
-    openTextDocument: (_opts: any) => Promise.resolve({ languageId: 'exasol-sql' }),
-    getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback }),
-};
+/**
+ * The slice of the vscode API ObjectActions actually calls: `window` (progress
+ * reporting, message boxes, opening the active editor), `workspace` (opening
+ * an untitled document, reading configuration), and the one ProgressLocation
+ * value previewTableData references. vscodeMock only declares the members
+ * objectTreeProvider.ts/etc need, so this test grows it with these members at
+ * module top-level, the same pattern queryExecutorStatementIdentity.test.ts
+ * and objectSearch.test.ts use.
+ */
+interface ObjectActionsVscodeMock {
+    ProgressLocation: { Notification: number };
+    window: {
+        showInformationMessage: (msg: string) => Promise<undefined>;
+        showErrorMessage: (msg: string) => Promise<undefined>;
+        showWarningMessage: (msg: string) => Promise<undefined>;
+        showTextDocument: (doc: unknown) => Promise<undefined>;
+        withProgress: <T>(options: unknown, task: () => Promise<T>) => Promise<T>;
+        activeTextEditor: { document: { languageId: string } } | undefined;
+    };
+    workspace: {
+        openTextDocument: (opts: unknown) => Promise<{ languageId: string }>;
+        getConfiguration: () => { get: (key: string, fallback?: unknown) => unknown };
+    };
+}
+
+const extendedVscodeMock = vscodeMock as unknown as ObjectActionsVscodeMock;
+
+/** Builds the `window` shape ObjectActions needs; shared by the module-load-time
+ * guard below and by every suite's setup() so there is one place to keep them in sync. */
+function buildWindowMock(): ObjectActionsVscodeMock['window'] {
+    return {
+        showInformationMessage: () => Promise.resolve(undefined),
+        showErrorMessage: () => Promise.resolve(undefined),
+        showWarningMessage: () => Promise.resolve(undefined),
+        showTextDocument: () => Promise.resolve(undefined),
+        withProgress: (_opts, task) => task(),
+        activeTextEditor: undefined,
+    };
+}
+
+/** Builds the `workspace` shape ObjectActions needs; same sharing rationale as buildWindowMock. */
+function buildWorkspaceMock(): ObjectActionsVscodeMock['workspace'] {
+    return {
+        openTextDocument: () => Promise.resolve({ languageId: 'exasol-sql' }),
+        getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback }),
+    };
+}
+
+// vscodeMock is a process-wide singleton shared by every test file in the same
+// mocha run. __importStar only wires a *live* getter for a key that already
+// exists on vscodeMock at the moment require('../../objectActions') below
+// runs; a key added later (e.g. by setup()) would never be seen by
+// objectActions's already-captured `vscode` binding. `window` and
+// `ProgressLocation` are not part of vscodeMock's own base shape (unlike
+// `workspace`, which the shared helper always declares), so this file must
+// guarantee they exist before requiring objectActions. Unlike the old
+// unconditional assignment here, this only installs a placeholder when the
+// key is missing: if another suite (e.g. objectSearch.test.ts, which also
+// installs `window` at its own module load time) already claimed `window`
+// first, depending on file load order, this leaves that shape alone rather
+// than clobbering it for the whole collection phase; every test in this
+// file still gets the real, correct shape from setup() below regardless.
+if (!('window' in vscodeMock)) {
+    extendedVscodeMock.window = buildWindowMock();
+}
+if (!('ProgressLocation' in vscodeMock)) {
+    extendedVscodeMock.ProgressLocation = { Notification: 15 };
+}
 
 registerVscodeMock();
 registerExtensionMock();
 
-// Load ObjectActions after the vscode mock is configured.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { ObjectActions } = require('../../objectActions');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { ResultsPanel } = require('../../panels/resultsPanel');
+// Load ObjectActions/ResultsPanel after the vscode mock is configured: a deferred
+// require() is necessary here since import statements resolve 'vscode' at their
+// original textual position, and the module under test must see the mock above
+// rather than the real 'vscode' module (which does not exist outside the
+// extension host).
+const { ObjectActions } = require('../../objectActions') as typeof import('../../objectActions');
+const { ResultsPanel } = require('../../panels/resultsPanel') as typeof import('../../panels/resultsPanel');
 
-import { createRawResult, createEmptyRawResult, MockConnectionManager, TEST_CONNECTION } from '../helpers/mockConnectionManager';
+import { createRawResult, createEmptyRawResult, MockConnectionManager, TEST_CONNECTION, asConnectionManager, type MockDriver } from '../helpers/mockConnectionManager';
+
+/** The rows shape createRawResult accepts, derived rather than re-declared
+ * since mockConnectionManager.ts keeps its RawCell type private. */
+type RawRows = Parameters<typeof createRawResult>[1];
 
 /**
  * Build an ObjectActions instance whose driver records each SQL string passed to
  * driver.query() and returns a valid empty result.
  */
 function makeObjectActionsCapturingSql(): {
-    oa: any;
+    oa: InstanceType<typeof ObjectActions>;
     capturedSql: string[];
 } {
     const capturedSql: string[] = [];
 
-    const mockDriver = {
-        query: async (sql: string, ..._rest: any[]) => {
+    const mockDriver: MockDriver = {
+        query: async (sql: string) => {
             capturedSql.push(sql);
             // A structurally valid empty result so rawQuery/getRowsFromResult work.
             return createEmptyRawResult([]);
@@ -49,42 +108,35 @@ function makeObjectActionsCapturingSql(): {
     };
 
     const mockCM = new MockConnectionManager(mockDriver);
-    const mockQE = {};
-    const mockUri = { fsPath: '/mock' };
+    // ObjectActions never reads queryExecutor or extensionUri (see src/objectActions.ts);
+    // these tests only exercise SQL-building and driver interaction, so both are
+    // deliberate empty partial doubles.
+    const mockQE = {} as unknown as QueryExecutor;
+    const mockUri = { fsPath: '/mock' } as unknown as vscode.Uri;
 
-    return { oa: new ObjectActions(mockCM, mockQE, mockUri), capturedSql };
+    return { oa: new ObjectActions(asConnectionManager(mockCM), mockQE, mockUri), capturedSql };
 }
 
 suite('ObjectActions SQL injection escaping', () => {
 
-    let savedWindow: any;
-    let savedWorkspace: any;
+    let savedWindow: ObjectActionsVscodeMock['window'];
+    let savedWorkspace: ObjectActionsVscodeMock['workspace'];
 
     setup(() => {
         // Save the mock state in case another suite has overwritten vscodeMock.window
-        // (e.g. objectSearch.test.ts sets its own version at module-top-level).
-        savedWindow = (vscodeMock as any).window;
-        savedWorkspace = (vscodeMock as any).workspace;
-
-        // Install the full window/workspace mock required by ObjectActions.
-        (vscodeMock as any).window = {
-            showInformationMessage: () => Promise.resolve(undefined),
-            showErrorMessage: () => Promise.resolve(undefined),
-            showWarningMessage: () => Promise.resolve(undefined),
-            showTextDocument: () => Promise.resolve(undefined),
-            withProgress: (_opts: any, task: () => Promise<any>) => task(),
-            activeTextEditor: null,
-        };
-        (vscodeMock as any).workspace = {
-            openTextDocument: (_opts: any) => Promise.resolve({ languageId: 'exasol-sql' }),
-            getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback }),
-        };
+        // (e.g. objectSearch.test.ts sets its own version at module-top-level), and
+        // install the full window/workspace mock required by ObjectActions before
+        // every test, so this suite's tests never depend on file load order.
+        savedWindow = extendedVscodeMock.window;
+        savedWorkspace = extendedVscodeMock.workspace;
+        extendedVscodeMock.window = buildWindowMock();
+        extendedVscodeMock.workspace = buildWorkspaceMock();
     });
 
     teardown(() => {
         // Restore the previous mock state so we don't interfere with other suites.
-        (vscodeMock as any).window = savedWindow;
-        (vscodeMock as any).workspace = savedWorkspace;
+        extendedVscodeMock.window = savedWindow;
+        extendedVscodeMock.workspace = savedWorkspace;
     });
 
     // ---- showTableDDL: single-quoted WHERE clauses ----
@@ -240,25 +292,19 @@ suite('ObjectActions SQL injection escaping', () => {
 
 suite('ObjectActions.previewTableData: baseline statement identity capture', () => {
 
-    let savedWindow: any;
-    let savedWorkspace: any;
+    let savedWindow: ObjectActionsVscodeMock['window'];
+    let savedWorkspace: ObjectActionsVscodeMock['workspace'];
 
     setup(() => {
-        savedWindow = (vscodeMock as any).window;
-        savedWorkspace = (vscodeMock as any).workspace;
-        (vscodeMock as any).window = {
-            showInformationMessage: () => Promise.resolve(undefined),
-            showErrorMessage: () => Promise.resolve(undefined),
-            withProgress: (_opts: any, task: () => Promise<any>) => task(),
-        };
-        (vscodeMock as any).workspace = {
-            getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback }),
-        };
+        savedWindow = extendedVscodeMock.window;
+        savedWorkspace = extendedVscodeMock.workspace;
+        extendedVscodeMock.window = buildWindowMock();
+        extendedVscodeMock.workspace = buildWorkspaceMock();
     });
 
     teardown(() => {
-        (vscodeMock as any).window = savedWindow;
-        (vscodeMock as any).workspace = savedWorkspace;
+        extendedVscodeMock.window = savedWindow;
+        extendedVscodeMock.workspace = savedWorkspace;
     });
 
     /**
@@ -266,8 +312,8 @@ suite('ObjectActions.previewTableData: baseline statement identity capture', () 
      * (or throws, if 'throw') for the baseline SESSION_ID/STMT_ID capture query,
      * and a plain one-row result for the preview query itself.
      */
-    function makeObjectActionsForIdentity(identityRows: any[] | 'throw'): { oa: any } {
-        const mockDriver = {
+    function makeObjectActionsForIdentity(identityRows: RawRows | 'throw'): { oa: InstanceType<typeof ObjectActions> } {
+        const mockDriver: MockDriver = {
             query: async (sql: string) => {
                 if (sql.includes('CURRENT_SESSION')) {
                     if (identityRows === 'throw') {
@@ -279,22 +325,27 @@ suite('ObjectActions.previewTableData: baseline statement identity capture', () 
             }
         };
         const mockCM = new MockConnectionManager(mockDriver);
-        return { oa: new ObjectActions(mockCM, {}, { fsPath: '/mock' } as any) };
+        // ObjectActions never reads queryExecutor or extensionUri; deliberate
+        // empty/partial doubles, same rationale as makeObjectActionsCapturingSql above.
+        const mockQE = {} as unknown as QueryExecutor;
+        const mockUri = { fsPath: '/mock' } as unknown as vscode.Uri;
+        return { oa: new ObjectActions(asConnectionManager(mockCM), mockQE, mockUri) };
     }
 
     /**
      * Runs previewTableData with ResultsPanel.show stubbed to capture the
      * QueryResult it was handed, since previewTableData does not return it directly.
      */
-    async function previewAndCapture(oa: any): Promise<any> {
-        let captured: any;
+    async function previewAndCapture(oa: InstanceType<typeof ObjectActions>): Promise<QueryResult> {
+        let captured: QueryResult | undefined;
         const originalShow = ResultsPanel.show;
-        (ResultsPanel as any).show = (result: any) => { captured = result; };
+        ResultsPanel.show = (result: QueryResult) => { captured = result; };
         try {
             await oa.previewTableData(TEST_CONNECTION, 'MY_SCHEMA', 'MY_TABLE', 100, false);
         } finally {
-            (ResultsPanel as any).show = originalShow;
+            ResultsPanel.show = originalShow;
         }
+        assert.ok(captured, 'ResultsPanel.show must have been called');
         return captured;
     }
 
@@ -320,8 +371,7 @@ suite('ObjectActions.previewTableData: baseline statement identity capture', () 
 });
 
 suite('escapeSqlIdentifier', () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { escapeSqlIdentifier } = require('../../utils');
+    const { escapeSqlIdentifier } = require('../../utils') as typeof import('../../utils');
 
     test('returns same string when no double quotes present', () => {
         assert.strictEqual(escapeSqlIdentifier('SCHEMA_NAME'), 'SCHEMA_NAME');

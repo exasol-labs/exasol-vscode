@@ -80,7 +80,7 @@ suite('classifyOperator', () => {
             // Live census: 11.7% of profile rows were SYSTEM TABLE parts,
             // all landing in OTHER before this rule existed. It reads a
             // system catalog object and produces rows exactly like any
-            // other scan — the word SYSTEM in its name is not bookkeeping.
+            // other scan, the word SYSTEM in its name is not bookkeeping.
             const { operatorType, traits } = classifyOperator('SYSTEM TABLE');
             assert.strictEqual(operatorType, 'SCAN');
             assert.strictEqual(traits.producesRows, true);
@@ -91,9 +91,9 @@ suite('classifyOperator', () => {
             assert.strictEqual(classifyOperator('REPLICATE').operatorType, 'NETWORK');
         });
 
-        test('NODE SYNC classifies as SYNC — blocking, but deliberately not a system step (finding 14)', () => {
+        test('NODE SYNC classifies as SYNC, blocking, but deliberately not a system step (finding 14)', () => {
             // Real query time (frequently the single hottest node on a real
-            // plan), not execution-engine bookkeeping — it must stay inside
+            // plan), not execution-engine bookkeeping, it must stay inside
             // the F2 user/data-flow cost-share denominator rather than
             // vanishing into the system-step total the way COMPILE/EXECUTE do.
             const { operatorType, traits } = classifyOperator('NODE SYNC');

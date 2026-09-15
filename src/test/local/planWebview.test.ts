@@ -14,7 +14,7 @@ function parseDom(html: string): Document {
 }
 
 /** Actually executes the inline click-handling script, unlike parseDom()
- * above — needed to prove the popover's open/close/keyboard behavior at
+ * above, needed to prove the popover's open/close/keyboard behavior at
  * runtime, not just that the right-looking script text is present. */
 function buildInteractiveDom(plan: Plan): JSDOM {
     const html = buildPlanContentHtml(plan, 'n0nce');
@@ -35,7 +35,7 @@ function popoverFor(dom: JSDOM, node: Element): HTMLElement {
 
 /** JSDOM's real getBoundingClientRect() is always an all-zero rect (no
  * layout engine), which can't exercise "is there more room above or
- * below" branches at all — this stubs a concrete rect on one element so a
+ * below" branches at all, this stubs a concrete rect on one element so a
  * test can control exactly what positionPopover() sees. */
 function stubRect(el: Element, rect: { top: number; bottom: number; left?: number; right?: number }): void {
     const left = rect.left ?? 0;
@@ -52,7 +52,7 @@ function stubOffsetHeight(el: Element, height: number): void {
 }
 
 /** Stubs the rect of a flow item's ring specifically (its actual visual
- * anchor), given the item is a .hstep or bare .hnode-wrap — matching what
+ * anchor), given the item is a .hstep or bare .hnode-wrap, matching what
  * layoutFlowRows()'s own ringCenterX() looks up. */
 function stubRingCenter(item: Element, centerX: number): void {
     const ring = item.querySelector('.hnode-ring') ?? item;
@@ -126,7 +126,7 @@ suite('buildPlanContentHtml', () => {
 
     test('the statement/total-time/operator-count summary lives only in the rail now, not the caption strip (finding 22, rail consolidation)', () => {
         // The caption strip used to repeat "Statement N · X ms total · N
-        // operators" — the exact same numbers the Profile overview rail
+        // operators", the exact same numbers the Profile overview rail
         // already showed for Total time (and, after this change, Statement
         // and Operators too). The caption is now just the toolbar row: the
         // copy button, nothing else.
@@ -245,7 +245,7 @@ suite('buildPlanContentHtml', () => {
             assert.ok(html.includes('data-sql-toggle'));
             // The toggle now shares .plan-flow-caption with the Copy button
             // (the merged toolbar row, finding 1) so .plan-sql is no longer
-            // its own nextElementSibling — it's the next sibling of the
+            // its own nextElementSibling, it's the next sibling of the
             // whole caption row instead, reached via closest().
             assert.ok(html.includes('closest') && html.includes('nextElementSibling'), 'expected the toggle to reference the caption row\'s sibling, not query the whole document');
         });
@@ -271,7 +271,7 @@ suite('buildPlanContentHtml', () => {
 
     suite('cost ring', () => {
         // The ring's fill is carried as data-ring-pct/data-ring-color, NOT an
-        // inline style="" attribute — the webview's CSP has no
+        // inline style="" attribute, the webview's CSP has no
         // 'unsafe-hashes'/'unsafe-inline' on style-src, and a style-src nonce
         // only covers nonce'd <style> elements, never inline style attributes,
         // so the browser would silently drop a style="" here. The value is
@@ -363,7 +363,7 @@ suite('buildPlanContentHtml', () => {
         });
 
         test('pluralizes "row" correctly: singular for exactly 1, plural otherwise (finding 6)', () => {
-            // Prefixed with the default left-to-right arrow (finding 21) —
+            // Prefixed with the default left-to-right arrow (finding 21),
             // see the "direction arrows" suite below for the reversed-row case.
             const singular = parseDom(buildPlanContentHtml(
                 makePlan([makeNode({ id: '1', rowsOut: 1 }), makeNode({ id: '2' })]), 'n0nce'
@@ -396,7 +396,7 @@ suite('buildPlanContentHtml', () => {
         test('groups each connector with its destination node in one .hstep, so the pair wraps together', () => {
             // If the flow wraps onto a new row, a bare connector left as a
             // standalone flex item could stay on the end of one row while
-            // the node it points to wraps to the next — an arrow pointing at
+            // the node it points to wraps to the next, an arrow pointing at
             // nothing. Grouping them in one non-splitting flex item prevents
             // that.
             const plan = makePlan([makeNode({ id: '1' }), makeNode({ id: '2', operatorLabel: 'JOIN' })]);
@@ -408,7 +408,7 @@ suite('buildPlanContentHtml', () => {
             assert.strictEqual(step!.querySelector('.hnode-name')!.textContent, 'JOIN');
         });
 
-        test('the first node is never wrapped in .hstep — it has no incoming connector', () => {
+        test('the first node is never wrapped in .hstep, it has no incoming connector', () => {
             const plan = makePlan([makeNode({ id: '1' })]);
             const doc = parseDom(buildPlanContentHtml(plan, 'n0nce'));
             assert.strictEqual(doc.querySelector('.hstep'), null);
@@ -709,7 +709,7 @@ suite('buildPlanContentHtml', () => {
 
         test('is titled with the operator (and object, when present)', () => {
             // A zero-width space follows the '.' between schema and object
-            // (finding E, break opportunities) — invisible, but present in
+            // (finding E, break opportunities), invisible, but present in
             // textContent, so the exact string includes it.
             const withObject = parseDom(buildPlanContentHtml(
                 makePlan([makeNode({ operatorLabel: 'PIPE SCAN', objectSchema: 'S', objectName: 'T' })]), 'n0nce'
@@ -794,7 +794,7 @@ suite('buildPlanContentHtml', () => {
 
         test('orders metrics first, then Part info/Remarks, then the remaining identity fields last (finding 17, finding D)', () => {
             // D: Part info/Remarks moved up to directly after the metrics
-            // block (scan popovers carry filter columns in Remarks — worth
+            // block (scan popovers carry filter columns in Remarks, worth
             // a glance without scrolling past Part id/Operator/Object/Traits
             // first).
             const plan = makePlan([makeNode({
@@ -846,7 +846,7 @@ suite('buildPlanContentHtml', () => {
                 assert.strictEqual(row!.querySelector('.plan-detail-v')!.textContent, '—');
             });
 
-            test('identity/text fields (Object, Part info, Remarks) still omit entirely when absent — not numeric metrics', () => {
+            test('identity/text fields (Object, Part info, Remarks) still omit entirely when absent, not numeric metrics', () => {
                 const plan = makePlan([makeNode({ objectName: undefined, partInfo: undefined, remarks: undefined })]);
                 const doc = parseDom(buildPlanContentHtml(plan, 'n0nce'));
                 const labels = Array.from(doc.querySelectorAll('.plan-detail-k')).map(el => el.textContent);
@@ -984,7 +984,7 @@ suite('buildPlanContentHtml', () => {
             );
             assert.ok(
                 !/\.plan-detail-v\s*\{[^}]*word-break:\s*break-word/.test(css),
-                'word-break: break-word chops words mid-character to fit a narrow column — overflow-wrap: break-word (word-boundary-first) is the fix, not this'
+                'word-break: break-word chops words mid-character to fit a narrow column, overflow-wrap: break-word (word-boundary-first) is the fix, not this'
             );
         });
 
@@ -1163,7 +1163,7 @@ suite('buildPlanContentHtml', () => {
         test('opening a popover actually runs the positioning function and mutates its style, not just text-matches the script source', () => {
             // JSDOM's getBoundingClientRect() always returns an all-zero rect
             // (no real layout engine), which deterministically drives
-            // positionPopover() down its "too far left" horizontal branch —
+            // positionPopover() down its "too far left" horizontal branch,
             // so opening ANY popover here should reliably mutate
             // style.transform and set --arrow-shift, proving the function
             // actually runs.
@@ -1207,13 +1207,13 @@ suite('buildPlanContentHtml', () => {
         // Regression coverage for a real bug caught against a real
         // screenshot: scrollArea.getBoundingClientRect() is relative to the
         // currently visible, scrolled slice of the flow, not the whole
-        // thing — a node near the top of what's in view has just as little
+        // thing, a node near the top of what's in view has just as little
         // room above it as below, so blindly flipping whenever "below
         // didn't fit" (the original rule) could flip a popover straight off
         // the top of the scroll container, clipped to a barely-visible
         // sliver. The fix compares both sides and only flips when doing so
         // actually helps.
-        test('does not flip up merely because space below is tight — only when space above is actually greater', () => {
+        test('does not flip up merely because space below is tight, only when space above is actually greater', () => {
             const plan = makePlan([makeNode({ id: '1' })]);
             const dom = buildInteractiveDom(plan);
             const node = dom.window.document.querySelector('.hnode')!;
@@ -1222,7 +1222,7 @@ suite('buildPlanContentHtml', () => {
 
             stubOffsetHeight(pop, 100);
             // Node near the top of the visible slice: only 10px above it,
-            // but a healthy 570px below — below is clearly the better side,
+            // but a healthy 570px below, below is clearly the better side,
             // even though the popover (100 + 16 gap) doesn't fully fit there.
             stubRect(node, { top: 10, bottom: 30 });
             stubRect(scrollArea, { top: 0, bottom: 600 });
@@ -1240,7 +1240,7 @@ suite('buildPlanContentHtml', () => {
 
             stubOffsetHeight(pop, 100);
             // Node near the bottom of the visible slice: plenty of room
-            // above (90px), almost none below (5px) — flipping now helps.
+            // above (90px), almost none below (5px), flipping now helps.
             stubRect(node, { top: 90, bottom: 110 });
             stubRect(scrollArea, { top: 0, bottom: 115 });
 
@@ -1255,7 +1255,7 @@ suite('buildPlanContentHtml', () => {
             // spaceAbove is necessarily also the numerically larger side
             // (see the comment above positionPopover for why those two legs
             // of the flip condition's disjunction can never actually
-            // diverge) — this pins the fitsAbove-driven flip and confirms
+            // diverge), this pins the fitsAbove-driven flip and confirms
             // it needs no height cap once it lands somewhere that fits.
             const plan = makePlan([makeNode({ id: '1' })]);
             const dom = buildInteractiveDom(plan);
@@ -1282,7 +1282,7 @@ suite('buildPlanContentHtml', () => {
             stubOffsetHeight(pop, 200);
             // Space above (90px) is greater than space below (-15px, i.e.
             // the node is already partly below the visible area), so it
-            // flips up — but 200px of popover still doesn't fit in 90px of
+            // flips up, but 200px of popover still doesn't fit in 90px of
             // available room above.
             stubRect(node, { top: 90, bottom: 110 });
             stubRect(scrollArea, { top: 0, bottom: 95 });
@@ -1290,7 +1290,7 @@ suite('buildPlanContentHtml', () => {
             click(dom, node);
             assert.strictEqual(pop.classList.contains('flip-up'), true, 'precondition: this scenario should flip (90px above beats -15px below)');
             // Room available above is 90 - 16px gap = 74, then floored down
-            // to a whole multiple of line-height (finding 15) — JSDOM has no
+            // to a whole multiple of line-height (finding 15), JSDOM has no
             // real stylesheet loaded, so getComputedStyle(pop).lineHeight
             // resolves to 'normal' here and the 16px fallback applies:
             // floor(74 / 16) * 16 = 64.
@@ -1304,7 +1304,7 @@ suite('buildPlanContentHtml', () => {
             // produced. Faking a real, non-'normal' computed line-height
             // isn't practical without loading the actual stylesheet into
             // JSDOM, so this exercises the documented 16px fallback path
-            // instead of a custom line-height value — still enough to prove
+            // instead of a custom line-height value, still enough to prove
             // the flooring itself actually runs, with numbers distinct from
             // the regression test above.
             const plan = makePlan([makeNode({ id: '1' })]);
@@ -1319,7 +1319,7 @@ suite('buildPlanContentHtml', () => {
 
             click(dom, node);
             assert.strictEqual(pop.classList.contains('flip-up'), true, 'precondition: 100px above must beat -10px below');
-            // Available = 100 - 16 = 84; floor(84 / 16) * 16 = 80 — not 84,
+            // Available = 100 - 16 = 84; floor(84 / 16) * 16 = 80, not 84,
             // proving the value was actually floored rather than passed
             // through.
             assert.strictEqual(pop.style.maxHeight, '80px');
@@ -1362,11 +1362,11 @@ suite('buildPlanContentHtml', () => {
 
     suite('snake/boustrophedon row wrap (real script execution)', () => {
         // JSDOM has no real layout engine, so offsetTop is always 0 for
-        // every element by default — the initial script run therefore
+        // every element by default, the initial script run therefore
         // always measures a single row (correctly: there's nothing to do
         // when nothing wrapped). To exercise the restructuring itself,
         // these tests stub offsetTop per item to simulate a real wrap, then
-        // dispatch a 'resize' event — the same relayout the real script
+        // dispatch a 'resize' event, the same relayout the real script
         // runs on load also runs on resize, so this is the one hook these
         // tests need to trigger it deterministically.
         function flowItemsOf(dom: JSDOM): Element[] {
@@ -1440,7 +1440,7 @@ suite('buildPlanContentHtml', () => {
             // screenshot): the drop arrow and the next row's node both
             // landed visibly off-center from the ring they were meant to
             // continue from. Packing against the track's full width only
-            // lines up by coincidence — a row's real content width is
+            // lines up by coincidence, a row's real content width is
             // whatever fit before it wrapped, essentially never exactly the
             // track's width. The fix measures the actual ring position and
             // aligns to that directly.
@@ -1472,7 +1472,7 @@ suite('buildPlanContentHtml', () => {
             // BELOW the content of later rows. `transform` creates a new
             // stacking context on the row it's applied to, so the
             // popover's z-index only ever won within that row's own
-            // context — later sibling rows (also stacking contexts,
+            // context, later sibling rows (also stacking contexts,
             // painted later in DOM order) drew over it regardless of
             // z-index. `position: relative` + `left` moves a row
             // identically without creating a stacking context, so a
@@ -1577,14 +1577,14 @@ suite('buildPlanContentHtml', () => {
             // Regression test for a real bug (caught via a real screenshot):
             // row-reverse swaps which physical edge "main-end" refers to, so
             // justify-content: flex-end under row-reverse packs content
-            // against the LEFT edge, not the right — sending the reversed
+            // against the LEFT edge, not the right, sending the reversed
             // row straight back to the far-left position this feature exists
             // to fix. The default (flex-start) is what actually packs a
             // row-reverse container's content flush right.
             const css = buildPlanContentCss();
             assert.ok(
                 !/\.hflow-row-reverse\s*\{[^}]*justify-content:\s*flex-end/.test(css),
-                'row-reverse already redefines "end" as the left edge — an explicit justify-content: flex-end here undoes the reversal'
+                'row-reverse already redefines "end" as the left edge, an explicit justify-content: flex-end here undoes the reversal'
             );
         });
 
@@ -1592,7 +1592,7 @@ suite('buildPlanContentHtml', () => {
             // Regression test for a real bug: a bare .hconn-hidden { display:
             // none } ties in specificity with .hconn { display: flex }
             // (both single-class selectors), so which one wins depends on
-            // source order rather than intent — and in the shipped
+            // source order rather than intent, and in the shipped
             // stylesheet .hconn's rule happened to come later, silently
             // defeating the hide and leaving a stale connector on screen
             // right next to the row it no longer connects to anything on.
@@ -1759,8 +1759,8 @@ suite('buildPlanContentHtml', () => {
             // erase the highlight the second jump had just (re-)applied. No
             // sinon/fake-timer setup exists anywhere in this codebase (no
             // "sinon" dependency, no other test fakes timers), so this
-            // asserts only the timing-free half of the bug — the class is
-            // still present immediately after the second jump — rather than
+            // asserts only the timing-free half of the bug, the class is
+            // still present immediately after the second jump, rather than
             // advancing a clock to prove the stale timer no longer fires.
             test('jumping to the same node twice leaves the class present immediately after the second jump', () => {
                 const plan = makePlan([
@@ -1779,7 +1779,7 @@ suite('buildPlanContentHtml', () => {
         });
 
         suite('severity sort (finding 16)', () => {
-            test('orders spill first, then redistribution, then duration skew, then row skew — noise-y skew ranked below a genuinely large one', () => {
+            test('orders spill first, then redistribution, then duration skew, then row skew, noise-y skew ranked below a genuinely large one', () => {
                 const plan = makePlan([
                     // Deliberately built out of the expected order, and with
                     // a "noisy" skew (huge ratio, trivial row count) ranked
@@ -1823,8 +1823,8 @@ suite('buildPlanContentHtml', () => {
         // Regression coverage for a real bug: the ring/bar/legend colors used
         // to be plain style="" attributes. The webview's CSP has no
         // 'unsafe-inline'/'unsafe-hashes' on style-src, and a style-src nonce
-        // only covers nonce'd <style> ELEMENTS — never inline style
-        // ATTRIBUTES — so the browser silently dropped them. Values now travel
+        // only covers nonce'd <style> ELEMENTS, never inline style
+        // ATTRIBUTES, so the browser silently dropped them. Values now travel
         // as data-* attributes and get painted by the nonce'd script via the
         // CSSOM, which these tests actually execute and observe.
         test('paints the ring background from data-ring-pct/data-ring-color', () => {
@@ -1965,7 +1965,7 @@ suite('buildPlanContentHtml', () => {
                 // A session id past Number.MAX_SAFE_INTEGER (2^53 - 1 =
                 // 9,007,199,254,740,991) pins the no-rounding guarantee
                 // end-to-end: Plan.sessionId/stmtId are kept as exact digit
-                // strings for exactly this reason (see planModel.ts) — a
+                // strings for exactly this reason (see planModel.ts), a
                 // real DECIMAL(20,0) SESSION_ID routinely exceeds it, and
                 // rendering `Number(sessionId)` anywhere in this path would
                 // silently corrupt the value a user needs to paste verbatim
@@ -2023,7 +2023,7 @@ suite('buildPlanContentHtml', () => {
         });
 
         test('renders the Profile overview rows in order: Session, Statement, Total time, Operators, Nodes observed, Source', () => {
-            // Session/Statement lead — together they're the composite key
+            // Session/Statement lead, together they're the composite key
             // copied into a EXA_*_PROFILE_LAST_DAY / EXA_SQL_LAST_DAY
             // cross-check, Session first as the wider key and matching those
             // views' own column order. Facts about the plan follow; Source
@@ -2050,7 +2050,7 @@ suite('buildPlanContentHtml', () => {
 
             test('renders all 9 operator types, in a fixed order, each with its correct glyph/label pair', () => {
                 // Same data every node already renders on its own ring (see
-                // OPERATOR_BADGE/OPERATOR_TYPE_LABEL in planFormat.ts) — no
+                // OPERATOR_BADGE/OPERATOR_TYPE_LABEL in planFormat.ts), no
                 // new data, just all nine listed in one place.
                 const doc = parseDom(buildPlanContentHtml(makePlan([makeNode()]), 'n0nce'));
                 const legendCard = Array.from(doc.querySelectorAll('.plan-side-card')).find(
@@ -2099,7 +2099,7 @@ suite('buildPlanContentHtml', () => {
             assert.ok(values.includes('4'));
         });
 
-        test('holds only plan-level summary cards — no per-node detail card duplicating the popover', () => {
+        test('holds only plan-level summary cards, no per-node detail card duplicating the popover', () => {
             const plan = makePlan([makeNode({ warnings: [{ type: 'SPILLED_TO_DISK', message: 'x', detail: {} }] })]);
             const doc = parseDom(buildPlanContentHtml(plan, 'n0nce'));
             assert.strictEqual(doc.querySelector('.plan-detail-block'), null);

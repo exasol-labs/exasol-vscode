@@ -9,7 +9,6 @@ export default tseslint.config(
             'dist/**',
             'node_modules/**',
             'media/**',
-            'src/test/**',
         ],
     },
     {
@@ -18,8 +17,9 @@ export default tseslint.config(
             ...tseslint.configs.recommended,
         ],
         rules: {
-            // `any` is fully eliminated from src/; keep it that way.
-            // Query results are typed via the SqlRow generic on getRowsFromResult().
+            // `any` is fully eliminated from both production code and tests; keep it
+            // that way. Query results are typed via the SqlRow generic on
+            // getRowsFromResult().
             '@typescript-eslint/no-explicit-any': 'error',
 
             // Error on unused vars; allow underscore-prefixed args
@@ -42,6 +42,17 @@ export default tseslint.config(
             // A no-restricted-syntax AST rule cannot reliably distinguish safe from
             // unsafe template literals in this context, so we document it here and
             // rely on the wrapper convention + code review instead.
+        },
+    },
+    {
+        // Test files register the vscode mock in require.cache before the module
+        // under test loads (see src/test/helpers/vscodeMock.ts and the deferred
+        // require() calls throughout src/test/**), so a deferred require() is
+        // load-bearing there rather than a lint smell. Everything else in this
+        // file stays at the main config's strictness, no-explicit-any included.
+        files: ['src/test/**/*.ts'],
+        rules: {
+            '@typescript-eslint/no-require-imports': 'off',
         },
     },
 );

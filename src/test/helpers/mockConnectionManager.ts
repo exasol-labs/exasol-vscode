@@ -100,7 +100,7 @@ export class MockConnectionManager {
     }
 
     getConnections(): StoredConnection[] { return [this.activeConn]; }
-    getActiveConnection(): StoredConnection { return this.activeConn; }
+    getActiveConnection(): StoredConnection | undefined { return this.activeConn; }
 
     async getDriver(): Promise<ExasolDriver> {
         // MockDriver only implements `query`; every test that reaches this point never

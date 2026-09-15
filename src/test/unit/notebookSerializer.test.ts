@@ -58,7 +58,7 @@ suite('parseExabookCells', () => {
             { kind: 2, language: 'sql' },
             { kind: 2, language: 'sql', value: 'SELECT 1' },
         ]);
-        const { cells, warnings } = parseExabookCells(input);
+        const { cells } = parseExabookCells(input);
         assert.strictEqual(cells.length, 1);
         assert.strictEqual(cells[0].value, 'SELECT 1');
     });
@@ -68,13 +68,13 @@ suite('parseExabookCells', () => {
             { kind: 2, language: 'sql', value: 42 },
             { kind: 2, language: 'sql', value: 'SELECT 1' },
         ]);
-        const { cells, warnings } = parseExabookCells(input);
+        const { cells } = parseExabookCells(input);
         assert.strictEqual(cells.length, 1);
     });
 
     test('primitive elements in array are filtered out', () => {
         const input = JSON.stringify([42, 'hello', true, { kind: 2, value: 'SELECT 1' }]);
-        const { cells, warnings } = parseExabookCells(input);
+        const { cells } = parseExabookCells(input);
         assert.strictEqual(cells.length, 1);
     });
 

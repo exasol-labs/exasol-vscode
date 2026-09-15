@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { TabManager, TabResult, TabState } from '../../panels/tabManager';
+import { TabManager, TabResult } from '../../panels/tabManager';
 import { QueryResult } from '../../queryExecutor';
 import { SqlRow } from '../../utils';
 

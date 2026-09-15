@@ -133,7 +133,7 @@ suite('buildPlanTextSummary', () => {
         // Temp DB RAM peak now goes through the same fmtMiB() formatter as
         // Net/HDD write for consistent precision (was a bare `${n} MiB`
         // template, which showed "12 MiB" here but "340.2 MiB" for HDD write
-        // a line above — inconsistent decimal precision for the same unit).
+        // a line above, inconsistent decimal precision for the same unit).
         assert.ok(text.includes('Temp DB RAM peak: 12.0 MiB'));
     });
 
@@ -161,7 +161,7 @@ suite('buildPlanTextSummary', () => {
             assert.ok(text.includes('HDD read: 3.2 MiB/s'));
         });
 
-        test('is omitted when zero — the overwhelming common case, not worth showing as noise', () => {
+        test('is omitted when zero, the overwhelming common case, not worth showing as noise', () => {
             const text = buildPlanTextSummary(makePlan({ nodes: [makeNode({ hddRead: 0 })] }));
             assert.ok(!text.includes('HDD read:'));
         });
@@ -237,7 +237,7 @@ suite('buildPlanTextSummary', () => {
                 assert.ok(text.includes('Per-node durations:'), 'a 1ms max meets the floor and must render');
             });
 
-            test('omits the line when the slowest node is just under the 1ms floor — measurement noise, not a real distribution', () => {
+            test('omits the line when the slowest node is just under the 1ms floor, measurement noise, not a real distribution', () => {
                 const text = buildPlanTextSummary(makePlan({
                     nodes: [makeNode({ perNodeDurationStats: { metric: 'duration', min: 0.0001, max: 0.0009, avg: 0.0005, nodeCount: 4 } })]
                 }));
@@ -293,7 +293,7 @@ suite('buildPlanTextSummary', () => {
     });
 });
 
-suite('operatorBlock (finding 11 — per-node copy)', () => {
+suite('operatorBlock (finding 11, per-node copy)', () => {
     test('is exported directly, with no separate wrapper function', () => {
         assert.strictEqual(typeof operatorBlock, 'function');
     });

@@ -66,27 +66,33 @@ interface ObjectSearchVscodeMock {
 
 const extendedMock = vscodeMock as unknown as ObjectSearchVscodeMock;
 
-// Enhance the vscode mock with window methods. The workspace config getter is
-// installed per-test in setup() below, not here at module load: vscodeMock is
-// a process-wide singleton shared by every test file in the same mocha run,
-// and installing it here would race with whichever file's own top-level
-// mutation of vscodeMock.workspace happens to load last (see
-// completionMocks.ts's applyCompletionVscodeMock, which the completion-family
-// tests use, for the same reasoning applied there).
-extendedMock.window = {
-    showInformationMessage: (...args: string[]) => {
-        windowCalls.push({ method: 'showInformationMessage', args });
-        return Promise.resolve(undefined);
-    },
-    showErrorMessage: (...args: string[]) => {
-        windowCalls.push({ method: 'showErrorMessage', args });
-        return Promise.resolve(undefined);
-    },
-    createQuickPick: () => {
-        windowCalls.push({ method: 'createQuickPick', args: [] });
-        return mockQuickPick;
-    }
-};
+/**
+ * Builds this suite's `window` mock. Called once at module load (below), so the
+ * `window` key exists on the shared vscodeMock singleton before
+ * objectSearchProvider.ts is required (__importStar only wires a live getter
+ * for keys present at that exact moment), and again in setup() before every
+ * test, since vscodeMock is a process-wide singleton other test files also
+ * mutate (some without restoring it in a teardown), so a single module-load-time
+ * install is not enough to survive an arbitrary file load/run order.
+ */
+function buildWindowMock(): MockWindow {
+    return {
+        showInformationMessage: (...args: string[]) => {
+            windowCalls.push({ method: 'showInformationMessage', args });
+            return Promise.resolve(undefined);
+        },
+        showErrorMessage: (...args: string[]) => {
+            windowCalls.push({ method: 'showErrorMessage', args });
+            return Promise.resolve(undefined);
+        },
+        createQuickPick: () => {
+            windowCalls.push({ method: 'createQuickPick', args: [] });
+            return mockQuickPick;
+        }
+    };
+}
+
+extendedMock.window = buildWindowMock();
 
 registerVscodeMock();
 registerExtensionMock();
@@ -115,6 +121,11 @@ suite('ObjectSearchProvider', () => {
 
     setup(() => {
         resetWindowCalls();
+        // Reinstall window per-test: vscodeMock is a shared singleton, and other
+        // test files mutate it (some without restoring it in a teardown), so a
+        // single module-load-time install does not survive an arbitrary file
+        // load/run order. See buildWindowMock's doc comment above.
+        extendedMock.window = buildWindowMock();
         // Enable column search in tests so column-related assertions still pass.
         // Installed per-test (not at module load) since vscodeMock.workspace is
         // a shared singleton other test files also mutate; see the comment
@@ -185,8 +196,8 @@ suite('ObjectSearchProvider', () => {
 
     test('shows info message when no active connection', async () => {
         mockCM = new MockConnectionManager(mockDriver);
-        // Override to return null
-        mockCM.getActiveConnection = () => null;
+        // Override to return no active connection
+        mockCM.getActiveConnection = () => undefined;
         searchProvider = new ObjectSearchProvider(
             mockCM as unknown as ConnectionManager,
             objectTreeProvider,

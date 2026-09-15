@@ -2,10 +2,16 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
-## [1.7.1] - 2026-09-14
+## [1.7.1] - 2026-09-15
 
 ### Changed
-- Replaced all 53 remaining explicit `any` types with real types, notably a `getRowsFromResult<T>()` generic that lets each query declare the row shape its SELECT produces; `@typescript-eslint/no-explicit-any` is now an error rather than a warning ([#65](https://github.com/exasol-labs/exasol-vscode/issues/65))
+- Replaced all explicit `any` types with real types, in both production code and tests, notably a `getRowsFromResult<T>()` generic that lets each query declare the row shape its SELECT produces; ESLint now lints test files too, with `@typescript-eslint/no-explicit-any` an error there as well ([#65](https://github.com/exasol-labs/exasol-vscode/issues/65))
+- Query rows are now typed to match what Exasol can actually return: `CURRENT_SCHEMA` and `COLUMN_IS_NULLABLE` are nullable where the database can report NULL, instead of being assumed always present
+- Removed dead code: a WebSocket health probe that could never detect a closed connection, legacy result-shape fallback branches in the row/column extractors, and an unused parameter on `generateSelectStatement`
+
+### Fixed
+- Show Table DDL now reports a clear error instead of producing an empty `CREATE TABLE` when the table has no columns visible
+- The column tooltip no longer claims a column is nullable for view columns, where Exasol does not report nullability
 
 ### Security
 - Updated `baseline-browser-mapping`, `brace-expansion`, `browserslist`, `fast-uri`, `js-yaml`, `linkify-it`, `qs`, and `undici` to patched versions (`npm audit`: 0 vulnerabilities)

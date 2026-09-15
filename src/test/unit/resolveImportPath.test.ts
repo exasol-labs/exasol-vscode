@@ -38,12 +38,25 @@ function setWorkspaceFolder(fsPath: string | undefined): void {
 }
 
 suite('resolveImportPath', () => {
+    let savedWindow: MockWindow;
+    let savedWorkspace: MockWorkspace;
+
     setup(() => {
+        // Save the mock state so another suite that runs after this one (and
+        // does not reinstall its own window/workspace in setup()) does not see
+        // this suite's shape left behind.
+        savedWindow = extendedMock.window;
+        savedWorkspace = extendedMock.workspace;
         extendedMock.window = { activeTextEditor: undefined };
         extendedMock.workspace = { workspaceFolders: undefined };
         // Re-require so localCsvImport re-captures the freshly installed objects.
         delete require.cache[require.resolve('../../localCsvImport')];
         resolveImportPath = (require('../../localCsvImport') as typeof import('../../localCsvImport')).resolveImportPath;
+    });
+
+    teardown(() => {
+        extendedMock.window = savedWindow;
+        extendedMock.workspace = savedWorkspace;
     });
 
     test('returns an absolute path unchanged', () => {

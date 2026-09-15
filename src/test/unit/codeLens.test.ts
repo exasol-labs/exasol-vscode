@@ -51,23 +51,46 @@ NodeModule._resolveFilename = function (request: string, ...args: unknown[]) {
     if (request === 'vscode') { return 'vscode'; }
     return originalResolveFilename.call(this, request, ...args);
 };
-if (!require.cache['vscode']) {
-    require.cache['vscode'] = {
-        id: 'vscode',
-        filename: 'vscode',
-        loaded: true,
-        exports: vscodeMock,
-        paths: [],
-        children: [],
-        path: '',
-        parent: null,
-        require,
-        isPreloading: false,
-    };
-}
+// Unconditional (not `if (!require.cache['vscode'])`): this file owns a
+// private vscode mock distinct from the shared helpers/vscodeMock.ts
+// singleton (it needs CodeLens/Range constructors that singleton doesn't
+// declare). A conditional guard here is a first-loaded-wins race: if another
+// suite's module-top-level code registers require.cache['vscode'] first
+// (pointing 'vscode' at the shared singleton instead), this file's own
+// registration would be skipped, and codeLensProvider.ts would capture the
+// wrong 'vscode' binding for the rest of the process.
+//
+// require.cache['vscode'] is itself a process-wide singleton slot other test
+// files rely on pointing at the *shared* vscodeMock (e.g. resolveImportPath.test.ts
+// deletes and re-requires its module under test on every test, re-resolving
+// 'vscode' through this same slot each time). __importStar only needs this
+// slot to hold this file's private mock for the instant the require() below
+// runs. codeLensProvider.ts caches its own captured `vscode` binding after
+// that and never looks at this slot again, so it is saved and restored
+// immediately around the require(), rather than left pointing at this file's
+// incompatible private mock for the rest of the process.
+const previousVscodeCacheEntry = require.cache['vscode'];
+require.cache['vscode'] = {
+    id: 'vscode',
+    filename: 'vscode',
+    loaded: true,
+    exports: vscodeMock,
+    paths: [],
+    children: [],
+    path: '',
+    parent: null,
+    require,
+    isPreloading: false,
+};
 
 // Require codeLensProvider AFTER the vscode mock is registered
 const { ExasolCodeLensProvider } = require('../../providers/codeLensProvider') as typeof import('../../providers/codeLensProvider');
+
+if (previousVscodeCacheEntry) {
+    require.cache['vscode'] = previousVscodeCacheEntry;
+} else {
+    delete require.cache['vscode'];
+}
 // findStatementRanges is exercised through provideCodeLenses (which builds the
 // CodeLens range from its output), but a few tests pin range positions directly
 // to lock down the anchor-on-first-code-line behaviour.

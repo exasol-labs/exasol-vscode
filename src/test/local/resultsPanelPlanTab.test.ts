@@ -26,7 +26,6 @@ extendedVscodeMock.env = { clipboard: { writeText: async () => {} } };
 registerVscodeMock();
 registerExtensionMock();
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { ResultsPanel } = require('../../panels/resultsPanel') as typeof import('../../panels/resultsPanel');
 
 import { createEmptyRawResult, createRawResult, MockDriver } from '../helpers/mockConnectionManager';
