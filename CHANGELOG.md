@@ -10,6 +10,8 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - `exasol.fetchSize` setting for configuring result-set fetch requests
 - `exasol.exportSource` setting for pre-filling the direct CSV export source
 - Driver-backed cancellation for local CSV/Parquet imports and CSV exports
+- Broken driver eviction and fail-fast transport error handling after socket loss
+- Automatic retry is limited to result-set operations; DML and other side-effecting statements are not replayed
 
 ### Changed
 - Migrated from the forked driver to the official `@exasol/exasol-driver-ts` 0.8.0 release

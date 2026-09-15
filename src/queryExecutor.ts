@@ -122,7 +122,11 @@ export class QueryExecutor {
                     abort.abort();
                     abort.dispose();
                 }
-            }, undefined, { timeoutMs: queryTimeoutMs, ...(cancellationToken ? { cancellationToken } : {}) });
+            }, undefined, {
+                timeoutMs: queryTimeoutMs,
+                retryOnConnectionError: false,
+                ...(cancellationToken ? { cancellationToken } : {})
+            });
         }
 
         const localParquetImport = parseLocalParquetImport(finalQuery);
@@ -150,7 +154,11 @@ export class QueryExecutor {
                     abort.abort();
                     abort.dispose();
                 }
-            }, undefined, { timeoutMs: queryTimeoutMs, ...(cancellationToken ? { cancellationToken } : {}) });
+            }, undefined, {
+                timeoutMs: queryTimeoutMs,
+                retryOnConnectionError: false,
+                ...(cancellationToken ? { cancellationToken } : {})
+            });
         }
 
         // Auto-add LIMIT to SELECT queries without explicit LIMIT
@@ -165,6 +173,7 @@ export class QueryExecutor {
         // reflects only the real statement's own round-trip, excluding both
         // the identity-capture query and any time spent queued behind another
         // in-flight operation on the same connection.
+        const isResultSet = this.isResultSetQuery(finalQuery);
         return await this.connectionManager.executeWithRetry(async () => {
             const driver = await this.connectionManager.getDriver();
             const shouldCapturePlanIdentity = isExecutionPlanEnabled()
@@ -176,8 +185,6 @@ export class QueryExecutor {
             const queryStartTime = Date.now();
 
             // Classify the query to determine which driver method to use
-            const isResultSet = this.isResultSetQuery(finalQuery);
-
             if (isResultSet) {
                 // Result-set queries (SELECT, SHOW, DESCRIBE, etc.) - use query()
                 // Use 'raw' response type to avoid a driver bug where error responses
@@ -225,7 +232,10 @@ export class QueryExecutor {
                     ...identity
                 };
             }
-        }, undefined, cancellationToken ? { cancellationToken } : undefined);
+        }, undefined, {
+            retryOnConnectionError: isResultSet,
+            ...(cancellationToken ? { cancellationToken } : {})
+        });
     }
 
     setCancellationToken(token: vscode.CancellationTokenSource) {

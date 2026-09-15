@@ -307,7 +307,11 @@ export function activate(context: vscode.ExtensionContext) {
                     await connectionManager.executeWithRetry(async () => {
                         const driver = await connectionManager.getDriver();
                         await driver.exportToCsvFile(source.trim(), target.fsPath, { withColumnNames: true }, { signal: controller.signal });
-                    }, undefined, { timeoutMs: settings.get<number>('queryTimeout', 300) * 1000, cancellationToken: token });
+                    }, undefined, {
+                        timeoutMs: settings.get<number>('queryTimeout', 300) * 1000,
+                        cancellationToken: token,
+                        retryOnConnectionError: false
+                    });
                     vscode.window.showInformationMessage(`CSV export completed: ${target.fsPath}`);
                 } finally {
                     controller.abort();

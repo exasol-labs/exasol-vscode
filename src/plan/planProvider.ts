@@ -183,7 +183,11 @@ export class PlanProvider {
                 // rows to return on success, so this only ever surfaces a genuine
                 // failure, never a false one.
                 getRowsFromResult(flushResult);
-            }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
+            }, connection.id, {
+                timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS,
+                role: 'background',
+                retryOnConnectionError: false
+            });
             flushSucceeded = true;
         } catch (error) {
             outputChannel?.appendLine(`   FLUSH STATISTICS before plan fetch failed (continuing anyway): ${error}`);

@@ -3,7 +3,7 @@ import * as crypto from 'crypto';
 import * as tls from 'tls';
 import { Mutex } from 'async-mutex';
 import { ExasolDriver, ExaWebsocket } from '@exasol/exasol-driver-ts';
-import { getRowsFromResult, rawExecute, rawQuery } from './utils';
+import { getRowsFromResult, rawExecute, rawQuery, SqlError } from './utils';
 import { WebSocket } from 'ws';
 import { getOutputChannel } from './extension';
 import {
@@ -59,6 +59,37 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 
 
 export type DriverRole = 'user' | 'background';
+
+const CONNECTION_ERROR_CODES = new Set([
+    'E-EDJS-2',  // Connection was closed
+    'E-EDJS-8',  // Pool exhaustion
+    'E-EDJS-16', // Socket error
+    'E-EDJS-19', // Not connected
+    'E-EDJS-36'  // Socket closed
+]);
+
+export function isConnectionError(error: unknown): boolean {
+    // SQL execution errors, including SQL errors whose text contains
+    // "timeout", must be surfaced and never re-executed.
+    if (error instanceof SqlError || extractFingerprintError(error)) {
+        return false;
+    }
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorCode = errorMsg.match(/E-EDJS-\d+/)?.[0];
+    if (errorCode && CONNECTION_ERROR_CODES.has(errorCode)) {
+        return true;
+    }
+    return [
+        'ECONNRESET',
+        'EPIPE',
+        'ETIMEDOUT',
+        'ENOTFOUND',
+        'ECONNREFUSED',
+        'connection closed',
+        'WebSocket',
+        'socket hang up'
+    ].some(token => errorMsg.includes(token));
+}
 
 export class ConnectionManager {
     private connections: Map<string, StoredConnection> = new Map();
@@ -445,27 +476,6 @@ export class ConnectionManager {
     /**
      * Checks if an error is a connection-related error that requires reconnection
      */
-    private isConnectionError(error: unknown): boolean {
-        // Fingerprint errors are not retriable — they must be surfaced to the user
-        if (extractFingerprintError(error)) {
-            return false;
-        }
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        return (
-            errorMsg.includes('E-EDJS-8') || // Pool exhaustion
-            errorMsg.includes('pool reached its limit') ||
-            errorMsg.includes('ECONNRESET') || // Connection reset
-            errorMsg.includes('EPIPE') || // Broken pipe
-            errorMsg.includes('ETIMEDOUT') || // Timeout
-            errorMsg.includes('ENOTFOUND') || // Host not found
-            errorMsg.includes('ECONNREFUSED') || // Connection refused
-            errorMsg.includes('connection closed') ||
-            errorMsg.includes('WebSocket') ||
-            errorMsg.includes('socket hang up') ||
-            errorMsg.toLowerCase().includes('timeout')
-        );
-    }
-
     /**
      * Executes a function with automatic retry on connection errors.
      * If a connection error occurs, the driver is reset and the function is retried once.
@@ -478,7 +488,13 @@ export class ConnectionManager {
     async executeWithRetry<T>(
         fn: () => Promise<T>,
         connectionId?: string,
-        options?: { timeoutMs?: number; cancellationToken?: vscode.CancellationToken; role?: DriverRole }
+        options?: {
+            timeoutMs?: number;
+            cancellationToken?: vscode.CancellationToken;
+            role?: DriverRole;
+            /** Re-run only when the operation is safe to repeat, e.g. a result-set query. */
+            retryOnConnectionError?: boolean;
+        }
     ): Promise<T> {
         const id = connectionId || this.activeConnection;
         const role = options?.role ?? 'user';
@@ -556,7 +572,7 @@ export class ConnectionManager {
             }
 
             // Check if it's a connection-related error that requires reconnection
-            if (this.isConnectionError(error) && id && this.drivers.get(id)?.has(role)) {
+            if (options?.retryOnConnectionError !== false && isConnectionError(error) && id && this.drivers.get(id)?.has(role)) {
                 // Only retry if a driver existed — meaning the query itself failed
                 // on an established connection. If no driver exists, getDriver()/
                 // connectWithRetry() already exhausted its retries; retrying here
@@ -614,6 +630,10 @@ export class ConnectionManager {
     }
 
     private async validateDriver(driver: ExasolDriver, connectionId: string, role: DriverRole = 'user'): Promise<boolean> {
+        if (driver.broken) {
+            getOutputChannel().appendLine(`Connection validation failed (${role}): driver reports a broken socket`);
+            return false;
+        }
         try {
             // SKIP expensive SELECT 1 if a query succeeded recently.
             const lastSuccess = this.lastSuccessfulQuery.get(connectionId)?.get(role);
@@ -739,6 +759,18 @@ export class ConnectionManager {
         const fetchSize = vscode.workspace.getConfiguration('exasol').get<number>('fetchSize', 1024 * 1024);
         const wsErrors: { lastError?: Error } = {};
         const clientName = role === 'background' ? 'VSCode Exasol (background)' : 'VSCode Exasol';
+        const evictBrokenDriver = (brokenDriver: ExasolDriver): void => {
+            const roleMap = this.drivers.get(connection.id);
+            if (!roleMap || roleMap.get(role) !== brokenDriver) {
+                return;
+            }
+            roleMap.delete(role);
+            this.lastSuccessfulQuery.get(connection.id)?.delete(role);
+            if (role === 'user') {
+                this.executionPlanAvailable.delete(connection.id);
+            }
+            getOutputChannel().appendLine(`Evicted broken ${role} driver for '${connection.name}'`);
+        };
         const driver = new ExasolDriver(this.createWebSocketFactory(connection, wsErrors), {
             host: connection.host,
             port: connection.port,
@@ -747,7 +779,9 @@ export class ConnectionManager {
             encryption: true,
             clientName,
             clientVersion: this.extensionVersion,
-            fetchSize
+            fetchSize,
+            onClose: () => evictBrokenDriver(driver),
+            onError: () => evictBrokenDriver(driver)
         });
 
         try {

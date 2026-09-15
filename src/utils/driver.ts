@@ -65,6 +65,14 @@ export type RawSqlResponse = Omit<SQLResponse<SQLQueriesResponse>, 'responseData
     responseData?: SQLQueriesResponse;
 };
 
+/** SQL execution failed; this must never be mistaken for a transport failure. */
+export class SqlError extends Error {
+    constructor(public readonly sqlCode: string | undefined, message: string) {
+        super(message);
+        this.name = 'SqlError';
+    }
+}
+
 /**
  * Throw a descriptive Error from a raw error response.
  */
@@ -72,7 +80,7 @@ export function throwSqlError(response: RawSqlResponse): never {
     const sqlCode = response.exception?.sqlCode;
     const text = response.exception?.text || 'Query execution failed';
     const message = sqlCode ? `SQL Error [${sqlCode}]: ${text}` : text;
-    throw new Error(message);
+    throw new SqlError(sqlCode, message);
 }
 
 /**
