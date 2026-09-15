@@ -1,6 +1,8 @@
 import * as assert from 'assert';
-import { ObjectTreeProvider } from '../providers/objectTreeProvider';
-import { TEST_CONNECTION, createRawResult, MockConnectionManager } from './helpers/mockConnectionManager';
+import * as vscode from 'vscode';
+import { ObjectTreeItem, ObjectTreeProvider } from '../providers/objectTreeProvider';
+import { fetchVirtualSchemas, fetchVirtualTables, fetchVirtualColumns } from '../providers/objectTreeFetchers';
+import { TEST_CONNECTION, createRawResult, MockConnectionManager, asConnectionManager } from './helpers/mockConnectionManager';
 
 const connection = TEST_CONNECTION;
 
@@ -24,9 +26,8 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             };
 
             const manager = new MockConnectionManager(driver, connection);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const schemas = await (provider as any).fetchVirtualSchemas(connection);
+            const schemas = await fetchVirtualSchemas(asConnectionManager(manager), connection);
 
             assert.strictEqual(schemas.length, 2);
             assert.strictEqual(schemas[0].name, 'VS_S3');
@@ -45,9 +46,8 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             };
 
             const manager = new MockConnectionManager(driver, connection);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const schemas = await (provider as any).fetchVirtualSchemas(connection);
+            const schemas = await fetchVirtualSchemas(asConnectionManager(manager), connection);
 
             assert.strictEqual(schemas.length, 0);
         });
@@ -72,9 +72,8 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             };
 
             const manager = new MockConnectionManager(driver, connection);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const tables = await (provider as any).fetchVirtualTables(connection, 'VS_S3');
+            const tables = await fetchVirtualTables(asConnectionManager(manager), connection, 'VS_S3');
 
             assert.strictEqual(tables.length, 2);
             assert.strictEqual(tables[0].name, 'BUCKET_DATA');
@@ -89,9 +88,8 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             };
 
             const manager = new MockConnectionManager(driver, connection);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const tables = await (provider as any).fetchVirtualTables(connection, 'VS_S3');
+            const tables = await fetchVirtualTables(asConnectionManager(manager), connection, 'VS_S3');
 
             assert.strictEqual(tables.length, 0);
         });
@@ -118,9 +116,8 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             };
 
             const manager = new MockConnectionManager(driver, connection);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const columns = await (provider as any).fetchVirtualColumns(connection, 'VS_S3', 'BUCKET_DATA');
+            const columns = await fetchVirtualColumns(asConnectionManager(manager), connection, 'VS_S3', 'BUCKET_DATA');
 
             assert.strictEqual(columns.length, 3);
             assert.strictEqual(columns[0].name, 'ID');
@@ -137,9 +134,8 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             };
 
             const manager = new MockConnectionManager(driver, connection);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const columns = await (provider as any).fetchVirtualColumns(connection, 'VS_S3', 'BUCKET_DATA');
+            const columns = await fetchVirtualColumns(asConnectionManager(manager), connection, 'VS_S3', 'BUCKET_DATA');
 
             assert.strictEqual(columns.length, 0);
         });
@@ -171,17 +167,21 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             };
 
             const manager = new MockConnectionManager(driver, connection);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const children = await provider.getChildren();
+            // The root always appends a trailing "System Schemas" folder node
+            // (see objectTreeProvider.ts), unrelated to the schema/virtual-schema
+            // ordering under test here, so it's filtered out before asserting.
+            const children = (await provider.getChildren())
+                .filter(c => (c as ObjectTreeItem).type !== 'system-schemas-folder');
 
             assert.strictEqual(children.length, 3, 'Should have 3 items total');
-            assert.strictEqual((children[0] as any).label, 'ALPHA');
-            assert.strictEqual((children[0] as any).type, 'schema');
-            assert.strictEqual((children[1] as any).label, 'BETA_VS');
-            assert.strictEqual((children[1] as any).type, 'virtual-schema');
-            assert.strictEqual((children[2] as any).label, 'GAMMA');
-            assert.strictEqual((children[2] as any).type, 'schema');
+            assert.strictEqual(children[0].label, 'ALPHA');
+            assert.strictEqual((children[0] as ObjectTreeItem).type, 'schema');
+            assert.strictEqual(children[1].label, 'BETA_VS');
+            assert.strictEqual((children[1] as ObjectTreeItem).type, 'virtual-schema');
+            assert.strictEqual(children[2].label, 'GAMMA');
+            assert.strictEqual((children[2] as ObjectTreeItem).type, 'schema');
         });
 
         test('virtual schema failure does not block regular schemas', async () => {
@@ -203,13 +203,16 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             };
 
             const manager = new MockConnectionManager(driver, connection);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const children = await provider.getChildren();
+            // See the comment in the previous test: filter out the always-present
+            // trailing "System Schemas" folder node before counting schema nodes.
+            const children = (await provider.getChildren())
+                .filter(c => (c as ObjectTreeItem).type !== 'system-schemas-folder');
 
             assert.strictEqual(children.length, 1, 'Regular schemas should still load');
-            assert.strictEqual((children[0] as any).label, 'MY_SCHEMA');
-            assert.strictEqual((children[0] as any).type, 'schema');
+            assert.strictEqual(children[0].label, 'MY_SCHEMA');
+            assert.strictEqual((children[0] as ObjectTreeItem).type, 'schema');
         });
     });
 
@@ -231,22 +234,24 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             };
 
             const manager = new MockConnectionManager(driver, connection);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const mockElement = {
+            const mockElement = new ObjectTreeItem({
                 type: 'virtual-schema',
                 label: 'VS_S3',
+                id: 'conn-1:VS_S3:virtual-schema',
                 schemaName: 'VS_S3',
-                connection
-            };
+                connection,
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(mockElement as any);
+            const children = await provider.getChildren(mockElement);
 
             assert.strictEqual(children.length, 2);
-            assert.strictEqual((children[0] as any).label, 'TABLE_A');
-            assert.strictEqual((children[0] as any).type, 'virtual-table');
-            assert.strictEqual((children[1] as any).label, 'TABLE_B');
-            assert.strictEqual((children[1] as any).type, 'virtual-table');
+            assert.strictEqual(children[0].label, 'TABLE_A');
+            assert.strictEqual((children[0] as ObjectTreeItem).type, 'virtual-table');
+            assert.strictEqual(children[1].label, 'TABLE_B');
+            assert.strictEqual((children[1] as ObjectTreeItem).type, 'virtual-table');
         });
     });
 
@@ -268,22 +273,24 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             };
 
             const manager = new MockConnectionManager(driver, connection);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const mockElement = {
+            const mockElement = new ObjectTreeItem({
                 type: 'virtual-table',
                 label: 'MY_TABLE',
+                id: 'conn-1:VS_S3:MY_TABLE:virtual-table',
                 schemaName: 'VS_S3',
                 tableInfo: { name: 'MY_TABLE' },
-                connection
-            };
+                connection,
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(mockElement as any);
+            const children = await provider.getChildren(mockElement);
 
             assert.strictEqual(children.length, 2);
-            assert.strictEqual((children[0] as any).label, 'COL_A (INTEGER)');
-            assert.strictEqual((children[0] as any).type, 'column');
-            assert.strictEqual((children[1] as any).label, 'COL_B (VARCHAR(100))');
+            assert.strictEqual(children[0].label, 'COL_A (INTEGER)');
+            assert.strictEqual((children[0] as ObjectTreeItem).type, 'column');
+            assert.strictEqual(children[1].label, 'COL_B (VARCHAR(100))');
         });
     });
 });

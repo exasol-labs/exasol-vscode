@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { ConnectionManager } from '../connectionManager';
+import type { activate } from '../extension';
 import { TEST_CONFIG } from './testConfig';
 import { getRowsFromResult, rawQuery } from '../utils';
 
@@ -11,14 +12,14 @@ suite('ConnectionManager Test Suite', () => {
     suiteSetup(async function() {
         this.timeout(60000);
         // Get extension context
-        const ext = vscode.extensions.getExtension('exasol.exasol-vscode');
+        const ext = vscode.extensions.getExtension<ReturnType<typeof activate>>('exasol.exasol-vscode');
         if (!ext) {
             throw new Error('Extension not found');
         }
         if (!ext.isActive) {
             await ext.activate();
         }
-        context = (ext.exports as any).context;
+        context = ext.exports.context;
         connectionManager = new ConnectionManager(context);
     });
 

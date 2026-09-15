@@ -1,25 +1,35 @@
 import * as assert from 'assert';
 import { JSDOM } from 'jsdom';
-import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helpers/vscodeMock';
+import type { SQLQueriesResponse, SQLResponse } from '@exasol/exasol-driver-ts';
+import type * as vscodeType from 'vscode';
+import { registerVscodeMock, registerExtensionMock, vscodeMock, ResultsPanelVscodeMock } from '../helpers/vscodeMock';
+import type { QueryResult } from '../../queryExecutor';
+import type { ConnectionManager, StoredConnection } from '../../connectionManager';
 
-(vscodeMock as any).Uri = { ...(vscodeMock as any).Uri, joinPath: () => ({}) };
-(vscodeMock as any).window = {
+// This module reaches for window/commands/workspace/env, none of which
+// vscodeMock declares, so this file grows the shared mock with those members
+// (see ResultsPanelVscodeMock in vscodeMock.ts for why the cast goes through
+// `unknown`, and for why this narrower type, not the shared optional base,
+// is what makes omitting one of these assignments a compile error).
+const extendedVscodeMock = vscodeMock as unknown as ResultsPanelVscodeMock;
+extendedVscodeMock.Uri = { ...vscodeMock.Uri, joinPath: () => ({}) };
+extendedVscodeMock.window = {
     registerWebviewViewProvider: () => ({ dispose: () => {} }),
     showInformationMessage: () => {},
     showWarningMessage: () => {},
     showErrorMessage: () => {}
 };
-(vscodeMock as any).commands = { registerCommand: () => ({ dispose: () => {} }) };
-(vscodeMock as any).workspace = { getConfiguration: () => ({ get: () => undefined }) };
-(vscodeMock as any).env = { clipboard: { writeText: async () => {} } };
+extendedVscodeMock.commands = { registerCommand: () => ({ dispose: () => {} }) };
+extendedVscodeMock.workspace = { getConfiguration: () => ({ get: () => undefined }) };
+extendedVscodeMock.env = { clipboard: { writeText: async () => {} } };
 
 registerVscodeMock();
 registerExtensionMock();
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { ResultsPanel } = require('../../panels/resultsPanel');
+const { ResultsPanel } = require('../../panels/resultsPanel') as typeof import('../../panels/resultsPanel');
 
-import { createEmptyRawResult, createRawResult } from '../helpers/mockConnectionManager';
+import { createEmptyRawResult, createRawResult, MockDriver } from '../helpers/mockConnectionManager';
 
 function parseDom(html: string): Document {
     return new JSDOM(`<html><body>${html}</body></html>`).window.document;
@@ -27,43 +37,70 @@ function parseDom(html: string): Document {
 
 const DETAILS_COLUMNS = ['SESSION_ID', 'STMT_ID', 'PART_ID', 'IPROC', 'PART_NAME', 'OUT_ROWS', 'DURATION', 'SQL_TEXT'];
 
-function detailsRow(sessionId: string, stmtId: string, partName = 'PIPE SCAN'): any[] {
+type DetailsRow = [string, string, number, number, string, number, number, string];
+
+function detailsRow(sessionId: string, stmtId: string, partName = 'PIPE SCAN'): DetailsRow {
     return [sessionId, stmtId, 10, 0, partName, 1000, 0.5, 'SELECT 1'];
 }
 
+/** The postMessage payloads these tests send from the webview side. */
+type WebviewMessage =
+    | { command: 'switchResultView'; view: 'plan' | 'results' }
+    | { command: 'copyPlanText'; text: string };
+
 /**
  * Builds a fake webview view whose .webview.html assignments are captured,
- * and whose onDidReceiveMessage handler can be driven directly — the same
+ * and whose onDidReceiveMessage handler can be driven directly, the same
  * approach production code drives via postMessage from the browser side.
  */
 function makeFakeWebviewView() {
     let html = '';
     let htmlSetCount = 0;
-    let handler: ((message: any) => void | Promise<void>) | undefined;
-    const webview: any = {
+    let handler: ((message: WebviewMessage) => void | Promise<void>) | undefined;
+    const webview = {
         set html(value: string) { html = value; htmlSetCount++; },
         get html() { return html; },
-        onDidReceiveMessage: (fn: any) => { handler = fn; return { dispose() {} }; },
-        asWebviewUri: (uri: any) => uri,
+        onDidReceiveMessage: (fn: (message: WebviewMessage) => void | Promise<void>) => { handler = fn; return { dispose() {} }; },
+        asWebviewUri: (uri: unknown) => uri,
         cspSource: 'vscode-resource:'
     };
-    const view: any = { webview, show: () => {} };
+    const view = { webview, show: () => {} };
     return {
         view,
         getHtml: () => html,
         getHtmlSetCount: () => htmlSetCount,
-        send: async (message: any) => { await handler!(message); }
+        send: async (message: WebviewMessage) => { await handler!(message); }
     };
+}
+
+/** The subset of a stored connection these fake connection managers expose. */
+type FakeConnection = Pick<StoredConnection, 'id' | 'name'>;
+
+/** The subset of ConnectionManager's surface ResultsPanel/planProvider use. */
+interface FakeConnectionManager {
+    getActiveConnection: () => FakeConnection | undefined;
+    getConnection: (id: string) => FakeConnection | undefined;
+    isExecutionPlanAvailable?: () => boolean;
+    getDriver: (connectionId: string) => Promise<MockDriver>;
+    executeWithRetry: <T>(fn: () => Promise<T>) => Promise<T>;
+}
+
+type QueryImpl = (sql: string) => SQLResponse<SQLQueriesResponse> | Promise<SQLResponse<SQLQueriesResponse>>;
+
+/** The minimal extension-context surface ResultsPanel.register reads (extensionUri only). */
+interface FakeContext {
+    extensionUri: Record<string, never>;
+    subscriptions: unknown[];
 }
 
 /**
  * Builds a fake ConnectionManager wired to a scriptable fake driver.
  * `queryImpl` drives rawQuery() (the tier-fetch attempts); rawExecute() (the
- * FLUSH STATISTICS call planProvider issues first) always succeeds here —
+ * FLUSH STATISTICS call planProvider issues first) always succeeds here;
  * flush-failure handling has its own dedicated test in planProvider.test.ts.
  */
-function makeFakeConnectionManager(queryImpl: (sql: string) => any) {
-    const fakeDriver = {
+function makeFakeConnectionManager(queryImpl: QueryImpl): FakeConnectionManager {
+    const fakeDriver: MockDriver = {
         execute: async () => createEmptyRawResult([]),
         query: async (sql: string) => queryImpl(sql)
     };
@@ -72,20 +109,37 @@ function makeFakeConnectionManager(queryImpl: (sql: string) => any) {
         getConnection: (id: string) => ({ id, name: 'Test' }),
         isExecutionPlanAvailable: () => true,
         getDriver: async () => fakeDriver,
-        executeWithRetry: async (fn: () => Promise<any>) => fn()
+        executeWithRetry: async fn => fn()
     };
 }
 
-function makeResultsPanel(queryImpl: (sql: string) => any) {
-    const connectionManager = makeFakeConnectionManager(queryImpl);
-    const fakeContext: any = { extensionUri: {}, subscriptions: [] };
-    const provider = ResultsPanel.register(fakeContext, connectionManager);
+/**
+ * ResultsPanel.register/resolveWebviewView take the real vscode.ExtensionContext,
+ * ConnectionManager, and vscode.WebviewView, none of which a lightweight fake can
+ * satisfy structurally (ExtensionContext and vscode.WebviewView pull in far more
+ * than these tests use; ConnectionManager carries private fields no object
+ * literal can reproduce). Casting FakeContext/FakeConnectionManager/the fake
+ * webview view through `unknown` here keeps the fakes' own declared shapes
+ * checked (see FakeContext/FakeConnectionManager above) without inflating them
+ * into full doubles of the real types.
+ */
+function registerFakePanel(fakeContext: FakeContext, connectionManager: FakeConnectionManager) {
+    const provider = ResultsPanel.register(
+        fakeContext as unknown as vscodeType.ExtensionContext,
+        connectionManager as unknown as ConnectionManager
+    );
     const fakeView = makeFakeWebviewView();
-    provider.resolveWebviewView(fakeView.view);
+    provider.resolveWebviewView(fakeView.view as unknown as vscodeType.WebviewView);
     return { provider, fakeView };
 }
 
-function makeQueryResult(overrides: Partial<any> = {}) {
+function makeResultsPanel(queryImpl: QueryImpl) {
+    const connectionManager = makeFakeConnectionManager(queryImpl);
+    const fakeContext: FakeContext = { extensionUri: {}, subscriptions: [] };
+    return registerFakePanel(fakeContext, connectionManager);
+}
+
+function makeQueryResult(overrides: Partial<QueryResult> = {}): QueryResult {
     return {
         columns: ['X'],
         columnMetadata: [{ name: 'X', type: 'DECIMAL' }],
@@ -183,7 +237,7 @@ suite('ResultsPanel plan tab', () => {
         // Regression: the tab-bar's own inline script used to bind the click
         // handler via querySelectorAll('[data-plan-retry]') at parse time,
         // before this button (rendered later, inside .plan-view) existed in
-        // the document — matching nothing. Executing the real rendered
+        // the document; matching nothing. Executing the real rendered
         // document's scripts and dispatching a real click is the only way to
         // catch that; asserting the button's presence and posting the
         // message directly (as the other tests here do) cannot.
@@ -214,7 +268,9 @@ suite('ResultsPanel plan tab', () => {
         // The posted message is an object from the JSDOM window's own realm,
         // so compare fields directly rather than via deepStrictEqual (which
         // treats cross-realm objects as unequal despite identical shape).
-        const posted = (dom.window as any).__posted;
+        // __posted is injected into this JSDOM window by the stubbed <script>
+        // above, so it is not part of any TypeScript-known Window type.
+        const posted = (dom.window as unknown as { __posted: Array<{ command: string; view?: string }> }).__posted;
         assert.strictEqual(posted.length, 1, 'expected exactly one postMessage call');
         assert.strictEqual(posted[0].command, 'switchResultView');
         assert.strictEqual(posted[0].view, 'plan');
@@ -271,7 +327,7 @@ suite('ResultsPanel plan tab', () => {
         ResultsPanel.show(makeQueryResult());
         await fakeView.send({ command: 'switchResultView', view: 'plan' });
 
-        // A second query completes — this must reset the sub-tab and any
+        // A second query completes; this must reset the sub-tab and any
         // stale plan state, even though it's a brand-new QueryResult.
         ResultsPanel.show(makeQueryResult({ sessionId: '99', baselineStmtId: '1' }));
 
@@ -281,8 +337,8 @@ suite('ResultsPanel plan tab', () => {
     });
 
     test('a DDL/DML result with no columns still shows the Results | Plan tab strip, with a success summary in Results', () => {
-        // Exasol profiles any statement that runs through the SQL engine —
-        // IMPORT/EXPORT/INSERT/UPDATE/etc. included — and queryExecutor.ts
+        // Exasol profiles any statement that runs through the SQL engine,
+        // IMPORT/EXPORT/INSERT/UPDATE/etc. included, and queryExecutor.ts
         // already captures the session/statement id needed to look that
         // profile up regardless of whether the statement returned columns.
         // There's no reason to hide the Plan tab just because there's no
@@ -325,49 +381,47 @@ suite('ResultsPanel plan tab', () => {
 
         let copiedText: string | undefined;
         let infoMessage: string | undefined;
-        (vscodeMock as any).env.clipboard.writeText = async (text: string) => { copiedText = text; };
-        (vscodeMock as any).window.showInformationMessage = (msg: string) => { infoMessage = msg; };
+        extendedVscodeMock.env.clipboard.writeText = async (text: string) => { copiedText = text; };
+        extendedVscodeMock.window.showInformationMessage = (msg: string) => { infoMessage = msg; };
 
-        await fakeView.send({ command: 'copyPlanText', text: 'Execution plan — session 42, statement 16' });
+        await fakeView.send({ command: 'copyPlanText', text: 'Execution plan · session 42, statement 16' });
 
-        assert.strictEqual(copiedText, 'Execution plan — session 42, statement 16');
+        assert.strictEqual(copiedText, 'Execution plan · session 42, statement 16');
         assert.ok(infoMessage?.includes('copied to clipboard'));
     });
 
     test('fetches the plan against the connection the query ran on, not whichever is active now', async () => {
         // Regression: the user runs a query on connection A, switches the active
         // connection to B, then opens the Plan tab. The profile must be looked
-        // up on A (whose session produced it) — looking it up on B would query
+        // up on A (whose session produced it); looking it up on B would query
         // the wrong session/server and silently return "no profiling data".
         const driverConnIds: string[] = [];
-        const connections: Record<string, any> = {
+        const connections: Record<string, FakeConnection> = {
             'conn-ran': { id: 'conn-ran', name: 'Ran-On' },
             'conn-active': { id: 'conn-active', name: 'Now-Active' }
         };
-        const fakeDriver = {
+        const fakeDriver: MockDriver = {
             execute: async () => createEmptyRawResult([]),
             query: async (sql: string) =>
                 sql.includes('$EXA_PROFILE_DETAILS_LAST_DAY')
                     ? createRawResult(DETAILS_COLUMNS, [detailsRow('42', '16')])
                     : createEmptyRawResult(DETAILS_COLUMNS)
         };
-        const connectionManager: any = {
+        const connectionManager: FakeConnectionManager = {
             getActiveConnection: () => connections['conn-active'],
             getConnection: (id: string) => connections[id],
             getDriver: async (id: string) => { driverConnIds.push(id); return fakeDriver; },
-            executeWithRetry: async (fn: () => Promise<any>) => fn()
+            executeWithRetry: async fn => fn()
         };
-        const fakeContext: any = { extensionUri: {}, subscriptions: [] };
-        const provider = ResultsPanel.register(fakeContext, connectionManager);
-        const fakeView = makeFakeWebviewView();
-        provider.resolveWebviewView(fakeView.view);
+        const fakeContext: FakeContext = { extensionUri: {}, subscriptions: [] };
+        const { fakeView } = registerFakePanel(fakeContext, connectionManager);
 
         ResultsPanel.show(makeQueryResult({ connectionId: 'conn-ran' }));
         await fakeView.send({ command: 'switchResultView', view: 'plan' });
 
         assert.ok(driverConnIds.length > 0, 'the plan fetch must open a driver');
         assert.ok(
-            // Explicit `: boolean` return type — without it, TS treats this
+            // Explicit `: boolean` return type; without it, TS treats this
             // arrow as a type-predicate overload of .every() and narrows
             // driverConnIds to `"conn-ran"[]` for the rest of the scope,
             // which then makes the very next assertion's 'conn-active'
@@ -412,17 +466,15 @@ suite('ResultsPanel plan tab', () => {
     });
 
     test('hides the Plan tab when execution plan profiling is unavailable for the result connection', () => {
-        const connectionManager: any = {
+        const connectionManager: FakeConnectionManager = {
             getActiveConnection: () => ({ id: 'conn-1', name: 'Test' }),
             getConnection: (id: string) => ({ id, name: 'Test' }),
             isExecutionPlanAvailable: () => false,
             getDriver: async () => { throw new Error('must not fetch'); },
-            executeWithRetry: async (fn: () => Promise<any>) => fn()
+            executeWithRetry: async fn => fn()
         };
-        const fakeContext: any = { extensionUri: {}, subscriptions: [] };
-        const provider = ResultsPanel.register(fakeContext, connectionManager);
-        const fakeView = makeFakeWebviewView();
-        provider.resolveWebviewView(fakeView.view);
+        const fakeContext: FakeContext = { extensionUri: {}, subscriptions: [] };
+        const { fakeView } = registerFakePanel(fakeContext, connectionManager);
 
         ResultsPanel.show(makeQueryResult());
 
@@ -433,7 +485,7 @@ suite('ResultsPanel plan tab', () => {
 
     test('hides the Plan tab for a result with no captured session/statement id (as produced by describe table)', () => {
         // objectActions.ts's describeTable builds its result directly,
-        // without ever capturing sessionId/baselineStmtId — it's a metadata
+        // without ever capturing sessionId/baselineStmtId; it's a metadata
         // lookup, not a profiled statement. Such results must render only Results.
         const { fakeView } = makeResultsPanel(() => createEmptyRawResult(DETAILS_COLUMNS));
         ResultsPanel.show(makeQueryResult({ sessionId: undefined, baselineStmtId: undefined, connectionId: undefined }));
