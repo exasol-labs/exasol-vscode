@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { ConnectionManager } from '../connectionManager';
 import { TEST_CONFIG } from './testConfig';
-import { getRowsFromResult } from '../utils';
+import { getRowsFromResult, rawQuery } from '../utils';
 
 suite('ConnectionManager Test Suite', () => {
     let context: vscode.ExtensionContext;
@@ -55,7 +55,7 @@ suite('ConnectionManager Test Suite', () => {
         assert.ok(driver, 'Should get driver');
 
         // Test driver with a simple query
-        const result = await driver.query('SELECT 1 AS TEST_COL');
+        const result = await rawQuery(driver, 'SELECT 1 AS TEST_COL');
         const rows = getRowsFromResult(result);
         assert.strictEqual(rows.length, 1, 'Should return one row');
         assert.strictEqual(rows[0].TEST_COL, 1, 'Should return correct value');
