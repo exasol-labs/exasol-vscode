@@ -180,7 +180,7 @@ suite('ObjectActions SQL injection escaping', () => {
     test('generateSelectStatement escapes single quote in schemaName', async () => {
         const { oa, capturedSql } = makeObjectActionsCapturingSql();
 
-        await oa.generateSelectStatement(TEST_CONNECTION, "O'Brien", 'MY_TABLE', 'table');
+        await oa.generateSelectStatement(TEST_CONNECTION, "O'Brien", 'MY_TABLE');
 
         assert.ok(capturedSql.length > 0, 'Driver should have been called');
         const sql = capturedSql[0];
@@ -193,7 +193,7 @@ suite('ObjectActions SQL injection escaping', () => {
     test('generateSelectStatement escapes SQL injection attempt in tableName', async () => {
         const { oa, capturedSql } = makeObjectActionsCapturingSql();
 
-        await oa.generateSelectStatement(TEST_CONNECTION, 'MY_SCHEMA', "'; DROP TABLE USERS; --", 'table');
+        await oa.generateSelectStatement(TEST_CONNECTION, 'MY_SCHEMA', "'; DROP TABLE USERS; --");
 
         assert.ok(capturedSql.length > 0, 'Driver should have been called');
         const sql = capturedSql[0];

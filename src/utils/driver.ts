@@ -64,7 +64,7 @@ function isRawResponse(result: unknown): result is SQLResponse<SQLQueriesRespons
 /**
  * Throw a descriptive Error from a raw error response.
  */
-function throwSqlError(response: SQLResponse<SQLQueriesResponse>): never {
+export function throwSqlError(response: SQLResponse<SQLQueriesResponse>): never {
     const sqlCode = response.exception?.sqlCode;
     const text = response.exception?.text || 'Query execution failed';
     const message = sqlCode ? `SQL Error [${sqlCode}]: ${text}` : text;
