@@ -1,5 +1,10 @@
 import * as assert from 'assert';
+import type * as vscode from 'vscode';
 import { safeFetch } from '../../utils';
+
+function makeChannel(lines: string[]): vscode.OutputChannel {
+    return { appendLine: (line: string) => lines.push(line) } as unknown as vscode.OutputChannel;
+}
 
 suite('safeFetch', () => {
 
@@ -15,7 +20,7 @@ suite('safeFetch', () => {
 
     test('logs to channel when fn throws', async () => {
         const lines: string[] = [];
-        const channel = { appendLine: (line: string) => lines.push(line) } as any;
+        const channel = makeChannel(lines);
 
         await safeFetch('myLabel', async () => { throw new Error('bad'); }, null, channel);
 
@@ -31,7 +36,7 @@ suite('safeFetch', () => {
 
     test('does not call appendLine when fn succeeds', async () => {
         const lines: string[] = [];
-        const channel = { appendLine: (line: string) => lines.push(line) } as any;
+        const channel = makeChannel(lines);
 
         await safeFetch('lbl', async () => 'ok', '', channel);
 
@@ -45,7 +50,7 @@ suite('safeFetch', () => {
 
     test('passes through resolved value even when channel is provided', async () => {
         const lines: string[] = [];
-        const channel = { appendLine: (line: string) => lines.push(line) } as any;
+        const channel = makeChannel(lines);
 
         const result = await safeFetch('lbl', async () => 'hello', 'fallback', channel);
 

@@ -1,21 +1,22 @@
 import * as assert from 'assert';
+import type { ConnectionManager } from '../../connectionManager';
+import type { ObjectNode } from '../../providers/objectTreeProvider';
 import { registerVscodeMock, registerExtensionMock } from '../helpers/vscodeMock';
 
 registerVscodeMock();
 registerExtensionMock();
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { ObjectTreeProvider } = require('../../providers/objectTreeProvider');
+const { ObjectTreeProvider } = require('../../providers/objectTreeProvider') as typeof import('../../providers/objectTreeProvider');
 
-import { TEST_CONNECTION, createRawResult, createEmptyRawResult } from '../helpers/mockConnectionManager';
+import { createRawResult, createEmptyRawResult } from '../helpers/mockConnectionManager';
 import { MockConnectionManager } from '../helpers/mockConnectionManager';
 
-function getLabelText(item: any): string {
+function getLabelText(item: ObjectNode | undefined): string {
     if (!item || !item.label) { return ''; }
     return typeof item.label === 'string' ? item.label : item.label?.label ?? '';
 }
 
-suite('ObjectTreeProvider — System Schemas', () => {
+suite('ObjectTreeProvider, System Schemas', () => {
 
     suite('System Schemas folder at root level', () => {
         test('appears after user and virtual schemas', async () => {
@@ -41,7 +42,7 @@ suite('ObjectTreeProvider — System Schemas', () => {
                 }
             };
             const mockCM = new MockConnectionManager(mockDriver);
-            const provider = new ObjectTreeProvider(mockCM);
+            const provider = new ObjectTreeProvider(mockCM as unknown as ConnectionManager);
 
             const rootChildren = await provider.getChildren();
 
@@ -50,7 +51,7 @@ suite('ObjectTreeProvider — System Schemas', () => {
             assert.strictEqual(getLabelText(lastItem), 'System Schemas');
 
             // SYS and EXA_STATISTICS should not appear as root-level schema nodes
-            const labels = rootChildren.map((c: any) => getLabelText(c));
+            const labels = rootChildren.map((c: ObjectNode) => getLabelText(c));
             assert.ok(!labels.includes('SYS'), 'SYS should not be a root-level user schema');
             assert.ok(!labels.includes('EXA_STATISTICS'), 'EXA_STATISTICS should not be a root-level user schema');
         });
@@ -62,17 +63,17 @@ suite('ObjectTreeProvider — System Schemas', () => {
                 query: async () => createEmptyRawResult(['DUMMY'])
             };
             const mockCM = new MockConnectionManager(mockDriver);
-            const provider = new ObjectTreeProvider(mockCM);
+            const provider = new ObjectTreeProvider(mockCM as unknown as ConnectionManager);
 
             const rootChildren = await provider.getChildren();
             const systemSchemasFolder = rootChildren.find(
-                (c: any) => getLabelText(c) === 'System Schemas'
+                (c: ObjectNode) => getLabelText(c) === 'System Schemas'
             );
 
             const children = await provider.getChildren(systemSchemasFolder);
             assert.strictEqual(children.length, 2);
 
-            const labels = children.map((c: any) => getLabelText(c));
+            const labels = children.map((c: ObjectNode) => getLabelText(c));
             assert.ok(labels.includes('SYS'), 'Should contain SYS');
             assert.ok(labels.includes('EXA_STATISTICS'), 'Should contain EXA_STATISTICS');
         });
@@ -101,15 +102,15 @@ suite('ObjectTreeProvider — System Schemas', () => {
                 }
             };
             const mockCM = new MockConnectionManager(mockDriver);
-            const provider = new ObjectTreeProvider(mockCM);
+            const provider = new ObjectTreeProvider(mockCM as unknown as ConnectionManager);
 
             // Navigate to SYS system-schema node
             const rootChildren = await provider.getChildren();
             const systemSchemasFolder = rootChildren.find(
-                (c: any) => getLabelText(c) === 'System Schemas'
+                (c: ObjectNode) => getLabelText(c) === 'System Schemas'
             );
             const systemSchemas = await provider.getChildren(systemSchemasFolder);
-            const sysNode = systemSchemas.find((c: any) => getLabelText(c) === 'SYS');
+            const sysNode = systemSchemas.find((c: ObjectNode) => getLabelText(c) === 'SYS');
 
             const tables = await provider.getChildren(sysNode);
             assert.strictEqual(tables.length, 3);
@@ -152,17 +153,17 @@ suite('ObjectTreeProvider — System Schemas', () => {
                 }
             };
             const mockCM = new MockConnectionManager(mockDriver);
-            const provider = new ObjectTreeProvider(mockCM);
+            const provider = new ObjectTreeProvider(mockCM as unknown as ConnectionManager);
 
             // Navigate: root > System Schemas > SYS > EXA_ALL_COLUMNS
             const rootChildren = await provider.getChildren();
             const systemSchemasFolder = rootChildren.find(
-                (c: any) => getLabelText(c) === 'System Schemas'
+                (c: ObjectNode) => getLabelText(c) === 'System Schemas'
             );
             const systemSchemas = await provider.getChildren(systemSchemasFolder);
-            const sysNode = systemSchemas.find((c: any) => getLabelText(c) === 'SYS');
+            const sysNode = systemSchemas.find((c: ObjectNode) => getLabelText(c) === 'SYS');
             const tables = await provider.getChildren(sysNode);
-            const table = tables.find((c: any) => getLabelText(c) === 'EXA_ALL_COLUMNS');
+            const table = tables.find((c: ObjectNode) => getLabelText(c) === 'EXA_ALL_COLUMNS');
 
             const columns = await provider.getChildren(table);
             assert.strictEqual(columns.length, 3);
@@ -176,7 +177,7 @@ suite('ObjectTreeProvider — System Schemas', () => {
         });
     });
 
-    suite('Permission error — graceful fallback', () => {
+    suite('Permission error, graceful fallback', () => {
         test('fetchSystemTables returns empty array on error', async () => {
             const mockDriver = {
                 query: async (sql: string) => {
@@ -196,15 +197,15 @@ suite('ObjectTreeProvider — System Schemas', () => {
                 }
             };
             const mockCM = new MockConnectionManager(mockDriver);
-            const provider = new ObjectTreeProvider(mockCM);
+            const provider = new ObjectTreeProvider(mockCM as unknown as ConnectionManager);
 
             // Navigate to SYS
             const rootChildren = await provider.getChildren();
             const systemSchemasFolder = rootChildren.find(
-                (c: any) => getLabelText(c) === 'System Schemas'
+                (c: ObjectNode) => getLabelText(c) === 'System Schemas'
             );
             const systemSchemas = await provider.getChildren(systemSchemasFolder);
-            const sysNode = systemSchemas.find((c: any) => getLabelText(c) === 'SYS');
+            const sysNode = systemSchemas.find((c: ObjectNode) => getLabelText(c) === 'SYS');
 
             // Should return empty array, not throw
             const tables = await provider.getChildren(sysNode);
@@ -233,15 +234,15 @@ suite('ObjectTreeProvider — System Schemas', () => {
                 }
             };
             const mockCM = new MockConnectionManager(mockDriver);
-            const provider = new ObjectTreeProvider(mockCM);
+            const provider = new ObjectTreeProvider(mockCM as unknown as ConnectionManager);
 
             // Navigate to SYS > EXA_ALL_COLUMNS
             const rootChildren = await provider.getChildren();
             const systemSchemasFolder = rootChildren.find(
-                (c: any) => getLabelText(c) === 'System Schemas'
+                (c: ObjectNode) => getLabelText(c) === 'System Schemas'
             );
             const systemSchemas = await provider.getChildren(systemSchemasFolder);
-            const sysNode = systemSchemas.find((c: any) => getLabelText(c) === 'SYS');
+            const sysNode = systemSchemas.find((c: ObjectNode) => getLabelText(c) === 'SYS');
             const tables = await provider.getChildren(sysNode);
             const table = tables[0];
 

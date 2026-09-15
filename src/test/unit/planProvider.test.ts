@@ -1,20 +1,28 @@
 import * as assert from 'assert';
+import type { ConnectionManager } from '../../connectionManager';
+import type { PlanProviderRetryOptions } from '../../plan/planProvider';
 import { registerVscodeMock, registerExtensionMock } from '../helpers/vscodeMock';
+import { asConnectionManager, type FakeConnectionManager } from '../helpers/completionMocks';
 
 registerVscodeMock();
 registerExtensionMock();
 
 // Loaded after the vscode/extension mocks are configured, matching the
 // convention in queryExecutorRouting.test.ts / objectActions.test.ts.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { PlanProvider, RETRY_DELAYS_AFTER_FLUSH_FAILURE_MS } = require('../../plan/planProvider');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { BACKGROUND_QUERY_TIMEOUT_MS } = require('../../connectionManager');
+const { PlanProvider, RETRY_DELAYS_AFTER_FLUSH_FAILURE_MS } = require('../../plan/planProvider') as typeof import('../../plan/planProvider');
+const { BACKGROUND_QUERY_TIMEOUT_MS } = require('../../connectionManager') as typeof import('../../connectionManager');
 
 import { createRawResult, createEmptyRawResult, createRawErrorResult, TEST_CONNECTION } from '../helpers/mockConnectionManager';
 
+type ExecuteRetryOptions = Parameters<ConnectionManager['executeWithRetry']>[2];
+
+interface FakePlanDriver {
+    execute: (sql: string) => Promise<unknown>;
+    query: (sql: string) => Promise<unknown>;
+}
+
 // afterStmtId is a baseline (CURRENT_STATEMENT read before the real query
-// ran), not the real query's own STMT_ID — see planProvider.ts's file header.
+// ran), not the real query's own STMT_ID; see planProvider.ts's file header.
 // Both are exact digit strings end-to-end; real Exasol SESSION_IDs exceed
 // what a JS number can represent exactly.
 const TARGET = { sessionId: '42', afterStmtId: '3' };
@@ -23,11 +31,11 @@ const DETAILS_COLUMNS = ['SESSION_ID', 'STMT_ID', 'PART_ID', 'IPROC', 'PART_NAME
 const SUMMARY_COLUMNS = ['SESSION_ID', 'STMT_ID', 'PART_ID', 'PART_NAME', 'OUT_ROWS', 'DURATION'];
 
 // Resolved STMT_ID (7) is greater than the baseline (3), as it must be.
-function detailsRow(): any[] {
+function detailsRow(): Array<string | number> {
     return [42, 7, 1, 0, 'PIPE SCAN', 1000, 0.5];
 }
 
-function summaryRow(): any[] {
+function summaryRow(): Array<string | number> {
     return [42, 7, 1, 'SCAN', 1000, 0.5];
 }
 
@@ -40,13 +48,13 @@ interface Call { method: 'query' | 'execute'; sql: string }
  * `flushReturnsError` is set. These model the two distinct ways a raw-mode
  * driver call can fail: a thrown exception (e.g. connection reset) vs. a
  * returned {status:'error'} response with no throw at all (e.g. a genuine
- * SQL-level error like insufficient privilege — verified against the real
+ * SQL-level error like insufficient privilege, verified against the real
  * driver's source, which only throws for the 'default' response type).
  */
 function makeProvider(
-    queryResponses: Array<() => any>,
-    options: { flushThrows?: boolean; flushReturnsError?: boolean; retryOptions?: any } = {}
-): { provider: any; calls: Call[] } {
+    queryResponses: Array<() => unknown>,
+    options: { flushThrows?: boolean; flushReturnsError?: boolean; retryOptions?: PlanProviderRetryOptions } = {}
+): { provider: InstanceType<typeof PlanProvider>; calls: Call[] } {
     const calls: Call[] = [];
     let callIndex = 0;
 
@@ -71,12 +79,12 @@ function makeProvider(
         }
     };
 
-    const fakeConnectionManager = {
+    const fakeConnectionManager: FakeConnectionManager<FakePlanDriver, ExecuteRetryOptions> = {
         getDriver: async (_connectionId?: string, _role?: string) => fakeDriver,
-        executeWithRetry: async (fn: () => Promise<any>) => fn()
+        executeWithRetry: async (fn) => fn()
     };
 
-    return { provider: new PlanProvider(fakeConnectionManager, options.retryOptions), calls };
+    return { provider: new PlanProvider(asConnectionManager(fakeConnectionManager), options.retryOptions), calls };
 }
 
 function queryCalls(calls: Call[]): Call[] {
@@ -110,15 +118,15 @@ suite('PlanProvider.getPlan', () => {
     test('a FLUSH STATISTICS returned-error response (no throw) is still treated as a flush failure, using the long retry schedule', async () => {
         // Regression test: rawExecute() requests the driver's 'raw' response
         // type, which never throws on a SQL-level error (verified against the
-        // real driver's source — it only calls verifyNoError() for 'default'
+        // real driver's source; it only calls verifyNoError() for 'default'
         // responses). The old code awaited rawExecute() and discarded the
         // result without checking it, so a privilege-denied FLUSH STATISTICS
         // returned normally, flushSucceeded stayed true, and the short
-        // 3-round schedule was used instead of the long one — reintroducing
+        // 3-round schedule was used instead of the long one, reintroducing
         // the exact false "No profiling data found" bug this schedule split
         // exists to prevent.
         const empty = () => createEmptyRawResult(SUMMARY_COLUMNS);
-        const responses: Array<() => any> = [];
+        const responses: Array<() => unknown> = [];
         for (let round = 0; round < 5; round++) {
             responses.push(empty, empty, empty);
         }
@@ -213,12 +221,12 @@ suite('PlanProvider.getPlan', () => {
                 return true;
             }
         );
-        assert.strictEqual(queryCalls(calls).length, 3, 'must fail after the first round — retrying a hard permission wall cannot help');
+        assert.strictEqual(queryCalls(calls).length, 3, 'must fail after the first round; retrying a hard permission wall cannot help');
     });
 
     test('does not fail fast when the fallback chain is a mix of privilege denial and genuinely empty tiers', async function () {
         // DETAILS denied by privilege, but USER_SUMMARY was *reached* and is
-        // just empty (e.g. profiling was never turned on) — this is still
+        // just empty (e.g. profiling was never turned on), this is still
         // worth the normal retry/generic-message path, since it's not a
         // permission wall on every tier.
         this.timeout(5000);
@@ -274,11 +282,11 @@ suite('PlanProvider.getPlan', () => {
     test('when FLUSH STATISTICS fails, polls the longer flush-failure schedule (more rounds) before giving up', async () => {
         // FLUSH fails and every tier is genuinely empty on every round. The
         // fetch must run one full fallback pass per entry in the flush-failure
-        // schedule — more rounds than the 3-round post-flush-success path —
+        // schedule, more rounds than the 3-round post-flush-success path,
         // rather than reporting "no data" after the short window. Delays are
         // zeroed here so the assertion is about round count, not wall-clock.
         const empty = () => createEmptyRawResult(SUMMARY_COLUMNS);
-        const responses: Array<() => any> = [];
+        const responses: Array<() => unknown> = [];
         for (let round = 0; round < 5; round++) {
             responses.push(empty, empty, empty);
         }
@@ -297,10 +305,10 @@ suite('PlanProvider.getPlan', () => {
 
     test('when FLUSH STATISTICS succeeds, uses the short 3-round schedule, not the flush-failure one', async function () {
         // Contrast to the test above: flush succeeded, so the data should be
-        // visible almost immediately — no reason to poll the long schedule.
+        // visible almost immediately; no reason to poll the long schedule.
         this.timeout(5000);
         const empty = () => createEmptyRawResult(SUMMARY_COLUMNS);
-        const responses: Array<() => any> = [];
+        const responses: Array<() => unknown> = [];
         for (let round = 0; round < 3; round++) {
             responses.push(empty, empty, empty);
         }
@@ -338,18 +346,18 @@ suite('PlanProvider.getPlan', () => {
             execute: async () => createEmptyRawResult([]),
             query: async () => createRawResult(SUMMARY_COLUMNS, [summaryRow()])
         };
-        const fakeConnectionManager = {
+        const fakeConnectionManager: FakeConnectionManager<FakePlanDriver, ExecuteRetryOptions> = {
             getDriver: async (_connectionId?: string, role?: string) => {
                 capturedRole = role;
                 return fakeDriver;
             },
-            executeWithRetry: async (fn: () => Promise<any>, _connectionId?: string, options?: any) => {
+            executeWithRetry: async (fn, _connectionId?: string, options?: ExecuteRetryOptions) => {
                 capturedTimeout = options?.timeoutMs;
                 return fn();
             }
         };
 
-        const provider = new PlanProvider(fakeConnectionManager);
+        const provider = new PlanProvider(asConnectionManager(fakeConnectionManager));
         await provider.getPlan(TEST_CONNECTION, TARGET);
 
         assert.strictEqual(capturedRole, 'background');
@@ -367,7 +375,7 @@ suite('PlanProvider.getPlan', () => {
         assert.ok(sql.includes("COMMAND_NAME NOT IN ('COMMIT', 'ROLLBACK')"), 'must exclude implicit transaction bookkeeping');
     });
 
-    test('only the DETAILS tier orders by IPROC — the summary views have no such column', async () => {
+    test('only the DETAILS tier orders by IPROC; the summary views have no such column', async () => {
         // Regression test: EXA_DBA_PROFILE_LAST_DAY/EXA_USER_PROFILE_LAST_DAY
         // have no IPROC column (confirmed via DESCRIBE against a live
         // instance); a prior refactor briefly ordered by it unconditionally,
