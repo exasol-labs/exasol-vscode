@@ -23,7 +23,7 @@ suite('ObjectTreeProvider Metadata Fallback', () => {
                 {
                     resultType: 'resultSet',
                     resultSet: {
-                        columns: [{ name: columnName }],
+                        columns: [{ name: columnName, dataType: { type: 'VARCHAR' } }],
                         numColumns: 1,
                         numRows: values.length,
                         numRowsInMessage: values.length,

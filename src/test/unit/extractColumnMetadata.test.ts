@@ -20,34 +20,11 @@ suite('extractColumnMetadata', () => {
         assert.strictEqual(result[0].size, 255);
     });
 
-    test('uses VARCHAR fallback when dataType is missing', () => {
-        const input = [{ name: 'UNKNOWN' }];
-        const result = extractColumnMetadata(input);
-        assert.strictEqual(result[0].name, 'UNKNOWN');
-        assert.strictEqual(result[0].type, 'VARCHAR');
-        assert.strictEqual(result[0].precision, undefined);
-        assert.strictEqual(result[0].scale, undefined);
-        assert.strictEqual(result[0].size, undefined);
-    });
-
-    test('uses VARCHAR fallback when dataType is null', () => {
-        const input = [{ name: 'NULLDT', dataType: null }];
-        const result = extractColumnMetadata(input);
-        assert.strictEqual(result[0].type, 'VARCHAR');
-    });
-
-    test('uses VARCHAR fallback when dataType.type is missing', () => {
-        const input = [{ name: 'NOTYPE', dataType: { precision: 5 } }];
-        const result = extractColumnMetadata(input);
-        assert.strictEqual(result[0].type, 'VARCHAR');
-        assert.strictEqual(result[0].precision, 5);
-    });
-
     test('maps multiple columns in order', () => {
         const input = [
             { name: 'ID', dataType: { type: 'INTEGER' } },
             { name: 'NAME', dataType: { type: 'VARCHAR', size: 100 } },
-            { COLUMN_NAME: 'STATUS' }
+            { name: 'STATUS', dataType: { type: 'VARCHAR' } }
         ];
         const result = extractColumnMetadata(input);
         assert.strictEqual(result.length, 3);
@@ -62,13 +39,5 @@ suite('extractColumnMetadata', () => {
     test('handles empty input array', () => {
         const result = extractColumnMetadata([]);
         assert.deepStrictEqual(result, []);
-    });
-
-    test('uses extractColumnName fallback for system-table rows (COLUMN_NAME key)', () => {
-        const input = [{ COLUMN_NAME: 'TABLE_NAME', dataType: { type: 'VARCHAR', size: 128 } }];
-        const result = extractColumnMetadata(input);
-        assert.strictEqual(result[0].name, 'TABLE_NAME');
-        assert.strictEqual(result[0].type, 'VARCHAR');
-        assert.strictEqual(result[0].size, 128);
     });
 });
