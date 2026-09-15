@@ -42,6 +42,7 @@ export {
     executeWithoutResult,
     extractColumnName,
     extractColumnMetadata,
-    throwSqlError
+    throwSqlError,
+    SqlError
 } from './driver';
 export type { ColumnMetadata, RawSqlResponse, SqlRow } from './driver';
