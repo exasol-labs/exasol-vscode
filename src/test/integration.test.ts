@@ -132,7 +132,7 @@ suite('Integration Test Suite', () => {
 
         // 4. Generate SELECT statement
         try {
-            await objectActions.generateSelectStatement(conn, TEST_CONFIG.testSchema, TEST_CONFIG.testTable, 'table');
+            await objectActions.generateSelectStatement(conn, TEST_CONFIG.testSchema, TEST_CONFIG.testTable);
         } catch (error) {
             console.log('Generate SELECT test note:', error);
         }

@@ -78,6 +78,7 @@ export class ObjectActions {
                     FROM SYS.EXA_ALL_COLUMNS
                     WHERE COLUMN_SCHEMA = '${escapeSqlString(schemaName)}'
                     AND COLUMN_TABLE = '${escapeSqlString(tableName)}'
+                    AND (COLUMN_OBJECT_TYPE = 'TABLE' OR COLUMN_OBJECT_TYPE IS NULL)
                     ORDER BY COLUMN_ORDINAL_POSITION
                 `;
                 const result = await rawQuery(driver, query);
@@ -85,15 +86,22 @@ export class ObjectActions {
                     COLUMN_NAME: string;
                     COLUMN_TYPE: string;
                     COLUMN_DEFAULT: string | null;
-                    COLUMN_IS_NULLABLE: boolean;
+                    COLUMN_IS_NULLABLE: boolean | null;
                     COLUMN_COMMENT: string | null;
                 }>(result);
             }, connection.id);
 
+            if (rows.length === 0) {
+                vscode.window.showErrorMessage(`Table definition not found for ${schemaName}.${tableName}`);
+                return;
+            }
+
             // Build DDL
             let ddl = `CREATE TABLE "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(tableName)}" (\n`;
             const columns = rows.map(row => {
-                const nullable = row.COLUMN_IS_NULLABLE ? '' : ' NOT NULL';
+                // Query is scoped to COLUMN_OBJECT_TYPE = 'TABLE' (or unset), where
+                // COLUMN_IS_NULLABLE is never null.
+                const nullable = row.COLUMN_IS_NULLABLE === false ? ' NOT NULL' : '';
                 const defaultVal = row.COLUMN_DEFAULT ? ` DEFAULT ${row.COLUMN_DEFAULT}` : '';
                 const comment = row.COLUMN_COMMENT ? ` -- ${row.COLUMN_COMMENT}` : '';
                 return `    "${escapeSqlIdentifier(row.COLUMN_NAME)}" ${row.COLUMN_TYPE}${nullable}${defaultVal}${comment}`;
@@ -144,7 +152,7 @@ export class ObjectActions {
         }
     }
 
-    async generateSelectStatement(connection: StoredConnection, schemaName: string, tableName: string, _type: 'table' | 'view') {
+    async generateSelectStatement(connection: StoredConnection, schemaName: string, tableName: string) {
         try {
             const rows = await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id);

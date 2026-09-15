@@ -700,7 +700,7 @@ interface ObjectTreeItemOptions {
     connection?: StoredConnection;
     schemaName?: string;
     tableInfo?: { name: string; rowCount?: number };
-    columnInfo?: { name: string; type: string; nullable: boolean };
+    columnInfo?: { name: string; type: string; nullable: boolean | null };
     tableCount?: number;
     viewCount?: number;
     constraintCount?: number;
@@ -718,7 +718,7 @@ export class ObjectTreeItem extends vscode.TreeItem {
     public readonly connection?: StoredConnection;
     public readonly schemaName?: string;
     public readonly tableInfo?: { name: string; rowCount?: number };
-    public readonly columnInfo?: { name: string; type: string; nullable: boolean };
+    public readonly columnInfo?: { name: string; type: string; nullable: boolean | null };
     public readonly tableCount?: number;
     public readonly viewCount?: number;
     public readonly constraintCount?: number;
@@ -806,7 +806,7 @@ export class ObjectTreeItem extends vscode.TreeItem {
                 break;
             case 'column':
                 if (this.columnInfo) {
-                    this.tooltip = `${this.columnInfo.name}: ${this.columnInfo.type}${this.columnInfo.nullable ? ' (nullable)' : ''}`;
+                    this.tooltip = `${this.columnInfo.name}: ${this.columnInfo.type}${this.columnInfo.nullable === true ? ' (nullable)' : ''}`;
                 }
                 break;
             case 'constraints-folder':

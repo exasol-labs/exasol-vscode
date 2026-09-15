@@ -1,29 +1,28 @@
 import type { SQLQueriesResponse, SQLResponse } from '@exasol/exasol-driver-ts';
 import { ConnectionManager, StoredConnection, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
-import { getRowsFromResult, escapeSqlString, escapeSqlIdentifier, rawQuery, safeFetch } from '../utils';
+import { getRowsFromResult, escapeSqlString, escapeSqlIdentifier, rawQuery, safeFetch, throwSqlError } from '../utils';
 
 // ---------------------------------------------------------------------------
 // Helper utilities
 // ---------------------------------------------------------------------------
 
 /**
- * Row shapes for the table/view fallback chains. Each fallback selects the name
- * under a different alias depending on which system table is available, so every
- * column is optional and the mappers coalesce across them.
+ * Row shape for the table fallback chain. Every fallback SELECT aliases the
+ * name to TABLE_NAME, so that is the only key that ever appears in rows; only
+ * the first attempt also selects TABLE_ROW_COUNT.
  */
 type TableNameRow = {
-    TABLE_NAME?: string;
-    OBJECT_NAME?: string;
-    COLUMN_TABLE?: string;
+    TABLE_NAME: string;
     TABLE_ROW_COUNT?: unknown;
 };
 
+/**
+ * Row shape for the view fallback chain. Every fallback SELECT aliases the
+ * name to VIEW_NAME, so that is the only key that ever appears in rows.
+ */
 type ViewNameRow = {
-    VIEW_NAME?: string;
-    TABLE_NAME?: string;
-    OBJECT_NAME?: string;
-    COLUMN_TABLE?: string;
+    VIEW_NAME: string;
 };
 
 export function parseRowCount(rowCount: unknown): number | undefined {
@@ -51,22 +50,22 @@ export function isRawDataError(error: unknown): boolean {
     return message.includes('NUMRESULTS') || error instanceof TypeError;
 }
 
-export function getRawResultOrThrow(result: unknown): SQLResponse<SQLQueriesResponse> {
+export function getRawResultOrThrow(
+    result: SQLResponse<SQLQueriesResponse> | null | undefined
+): SQLResponse<SQLQueriesResponse> {
     if (!result) {
         throw new Error('Empty result set');
     }
 
-    const response = result as SQLResponse<SQLQueriesResponse>;
-    if (typeof response.status === 'string' && response.status !== 'ok') {
-        const message = response.exception?.text || 'Unknown error';
-        throw new Error(message);
+    if (result.status === 'error') {
+        throwSqlError(result);
     }
 
-    if (!response.responseData || typeof response.responseData.numResults !== 'number') {
+    if (!result.responseData || typeof result.responseData.numResults !== 'number') {
         throw new Error('Unexpected result format: missing numResults');
     }
 
-    return response;
+    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +146,8 @@ export async function fetchTables(
     try {
         return await connectionManager.executeWithRetry(async () => {
             const driver = await connectionManager.getDriver(connection.id, 'background');
+            const mapTableNames = (rows: TableNameRow[]): Array<{ name: string }> =>
+                rows.map(row => ({ name: row.TABLE_NAME }));
             const attempts: Array<{
                 description: string;
                 sql: string;
@@ -164,7 +165,7 @@ export async function fetchTables(
                         ORDER BY TABLE_NAME
                     `,
                     map: rows => rows.map(row => ({
-                        name: row.TABLE_NAME ?? '',
+                        name: row.TABLE_NAME,
                         rowCount: parseRowCount(row.TABLE_ROW_COUNT)
                     })),
                     isRecoverable: error =>
@@ -179,9 +180,7 @@ export async function fetchTables(
                         WHERE TABLE_SCHEMA = '${escapeSqlString(schemaName)}'
                         ORDER BY TABLE_NAME
                     `,
-                    map: rows => rows.map(row => ({
-                        name: row.TABLE_NAME ?? ''
-                    })),
+                    map: mapTableNames,
                     isRecoverable: error =>
                         isColumnMissingError(error, 'EXA_ALL_TABLES') ||
                         isColumnMissingError(error, 'TABLE_NAME')
@@ -195,9 +194,7 @@ export async function fetchTables(
                         AND OBJECT_TYPE = 'TABLE'
                         ORDER BY OBJECT_NAME
                     `,
-                    map: rows => rows.map(row => ({
-                        name: row.TABLE_NAME ?? row.OBJECT_NAME ?? ''
-                    })),
+                    map: mapTableNames,
                     isRecoverable: error =>
                         isColumnMissingError(error, 'EXA_ALL_OBJECTS') ||
                         isColumnMissingError(error, 'OBJECT_TYPE')
@@ -211,9 +208,7 @@ export async function fetchTables(
                         AND (COLUMN_OBJECT_TYPE = 'TABLE' OR COLUMN_OBJECT_TYPE IS NULL)
                         ORDER BY COLUMN_TABLE
                     `,
-                    map: rows => rows.map(row => ({
-                        name: row.TABLE_NAME ?? row.COLUMN_TABLE ?? ''
-                    })),
+                    map: mapTableNames,
                     isRecoverable: () => false
                 }
             ];
@@ -258,6 +253,8 @@ export async function fetchViews(
         return await connectionManager.executeWithRetry(async () => {
             outputChannel?.appendLine(`   Running views query for schema '${schemaName}'`);
             const driver = await connectionManager.getDriver(connection.id, 'background');
+            const mapViewNames = (rows: ViewNameRow[]): Array<{ name: string }> =>
+                rows.map(row => ({ name: row.VIEW_NAME }));
 
             const attempts: Array<{
                 description: string;
@@ -273,7 +270,7 @@ export async function fetchViews(
                         WHERE VIEW_SCHEMA = '${escapeSqlString(schemaName)}'
                         ORDER BY TABLE_NAME
                     `,
-                    map: rows => rows.map(row => ({ name: row.VIEW_NAME ?? row.TABLE_NAME ?? '' })),
+                    map: mapViewNames,
                     recoverable: error =>
                         isColumnMissingError(error, 'TABLE_NAME') ||
                         isColumnMissingError(error, 'VIEW_SCHEMA') ||
@@ -289,7 +286,7 @@ export async function fetchViews(
                         AND OBJECT_TYPE = 'VIEW'
                         ORDER BY OBJECT_NAME
                     `,
-                    map: rows => rows.map(row => ({ name: row.VIEW_NAME ?? row.OBJECT_NAME ?? '' })),
+                    map: mapViewNames,
                     recoverable: error =>
                         isColumnMissingError(error, 'OBJECT_NAME') ||
                         isColumnMissingError(error, 'OBJECT_SCHEMA') ||
@@ -310,7 +307,7 @@ export async function fetchViews(
                         )
                         ORDER BY COLUMN_TABLE
                     `,
-                    map: rows => rows.map(row => ({ name: row.VIEW_NAME ?? row.COLUMN_TABLE ?? '' })),
+                    map: mapViewNames,
                     recoverable: () => false
                 }
             ];
@@ -352,7 +349,7 @@ export async function fetchColumns(
     connection: StoredConnection,
     schemaName: string,
     tableName: string
-): Promise<Array<{ name: string; type: string; nullable: boolean }>> {
+): Promise<Array<{ name: string; type: string; nullable: boolean | null }>> {
     try {
         return await connectionManager.executeWithRetry(async () => {
             const driver = await connectionManager.getDriver(connection.id, 'background');
@@ -369,11 +366,14 @@ export async function fetchColumns(
             const rows = getRowsFromResult<{
                 COLUMN_NAME: string;
                 COLUMN_TYPE: string;
-                COLUMN_IS_NULLABLE: boolean;
+                COLUMN_IS_NULLABLE: boolean | null;
             }>(result);
             return rows.map(row => ({
                 name: row.COLUMN_NAME,
                 type: row.COLUMN_TYPE,
+                // EXA_ALL_COLUMNS.COLUMN_IS_NULLABLE is null for view columns
+                // (nullability is not tracked for views); pass that through
+                // rather than guessing a value the database did not report.
                 nullable: row.COLUMN_IS_NULLABLE
             }));
         }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
