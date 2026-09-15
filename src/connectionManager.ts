@@ -86,7 +86,6 @@ export function isConnectionError(error: unknown): boolean {
         'ENOTFOUND',
         'ECONNREFUSED',
         'connection closed',
-        'WebSocket',
         'socket hang up'
     ].some(token => errorMsg.includes(token));
 }
@@ -572,7 +571,14 @@ export class ConnectionManager {
             }
 
             // Check if it's a connection-related error that requires reconnection
-            if (options?.retryOnConnectionError !== false && isConnectionError(error) && id && this.drivers.get(id)?.has(role)) {
+            if (options?.retryOnConnectionError !== false
+                && isConnectionError(error)
+                && id
+                // A socket callback can evict the driver before the in-flight
+                // command rejects. A recent connection failure still indicates
+                // that getDriver() already exhausted its own connect retries;
+                // otherwise let the retry callback reconnect the evicted driver.
+                && !this.recentFailures.get(id)?.has(role)) {
                 // Only retry if a driver existed — meaning the query itself failed
                 // on an established connection. If no driver exists, getDriver()/
                 // connectWithRetry() already exhausted its retries; retrying here
@@ -776,7 +782,6 @@ export class ConnectionManager {
             port: connection.port,
             user: connection.user,
             password: connection.password,
-            encryption: true,
             clientName,
             clientVersion: this.extensionVersion,
             fetchSize,
@@ -814,7 +819,6 @@ export class ConnectionManager {
             port: connection.port,
             user: connection.user,
             password: connection.password,
-            encryption: true,
             clientName: 'VSCode Exasol',
             clientVersion: this.extensionVersion,
             fetchSize
