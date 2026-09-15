@@ -1,38 +1,10 @@
 import * as assert from 'assert';
-import { ObjectTreeProvider } from '../providers/objectTreeProvider';
+import { fetchTables } from '../providers/objectTreeFetchers';
 import type { StoredConnection } from '../connectionManager';
+import { MockConnectionManager, asConnectionManager, createRawResult as createRawTableResult } from './helpers/mockConnectionManager';
 
 suite('ObjectTreeProvider Metadata Fallback', () => {
-    class MockConnectionManager {
-        constructor(private readonly driver: any, private readonly connection: StoredConnection) {}
-
-        getConnections(): StoredConnection[] {
-            return [this.connection];
-        }
-
-        async getDriver(): Promise<any> {
-            return this.driver;
-        }
-    }
-
-    const createRawResult = (columnName: string, values: string[]) => ({
-        status: 'ok',
-        responseData: {
-            numResults: 1,
-            results: [
-                {
-                    resultType: 'resultSet',
-                    resultSet: {
-                        columns: [{ name: columnName }],
-                        numColumns: 1,
-                        numRows: values.length,
-                        numRowsInMessage: values.length,
-                        data: [values]
-                    }
-                }
-            ]
-        }
-    });
+    const createRawResult = (columnName: string, values: string[]) => createRawTableResult([columnName], values.map(value => [value]));
 
     test('falls back through multiple query attempts', async () => {
         const queries: string[] = [];
@@ -62,9 +34,8 @@ suite('ObjectTreeProvider Metadata Fallback', () => {
         };
 
         const manager = new MockConnectionManager(driver, connection);
-        const provider = new ObjectTreeProvider(manager as any);
 
-        const tables = await (provider as any).fetchTables(connection, 'TEST_SCHEMA');
+        const tables = await fetchTables(asConnectionManager(manager), connection, 'TEST_SCHEMA');
 
         assert.strictEqual(tables.length, 1, 'Should return one table from fallback query');
         assert.strictEqual(tables[0].name, 'FALLBACK_TABLE', 'Should use fallback table name');

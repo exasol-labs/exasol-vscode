@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { getRowsFromResult, getColumnsFromResult, executeWithoutResult } from '../utils';
 import { ConnectionManager } from '../connectionManager';
+import type { activate } from '../extension';
 import { TEST_CONFIG } from './testConfig';
 
 suite('Utils Test Suite', () => {
@@ -10,14 +11,14 @@ suite('Utils Test Suite', () => {
 
     suiteSetup(async function() {
         this.timeout(60000);
-        const ext = vscode.extensions.getExtension('exasol.exasol-vscode');
+        const ext = vscode.extensions.getExtension<ReturnType<typeof activate>>('exasol.exasol-vscode');
         if (!ext) {
             throw new Error('Extension not found');
         }
         if (!ext.isActive) {
             await ext.activate();
         }
-        context = (ext.exports as any).context;
+        context = ext.exports.context;
         connectionManager = new ConnectionManager(context);
         await connectionManager.addConnection(TEST_CONFIG.connection);
     });

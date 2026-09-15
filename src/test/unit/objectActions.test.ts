@@ -43,22 +43,8 @@ function makeObjectActionsCapturingSql(): {
     const mockDriver = {
         query: async (sql: string, ..._rest: any[]) => {
             capturedSql.push(sql);
-            // Return a structurally valid empty result so rawQuery/getRowsFromResult work.
-            return {
-                status: 'ok',
-                responseData: {
-                    numResults: 1,
-                    results: [{
-                        resultType: 'resultSet',
-                        resultSet: {
-                            columns: [],
-                            numColumns: 0,
-                            numRows: 0,
-                            data: []
-                        }
-                    }]
-                }
-            };
+            // A structurally valid empty result so rawQuery/getRowsFromResult work.
+            return createEmptyRawResult([]);
         }
     };
 

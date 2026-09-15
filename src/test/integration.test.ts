@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { ConnectionManager } from '../connectionManager';
+import type { activate } from '../extension';
 import { QueryExecutor } from '../queryExecutor';
 import { SessionManager } from '../sessionManager';
 import { ObjectActions } from '../objectActions';
@@ -16,14 +17,14 @@ suite('Integration Test Suite', () => {
 
     suiteSetup(async function() {
         this.timeout(60000);
-        const ext = vscode.extensions.getExtension('exasol.exasol-vscode');
+        const ext = vscode.extensions.getExtension<ReturnType<typeof activate>>('exasol.exasol-vscode');
         if (!ext) {
             throw new Error('Extension not found');
         }
         if (!ext.isActive) {
             await ext.activate();
         }
-        context = (ext.exports as any).context;
+        context = ext.exports.context;
 
         // Initialize all components
         connectionManager = new ConnectionManager(context);
@@ -168,7 +169,7 @@ suite('Integration Test Suite', () => {
     test('Transaction workflow', async function() {
         this.timeout(30000);
 
-        const driver = await connectionManager.getDriver();
+        await connectionManager.getDriver();
 
         // Create temp table
         await queryExecutor.execute(`

@@ -1,6 +1,14 @@
 import * as assert from 'assert';
-import { ObjectTreeProvider } from '../providers/objectTreeProvider';
-import { TEST_CONNECTION, createRawResult, createEmptyRawResult, MockConnectionManager } from './helpers/mockConnectionManager';
+import * as vscode from 'vscode';
+import { ObjectTreeItem, ObjectTreeProvider } from '../providers/objectTreeProvider';
+import { fetchScriptCounts, fetchFunctionCount, fetchScripts, fetchFunctions } from '../providers/objectTreeFetchers';
+import {
+    TEST_CONNECTION,
+    createRawResult,
+    createEmptyRawResult,
+    MockConnectionManager,
+    asConnectionManager
+} from './helpers/mockConnectionManager';
 
 const connection = TEST_CONNECTION;
 
@@ -25,9 +33,8 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const counts = await (provider as any).fetchScriptCounts(connection, 'MY_SCHEMA');
+            const counts = await fetchScriptCounts(asConnectionManager(manager), connection, 'MY_SCHEMA');
 
             assert.strictEqual(counts.get('UDF'), 5);
             assert.strictEqual(counts.get('SCRIPTING'), 2);
@@ -40,9 +47,8 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const counts = await (provider as any).fetchScriptCounts(connection, 'MY_SCHEMA');
+            const counts = await fetchScriptCounts(asConnectionManager(manager), connection, 'MY_SCHEMA');
 
             assert.strictEqual(counts.size, 0);
         });
@@ -64,9 +70,8 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const counts = await (provider as any).fetchScriptCounts(connection, 'MY_SCHEMA');
+            const counts = await fetchScriptCounts(asConnectionManager(manager), connection, 'MY_SCHEMA');
 
             assert.strictEqual(counts.get('UDF'), 3);
             assert.ok(!counts.has('SCRIPTING'), 'Zero-count types should not be in map');
@@ -88,9 +93,8 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const count = await (provider as any).fetchFunctionCount(connection, 'MY_SCHEMA');
+            const count = await fetchFunctionCount(asConnectionManager(manager), connection, 'MY_SCHEMA');
 
             assert.strictEqual(count, 7);
         });
@@ -101,9 +105,8 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const count = await (provider as any).fetchFunctionCount(connection, 'MY_SCHEMA');
+            const count = await fetchFunctionCount(asConnectionManager(manager), connection, 'MY_SCHEMA');
 
             assert.strictEqual(count, 0);
         });
@@ -127,9 +130,8 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const scripts = await (provider as any).fetchScripts(connection, 'MY_SCHEMA', 'UDF');
+            const scripts = await fetchScripts(asConnectionManager(manager), connection, 'MY_SCHEMA', 'UDF');
 
             assert.strictEqual(scripts.length, 2);
             assert.strictEqual(scripts[0].name, 'MY_UDF');
@@ -156,9 +158,8 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const scripts = await (provider as any).fetchScripts(connection, 'MY_SCHEMA', 'SCRIPTING');
+            const scripts = await fetchScripts(asConnectionManager(manager), connection, 'MY_SCHEMA', 'SCRIPTING');
 
             assert.strictEqual(scripts.length, 1);
             assert.strictEqual(scripts[0].name, 'MY_PROC');
@@ -183,9 +184,8 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const scripts = await (provider as any).fetchScripts(connection, 'MY_SCHEMA', 'ADAPTER');
+            const scripts = await fetchScripts(asConnectionManager(manager), connection, 'MY_SCHEMA', 'ADAPTER');
 
             assert.strictEqual(scripts.length, 1);
             assert.strictEqual(scripts[0].name, 'S3_ADAPTER');
@@ -198,9 +198,8 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const scripts = await (provider as any).fetchScripts(connection, 'MY_SCHEMA', 'UDF');
+            const scripts = await fetchScripts(asConnectionManager(manager), connection, 'MY_SCHEMA', 'UDF');
             assert.deepStrictEqual(scripts, []);
         });
     });
@@ -223,9 +222,8 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const functions = await (provider as any).fetchFunctions(connection, 'MY_SCHEMA');
+            const functions = await fetchFunctions(asConnectionManager(manager), connection, 'MY_SCHEMA');
 
             assert.strictEqual(functions.length, 2);
             assert.strictEqual(functions[0].name, 'MY_FUNC');
@@ -238,9 +236,8 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const functions = await (provider as any).fetchFunctions(connection, 'MY_SCHEMA');
+            const functions = await fetchFunctions(asConnectionManager(manager), connection, 'MY_SCHEMA');
             assert.deepStrictEqual(functions, []);
         });
     });
@@ -266,20 +263,21 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const schemaElement = {
-                type: 'schema' as const,
+            const schemaElement = new ObjectTreeItem({
+                type: 'schema',
                 connection,
                 schemaName: 'MY_SCHEMA',
                 label: 'MY_SCHEMA',
                 id: 'conn-1:MY_SCHEMA',
                 tableCount: 5,
-                viewCount: 2
-            };
+                viewCount: 2,
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(schemaElement as any);
-            const labels = children.map((c: any) => c.label);
+            const children = await provider.getChildren(schemaElement);
+            const labels = children.map(c => c.label);
 
             assert.ok(labels.includes('Tables'), 'Should have Tables folder');
             assert.ok(labels.includes('Views'), 'Should have Views folder');
@@ -303,20 +301,21 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const schemaElement = {
-                type: 'schema' as const,
+            const schemaElement = new ObjectTreeItem({
+                type: 'schema',
                 connection,
                 schemaName: 'MY_SCHEMA',
                 label: 'MY_SCHEMA',
                 id: 'conn-1:MY_SCHEMA',
                 tableCount: 5,
-                viewCount: 2
-            };
+                viewCount: 2,
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(schemaElement as any);
-            const labels = children.map((c: any) => c.label);
+            const children = await provider.getChildren(schemaElement);
+            const labels = children.map(c => c.label);
 
             assert.ok(labels.includes('Tables'), 'Should always have Tables folder');
             assert.ok(labels.includes('Views'), 'Should always have Views folder');
@@ -340,20 +339,21 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const schemaElement = {
-                type: 'schema' as const,
+            const schemaElement = new ObjectTreeItem({
+                type: 'schema',
                 connection,
                 schemaName: 'MY_SCHEMA',
                 label: 'MY_SCHEMA',
                 id: 'conn-1:MY_SCHEMA',
                 tableCount: 5,
-                viewCount: 2
-            };
+                viewCount: 2,
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(schemaElement as any);
-            const labels = children.map((c: any) => c.label);
+            const children = await provider.getChildren(schemaElement);
+            const labels = children.map(c => c.label);
 
             assert.ok(labels.includes('Tables'), 'Tables folder should still exist');
             assert.ok(labels.includes('Views'), 'Views folder should still exist');
@@ -379,23 +379,24 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const udfsFolderElement = {
-                type: 'udfs-folder' as const,
+            const udfsFolderElement = new ObjectTreeItem({
+                type: 'udfs-folder',
                 connection,
                 schemaName: 'MY_SCHEMA',
                 label: 'UDFs',
-                id: 'conn-1:MY_SCHEMA:udfs-folder'
-            };
+                id: 'conn-1:MY_SCHEMA:udfs-folder',
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(udfsFolderElement as any);
+            const children = await provider.getChildren(udfsFolderElement);
 
             assert.strictEqual(children.length, 2);
-            assert.strictEqual((children[0] as any).label, 'MY_UDF');
-            assert.strictEqual((children[0] as any).type, 'script');
-            assert.strictEqual((children[1] as any).label, 'SCALAR_UDF');
-            assert.strictEqual((children[1] as any).type, 'script');
+            assert.strictEqual(children[0].label, 'MY_UDF');
+            assert.strictEqual((children[0] as ObjectTreeItem).type, 'script');
+            assert.strictEqual(children[1].label, 'SCALAR_UDF');
+            assert.strictEqual((children[1] as ObjectTreeItem).type, 'script');
         });
     });
 
@@ -416,21 +417,22 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const procsFolderElement = {
-                type: 'procedures-folder' as const,
+            const procsFolderElement = new ObjectTreeItem({
+                type: 'procedures-folder',
                 connection,
                 schemaName: 'MY_SCHEMA',
                 label: 'Procedures',
-                id: 'conn-1:MY_SCHEMA:procedures-folder'
-            };
+                id: 'conn-1:MY_SCHEMA:procedures-folder',
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(procsFolderElement as any);
+            const children = await provider.getChildren(procsFolderElement);
 
             assert.strictEqual(children.length, 1);
-            assert.strictEqual((children[0] as any).label, 'MY_PROC');
-            assert.strictEqual((children[0] as any).type, 'script');
+            assert.strictEqual(children[0].label, 'MY_PROC');
+            assert.strictEqual((children[0] as ObjectTreeItem).type, 'script');
         });
     });
 
@@ -451,21 +453,22 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const adaptersFolderElement = {
-                type: 'adapters-folder' as const,
+            const adaptersFolderElement = new ObjectTreeItem({
+                type: 'adapters-folder',
                 connection,
                 schemaName: 'MY_SCHEMA',
                 label: 'Adapters',
-                id: 'conn-1:MY_SCHEMA:adapters-folder'
-            };
+                id: 'conn-1:MY_SCHEMA:adapters-folder',
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(adaptersFolderElement as any);
+            const children = await provider.getChildren(adaptersFolderElement);
 
             assert.strictEqual(children.length, 1);
-            assert.strictEqual((children[0] as any).label, 'S3_ADAPTER');
-            assert.strictEqual((children[0] as any).type, 'script');
+            assert.strictEqual(children[0].label, 'S3_ADAPTER');
+            assert.strictEqual((children[0] as ObjectTreeItem).type, 'script');
         });
     });
 
@@ -487,23 +490,24 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const functionsFolderElement = {
-                type: 'functions-folder' as const,
+            const functionsFolderElement = new ObjectTreeItem({
+                type: 'functions-folder',
                 connection,
                 schemaName: 'MY_SCHEMA',
                 label: 'Functions',
-                id: 'conn-1:MY_SCHEMA:functions-folder'
-            };
+                id: 'conn-1:MY_SCHEMA:functions-folder',
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(functionsFolderElement as any);
+            const children = await provider.getChildren(functionsFolderElement);
 
             assert.strictEqual(children.length, 2);
-            assert.strictEqual((children[0] as any).label, 'MY_FUNC');
-            assert.strictEqual((children[0] as any).type, 'function');
-            assert.strictEqual((children[1] as any).label, 'ANOTHER_FUNC');
-            assert.strictEqual((children[1] as any).type, 'function');
+            assert.strictEqual(children[0].label, 'MY_FUNC');
+            assert.strictEqual((children[0] as ObjectTreeItem).type, 'function');
+            assert.strictEqual(children[1].label, 'ANOTHER_FUNC');
+            assert.strictEqual((children[1] as ObjectTreeItem).type, 'function');
         });
 
         test('returns empty array when functions folder query fails', async () => {
@@ -512,17 +516,18 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const functionsFolderElement = {
-                type: 'functions-folder' as const,
+            const functionsFolderElement = new ObjectTreeItem({
+                type: 'functions-folder',
                 connection,
                 schemaName: 'MY_SCHEMA',
                 label: 'Functions',
-                id: 'conn-1:MY_SCHEMA:functions-folder'
-            };
+                id: 'conn-1:MY_SCHEMA:functions-folder',
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(functionsFolderElement as any);
+            const children = await provider.getChildren(functionsFolderElement);
 
             assert.strictEqual(children.length, 0);
         });
@@ -543,18 +548,19 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const udfsFolderElement = {
-                type: 'udfs-folder' as const,
+            const udfsFolderElement = new ObjectTreeItem({
+                type: 'udfs-folder',
                 connection,
                 schemaName: 'MY_SCHEMA',
                 label: 'UDFs',
-                id: 'conn-1:MY_SCHEMA:udfs-folder'
-            };
+                id: 'conn-1:MY_SCHEMA:udfs-folder',
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(udfsFolderElement as any);
-            const scriptNode = children[0] as any;
+            const children = await provider.getChildren(udfsFolderElement);
+            const scriptNode = children[0] as ObjectTreeItem;
 
             assert.strictEqual(scriptNode.description, 'PYTHON3, SET');
         });
@@ -573,18 +579,19 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const procsFolderElement = {
-                type: 'procedures-folder' as const,
+            const procsFolderElement = new ObjectTreeItem({
+                type: 'procedures-folder',
                 connection,
                 schemaName: 'MY_SCHEMA',
                 label: 'Procedures',
-                id: 'conn-1:MY_SCHEMA:procedures-folder'
-            };
+                id: 'conn-1:MY_SCHEMA:procedures-folder',
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(procsFolderElement as any);
-            const scriptNode = children[0] as any;
+            const children = await provider.getChildren(procsFolderElement);
+            const scriptNode = children[0] as ObjectTreeItem;
 
             assert.strictEqual(scriptNode.description, 'LUA');
         });
@@ -603,21 +610,22 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const udfsFolderElement = {
-                type: 'udfs-folder' as const,
+            const udfsFolderElement = new ObjectTreeItem({
+                type: 'udfs-folder',
                 connection,
                 schemaName: 'MY_SCHEMA',
                 label: 'UDFs',
-                id: 'conn-1:MY_SCHEMA:udfs-folder'
-            };
+                id: 'conn-1:MY_SCHEMA:udfs-folder',
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(udfsFolderElement as any);
-            const scriptNode = children[0] as any;
+            const children = await provider.getChildren(udfsFolderElement);
+            const scriptNode = children[0] as ObjectTreeItem;
 
             assert.ok(scriptNode.command, 'Script node should have a command');
-            assert.strictEqual(scriptNode.command.command, 'exasol.openScriptSource');
+            assert.strictEqual(scriptNode.command!.command, 'exasol.openScriptSource');
         });
     });
 });
