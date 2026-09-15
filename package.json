@@ -609,11 +609,11 @@
     "esbuild": "^0.28.0",
     "eslint": "^10.4.0",
     "glob": "^13.0.0",
+    "hyparquet-writer": "^0.16.9",
     "jsdom": "^29.1.1",
     "mocha": "^11.7.1",
     "ovsx": "^0.10.12",
     "tsx": "^4.22.3",
-    "hyparquet-writer": "^0.16.9",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.4"
   },

@@ -69,7 +69,6 @@ export type RawSqlResponse = Omit<SQLResponse<SQLQueriesResponse>, 'responseData
 export class SqlError extends Error {
     constructor(public readonly sqlCode: string | undefined, message: string) {
         super(message);
-        this.name = 'SqlError';
     }
 }
 

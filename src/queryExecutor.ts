@@ -187,10 +187,9 @@ export class QueryExecutor {
             // Classify the query to determine which driver method to use
             if (isResultSet) {
                 // Result-set queries (SELECT, SHOW, DESCRIBE, etc.) - use query()
-                // Use 'raw' response type to avoid a driver bug where error responses
-                // (status:'error', responseData:undefined) crash on `responseData.numResults`
-                // access. Our getColumnsFromResult/getRowsFromResult handle raw responses
-                // correctly and surface proper SQL error messages.
+                // Use 'raw' response type so status, exception.sqlCode, and exception.text
+                // remain available for consistent SQL error handling. Our extractors inspect
+                // raw error responses and surface the proper SQL error message.
                 const result = await rawQuery(driver, finalQuery);
 
                 const executionTime = Date.now() - queryStartTime;

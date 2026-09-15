@@ -64,6 +64,7 @@ For Cursor and other VS Code-compatible editors that use the Open VSX Registry, 
 - Query cancellation depends on Exasol and network state; local file operations use the driver's `AbortSignal` cancellation and release their resources
 - Local file import is supported for CSV and Parquet via `IMPORT INTO <table> FROM LOCAL CSV|PARQUET FILE '<path>'`. The cluster must be able to open a connection back to the client machine for the import tunnel. Parquet requires Exasol 2025.1.9 or later.
 - `Exasol: Export Table or Query to CSV` streams a table or parenthesized query directly to a local CSV file through the driver, including column names and cancellation. `Exasol: Export Results to CSV` remains available for exporting the currently displayed result grid.
+- Direct CSV export uses `queryTimeout` as its maximum wall-clock duration; increase that setting for exports of very large data sets.
 - Cloud/server-side `IMPORT` and `EXPORT` statements continue to execute as ordinary SQL. Local FBV imports, multi-file local imports, and local Parquet export have no dedicated extension support.
 - Execution plans require session profiling. When `executionPlan` is enabled, the extension runs `ALTER SESSION SET PROFILE = 'ON'` on new user connections; reconnect after changing the setting or after a profiling setup failure
 - The Plan tab is only available for single-statement results — not yet for the multi-statement "Result 1 / Result 2" tab bar
