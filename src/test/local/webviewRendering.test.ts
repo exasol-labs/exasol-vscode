@@ -2,48 +2,52 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { JSDOM } from 'jsdom';
-import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helpers/vscodeMock';
+import { registerVscodeMock, registerExtensionMock, vscodeMock, WebviewRenderingVscodeMock } from '../helpers/vscodeMock';
+import type { SqlRow } from '../../utils';
+import type { QueryResult as FullQueryResult } from '../../queryExecutor';
 
 // resultsPanel.ts now transitively imports planProvider.ts -> connectionManager.ts
 // -> ./extension (for getOutputChannel), which in turn imports the full set of
 // tree/completion/notebook providers. registerExtensionMock() swaps out
 // ./extension with a lightweight fake before anything requires it, so that
 // whole chain never has to actually load under this test's minimal vscode mock.
-(vscodeMock as any).Uri = { ...(vscodeMock as any).Uri, joinPath: () => ({}) };
-(vscodeMock as any).window = {
+//
+// This module additionally reaches for window/commands/workspace/env/
+// CancellationTokenSource, none of which vscodeMock declares, so this file
+// grows the shared mock with those members (see WebviewRenderingVscodeMock in
+// vscodeMock.ts for why the cast goes through `unknown`, and for why this
+// narrower type, not the shared optional base, is what makes omitting one of
+// these assignments a compile error).
+const extendedVscodeMock = vscodeMock as unknown as WebviewRenderingVscodeMock;
+extendedVscodeMock.Uri = { ...vscodeMock.Uri, joinPath: () => ({}) };
+extendedVscodeMock.window = {
     registerWebviewViewProvider: () => ({ dispose: () => {} }),
     showSaveDialog: async () => undefined,
     showInformationMessage: () => {},
     showWarningMessage: () => {},
 };
-(vscodeMock as any).commands = {
+extendedVscodeMock.commands = {
     registerCommand: () => ({ dispose: () => {} }),
     executeCommand: () => {},
 };
-(vscodeMock as any).workspace = {
+extendedVscodeMock.workspace = {
     getConfiguration: () => ({ get: () => undefined }),
     fs: { writeFile: async () => {} },
 };
-(vscodeMock as any).env = { clipboard: { writeText: async () => {} } };
-(vscodeMock as any).CancellationTokenSource = class {};
+extendedVscodeMock.env = { clipboard: { writeText: async () => {} } };
+extendedVscodeMock.CancellationTokenSource = class {};
 
 registerVscodeMock();
 registerExtensionMock();
 
 // Now import source modules that transitively depend on vscode.
-const { ResultsPanel } = require('../../panels/resultsPanel');
-const { buildTabBarHtml, buildTabBarCss } = require('../../panels/tabBarRenderer');
-const { TabManager } = require('../../panels/tabManager');
+const { ResultsPanel } = require('../../panels/resultsPanel') as typeof import('../../panels/resultsPanel');
+const { buildTabBarHtml, buildTabBarCss } = require('../../panels/tabBarRenderer') as typeof import('../../panels/tabBarRenderer');
+const { TabManager } = require('../../panels/tabManager') as typeof import('../../panels/tabManager');
 
-interface QueryResult {
-    columns: string[];
-    columnMetadata: { name: string; type: string }[];
-    rows: Record<string, any>[];
-    rowCount: number;
-    executionTime: number;
-}
+type QueryResult = Pick<FullQueryResult, 'columns' | 'columnMetadata' | 'rows' | 'rowCount' | 'executionTime'>;
 
-function makeResult(columns: string[], rows: Record<string, any>[]): QueryResult {
+function makeResult(columns: string[], rows: SqlRow[]): QueryResult {
     return {
         columns,
         columnMetadata: columns.map(name => ({ name, type: 'VARCHAR' })),
@@ -92,7 +96,7 @@ suite('ResultsPanel.getGridHtmlStructure', () => {
         const filterInput = doc.getElementById('my-filter-id');
         assert.ok(filterInput, 'expected filter input element with matching id');
         assert.ok(
-            (filterInput as any).getAttribute('placeholder')?.includes('Filter'),
+            filterInput.getAttribute('placeholder')?.includes('Filter'),
             'expected filter placeholder text'
         );
     });

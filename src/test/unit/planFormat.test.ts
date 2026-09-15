@@ -170,7 +170,7 @@ suite('hottestNodeId', () => {
         assert.strictEqual(hottestNodeId(makePlan([])), undefined);
     });
 
-    test('a system step never wins, even with the largest costPercent — its denominator (share of total) is not comparable to a user operator\'s (share of query)', () => {
+    test('a system step never wins, even with the largest costPercent, its denominator (share of total) is not comparable to a user operator\'s (share of query)', () => {
         const plan = makePlan([
             makeNode({ id: 'compile', traits: SYSTEM_TRAITS, costPercent: 35 }),
             makeNode({ id: 'execute', traits: SYSTEM_TRAITS, costPercent: 43 }),
@@ -179,7 +179,7 @@ suite('hottestNodeId', () => {
         assert.strictEqual(hottestNodeId(plan), 'scan', 'the only non-system node must win regardless of the system steps\' larger numbers');
     });
 
-    test('returns undefined when every node is a system step — no actionable data-flow operator to ring', () => {
+    test('returns undefined when every node is a system step, no actionable data-flow operator to ring', () => {
         const plan = makePlan([
             makeNode({ id: 'compile', traits: SYSTEM_TRAITS, costPercent: 35 }),
             makeNode({ id: 'execute', traits: SYSTEM_TRAITS, costPercent: 65 })
@@ -213,7 +213,7 @@ suite('planLacksDetailMetrics', () => {
         assert.strictEqual(planLacksDetailMetrics(plan), false);
     });
 
-    test('is false for a plan with no nodes — nothing to educate the user about yet', () => {
+    test('is false for a plan with no nodes, nothing to educate the user about yet', () => {
         assert.strictEqual(planLacksDetailMetrics(makePlan([])), false);
     });
 

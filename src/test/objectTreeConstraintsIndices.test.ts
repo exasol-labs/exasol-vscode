@@ -1,6 +1,8 @@
 import * as assert from 'assert';
-import { ObjectTreeProvider } from '../providers/objectTreeProvider';
-import { TEST_CONNECTION, createRawResult, MockConnectionManager } from './helpers/mockConnectionManager';
+import * as vscode from 'vscode';
+import { ObjectTreeItem, ObjectTreeProvider } from '../providers/objectTreeProvider';
+import { fetchConstraints, fetchConstraintColumns, fetchIndices } from '../providers/objectTreeFetchers';
+import { TEST_CONNECTION, createRawResult, MockConnectionManager, asConnectionManager } from './helpers/mockConnectionManager';
 
 const connection = TEST_CONNECTION;
 
@@ -25,9 +27,8 @@ suite('ObjectTreeProvider Constraints & Indices', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const constraints = await (provider as any).fetchConstraints(connection, 'TEST_SCHEMA', 'USERS');
+            const constraints = await fetchConstraints(asConnectionManager(manager), connection, 'TEST_SCHEMA', 'USERS');
 
             assert.strictEqual(constraints.length, 3);
             assert.strictEqual(constraints[0].name, 'PK_USERS');
@@ -44,9 +45,8 @@ suite('ObjectTreeProvider Constraints & Indices', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const constraints = await (provider as any).fetchConstraints(connection, 'TEST_SCHEMA', 'USERS');
+            const constraints = await fetchConstraints(asConnectionManager(manager), connection, 'TEST_SCHEMA', 'USERS');
             assert.deepStrictEqual(constraints, []);
         });
     });
@@ -69,10 +69,9 @@ suite('ObjectTreeProvider Constraints & Indices', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const columns = await (provider as any).fetchConstraintColumns(
-                connection, 'TEST_SCHEMA', 'USERS', 'PK_USERS'
+            const columns = await fetchConstraintColumns(
+                asConnectionManager(manager), connection, 'TEST_SCHEMA', 'USERS', 'PK_USERS'
             );
 
             assert.strictEqual(columns.length, 2);
@@ -86,10 +85,9 @@ suite('ObjectTreeProvider Constraints & Indices', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const columns = await (provider as any).fetchConstraintColumns(
-                connection, 'TEST_SCHEMA', 'USERS', 'PK_USERS'
+            const columns = await fetchConstraintColumns(
+                asConnectionManager(manager), connection, 'TEST_SCHEMA', 'USERS', 'PK_USERS'
             );
             assert.deepStrictEqual(columns, []);
         });
@@ -113,9 +111,8 @@ suite('ObjectTreeProvider Constraints & Indices', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const indices = await (provider as any).fetchIndices(connection, 'TEST_SCHEMA', 'USERS');
+            const indices = await fetchIndices(asConnectionManager(manager), connection, 'TEST_SCHEMA', 'USERS');
 
             assert.strictEqual(indices.length, 2);
             assert.strictEqual(indices[0].name, 'IDX_EMAIL');
@@ -130,9 +127,8 @@ suite('ObjectTreeProvider Constraints & Indices', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
 
-            const indices = await (provider as any).fetchIndices(connection, 'TEST_SCHEMA', 'USERS');
+            const indices = await fetchIndices(asConnectionManager(manager), connection, 'TEST_SCHEMA', 'USERS');
             assert.deepStrictEqual(indices, []);
         });
     });
@@ -161,22 +157,23 @@ suite('ObjectTreeProvider Constraints & Indices', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const tableElement = {
-                type: 'table' as const,
+            const tableElement = new ObjectTreeItem({
+                type: 'table',
                 connection,
                 schemaName: 'TEST_SCHEMA',
                 tableInfo: { name: 'USERS' },
                 label: 'USERS',
-                id: 'conn-1:TEST_SCHEMA:USERS:table'
-            };
+                id: 'conn-1:TEST_SCHEMA:USERS:table',
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(tableElement as any);
+            const children = await provider.getChildren(tableElement);
 
-            const labels = children.map((c: any) => c.label);
-            assert.ok(labels.some((l: string) => l === 'Constraints'), 'Should have Constraints folder');
-            assert.ok(labels.some((l: string) => l === 'Indices'), 'Should have Indices folder');
+            const labels = children.map(c => c.label);
+            assert.ok(labels.some(l => l === 'Constraints'), 'Should have Constraints folder');
+            assert.ok(labels.some(l => l === 'Indices'), 'Should have Indices folder');
         });
 
         test('omits Constraints folder when constraint count is zero', async () => {
@@ -199,19 +196,20 @@ suite('ObjectTreeProvider Constraints & Indices', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const tableElement = {
-                type: 'table' as const,
+            const tableElement = new ObjectTreeItem({
+                type: 'table',
                 connection,
                 schemaName: 'TEST_SCHEMA',
                 tableInfo: { name: 'USERS' },
                 label: 'USERS',
-                id: 'conn-1:TEST_SCHEMA:USERS:table'
-            };
+                id: 'conn-1:TEST_SCHEMA:USERS:table',
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(tableElement as any);
-            const labels = children.map((c: any) => c.label);
+            const children = await provider.getChildren(tableElement);
+            const labels = children.map(c => c.label);
             assert.ok(!labels.includes('Constraints'), 'Should NOT have Constraints folder');
             assert.ok(!labels.includes('Indices'), 'Should NOT have Indices folder');
         });
@@ -236,20 +234,21 @@ suite('ObjectTreeProvider Constraints & Indices', () => {
             };
 
             const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(manager as any);
+            const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            const tableElement = {
-                type: 'table' as const,
+            const tableElement = new ObjectTreeItem({
+                type: 'table',
                 connection,
                 schemaName: 'TEST_SCHEMA',
                 tableInfo: { name: 'USERS' },
                 label: 'USERS',
-                id: 'conn-1:TEST_SCHEMA:USERS:table'
-            };
+                id: 'conn-1:TEST_SCHEMA:USERS:table',
+                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
+            });
 
-            const children = await provider.getChildren(tableElement as any);
+            const children = await provider.getChildren(tableElement);
             assert.ok(children.length > 0, 'Should still have column children');
-            const labels = children.map((c: any) => c.label);
+            const labels = children.map(c => c.label);
             assert.ok(!labels.includes('Constraints'), 'Should NOT have Constraints folder on error');
             assert.ok(!labels.includes('Indices'), 'Should NOT have Indices folder on error');
         });

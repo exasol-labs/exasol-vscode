@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { ExasolDriver } from '@exasol/exasol-driver-ts';
 import { ConnectionManager } from './connectionManager';
-import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, ColumnMetadata, stripCommentsPreservingStrings, safeFetch } from './utils';
+import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, ColumnMetadata, SqlRow, stripCommentsPreservingStrings, safeFetch } from './utils';
 import { parseLocalCsvImport, resolveImportPath } from './localCsvImport';
 import { getOutputChannel } from './extension';
 import { isExecutionPlanEnabled } from './settings';
@@ -11,7 +11,7 @@ export type { ColumnMetadata };
 export interface QueryResult {
     columns: string[];
     columnMetadata: ColumnMetadata[];
-    rows: any[];
+    rows: SqlRow[];
     rowCount: number;
     executionTime: number;
     /**

@@ -83,7 +83,7 @@ export class ObjectSearchProvider {
                 WHERE VIEW_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
                 ORDER BY 1, 2
             `);
-            for (const row of getRowsFromResult(tablesResult)) {
+            for (const row of getRowsFromResult<{ TABLE_SCHEMA: string; TABLE_NAME: string; OBJECT_TYPE: string }>(tablesResult)) {
                 objects.push({
                     schema: row.TABLE_SCHEMA,
                     name: row.TABLE_NAME,
@@ -98,7 +98,7 @@ export class ObjectSearchProvider {
                     WHERE SCRIPT_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
                     ORDER BY SCRIPT_SCHEMA, SCRIPT_NAME
                 `);
-                for (const row of getRowsFromResult(scriptsResult)) {
+                for (const row of getRowsFromResult<{ SCRIPT_SCHEMA: string; SCRIPT_NAME: string }>(scriptsResult)) {
                     objects.push({
                         schema: row.SCRIPT_SCHEMA,
                         name: row.SCRIPT_NAME,
@@ -116,7 +116,7 @@ export class ObjectSearchProvider {
                     WHERE FUNCTION_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
                     ORDER BY FUNCTION_SCHEMA, FUNCTION_NAME
                 `);
-                for (const row of getRowsFromResult(functionsResult)) {
+                for (const row of getRowsFromResult<{ FUNCTION_SCHEMA: string; FUNCTION_NAME: string }>(functionsResult)) {
                     objects.push({
                         schema: row.FUNCTION_SCHEMA,
                         name: row.FUNCTION_NAME,
@@ -133,7 +133,7 @@ export class ObjectSearchProvider {
                     FROM SYS.EXA_ALL_VIRTUAL_TABLES
                     ORDER BY TABLE_SCHEMA, TABLE_NAME
                 `);
-                for (const row of getRowsFromResult(virtualTablesResult)) {
+                for (const row of getRowsFromResult<{ TABLE_SCHEMA: string; TABLE_NAME: string }>(virtualTablesResult)) {
                     objects.push({
                         schema: row.TABLE_SCHEMA,
                         name: row.TABLE_NAME,
@@ -151,7 +151,7 @@ export class ObjectSearchProvider {
                     WHERE SCHEMA_NAME IN ('SYS', 'EXA_STATISTICS')
                     ORDER BY SCHEMA_NAME, OBJECT_NAME
                 `);
-                for (const row of getRowsFromResult(systemTablesResult)) {
+                for (const row of getRowsFromResult<{ TABLE_SCHEMA: string; TABLE_NAME: string }>(systemTablesResult)) {
                     objects.push({
                         schema: row.TABLE_SCHEMA,
                         name: row.TABLE_NAME,
@@ -174,7 +174,7 @@ export class ObjectSearchProvider {
                         WHERE COLUMN_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
                         ORDER BY COLUMN_SCHEMA, COLUMN_TABLE, COLUMN_ORDINAL_POSITION
                     `);
-                    for (const row of getRowsFromResult(columnsResult)) {
+                    for (const row of getRowsFromResult<{ COLUMN_SCHEMA: string; COLUMN_NAME: string }>(columnsResult)) {
                         objects.push({
                             schema: row.COLUMN_SCHEMA,
                             name: row.COLUMN_NAME,

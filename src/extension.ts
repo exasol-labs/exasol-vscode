@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { ConnectionTreeProvider } from './providers/connectionTreeProvider';
 import { ObjectTreeProvider } from './providers/objectTreeProvider';
+import type { ObjectTreeItem } from './providers/objectTreeProvider';
 import { QueryHistoryProvider } from './providers/queryHistoryProvider';
 import { ExasolCompletionProvider } from './providers/completionProvider';
 import { ExasolCodeLensProvider } from './providers/codeLensProvider';
@@ -17,6 +18,44 @@ import { ExasolNotebookSerializer } from './notebooks/serializer';
 import { ExasolNotebookController } from './notebooks/controller';
 import { formatError } from './connectionTypes';
 import { TabResultCollector } from './execution/tabResultCollector';
+
+/**
+ * The subset of tree-item fields the context-menu commands read. Both
+ * ObjectTreeItem and ConnectionTreeItem satisfy it structurally, and some
+ * commands are also invoked programmatically with a bare `{ connection }`.
+ */
+type TreeCommandItem = Partial<Pick<ObjectTreeItem, 'type' | 'connection' | 'schemaName' | 'tableInfo' | 'columnInfo'>> & {
+    id?: string;
+};
+
+/**
+ * True when `item` is present and every field named in `needs` is truthy,
+ * narrowing `item` so those fields are known non-optional to the caller.
+ */
+function isTreeCommandItemComplete<K extends keyof TreeCommandItem>(
+    item: TreeCommandItem | undefined,
+    needs: readonly K[]
+): item is TreeCommandItem & Required<Pick<TreeCommandItem, K>> {
+    return !!item && needs.every(key => !!item[key]);
+}
+
+/**
+ * Registers a context-menu/command-palette command that only runs when the
+ * invoking tree item carries every field in `needs`. `handler` receives the
+ * item typed with those fields required, so removing a key from `needs`
+ * while the handler still reads it is a compile error rather than a runtime `!`.
+ */
+function itemCommand<K extends keyof TreeCommandItem>(
+    command: string,
+    needs: readonly K[],
+    handler: (item: TreeCommandItem & Required<Pick<TreeCommandItem, K>>) => unknown
+): vscode.Disposable {
+    return vscode.commands.registerCommand(command, async (item?: TreeCommandItem) => {
+        if (isTreeCommandItemComplete(item, needs)) {
+            await handler(item);
+        }
+    });
+}
 
 // Create output channel for logging
 let outputChannel: vscode.OutputChannel;
@@ -128,32 +167,27 @@ export function activate(context: vscode.ExtensionContext) {
 
     // ── Item-command config table ────────────────────────────────────────────
     // Each entry: guard item fields, then call handler. New commands = new row.
-    type ItemCommand = { command: string; needs: string[]; handler: (item: any) => Promise<unknown> | unknown };
-    const itemCommands: ItemCommand[] = [
-        { command: 'exasol.previewTable',   needs: ['connection', 'schemaName', 'tableInfo'],
-          handler: (i) => objectActions.previewTableData(i.connection, i.schemaName, i.tableInfo.name, 100) },
-        { command: 'exasol.showTableDDL',   needs: ['connection', 'schemaName', 'tableInfo'],
-          handler: (i) => objectActions.showTableDDL(i.connection, i.schemaName, i.tableInfo.name) },
-        { command: 'exasol.showViewDDL',    needs: ['connection', 'schemaName', 'tableInfo'],
-          handler: (i) => objectActions.showViewDDL(i.connection, i.schemaName, i.tableInfo.name) },
-        { command: 'exasol.generateSelect', needs: ['connection', 'schemaName', 'tableInfo'],
-          handler: (i) => objectActions.generateSelectStatement(i.connection, i.schemaName, i.tableInfo.name, i.type) },
-        { command: 'exasol.describeTable',  needs: ['connection', 'schemaName', 'tableInfo'],
-          handler: (i) => objectActions.describeTable(i.connection, i.schemaName, i.tableInfo.name) },
-        { command: 'exasol.setSchema',       needs: ['schemaName'],
-          handler: (i) => sessionManager.setSchema(i.schemaName) },
-        { command: 'exasol.editConnection',  needs: ['connection'],
-          handler: (i) => editConnection(connectionManager, connectionTreeProvider, objectTreeProvider, context, i.connection) },
-        { command: 'exasol.deleteConnection', needs: ['connection'],
-          handler: (i) => deleteConnection(connectionManager, connectionTreeProvider, objectTreeProvider, i.connection) },
-        { command: 'exasol.renameConnection', needs: ['connection'],
-          handler: (i) => renameConnection(connectionManager, connectionTreeProvider, objectTreeProvider, i.connection) },
+    const itemCommands: vscode.Disposable[] = [
+        itemCommand('exasol.previewTable', ['connection', 'schemaName', 'tableInfo'], (i) =>
+            objectActions.previewTableData(i.connection, i.schemaName, i.tableInfo.name, 100)),
+        itemCommand('exasol.showTableDDL', ['connection', 'schemaName', 'tableInfo'], (i) =>
+            objectActions.showTableDDL(i.connection, i.schemaName, i.tableInfo.name)),
+        itemCommand('exasol.showViewDDL', ['connection', 'schemaName', 'tableInfo'], (i) =>
+            objectActions.showViewDDL(i.connection, i.schemaName, i.tableInfo.name)),
+        itemCommand('exasol.generateSelect', ['connection', 'schemaName', 'tableInfo'], (i) =>
+            objectActions.generateSelectStatement(i.connection, i.schemaName, i.tableInfo.name)),
+        itemCommand('exasol.describeTable', ['connection', 'schemaName', 'tableInfo'], (i) =>
+            objectActions.describeTable(i.connection, i.schemaName, i.tableInfo.name)),
+        itemCommand('exasol.setSchema', ['schemaName'], (i) =>
+            sessionManager.setSchema(i.schemaName)),
+        itemCommand('exasol.editConnection', ['connection'], (i) =>
+            editConnection(connectionManager, connectionTreeProvider, objectTreeProvider, context, i.connection)),
+        itemCommand('exasol.deleteConnection', ['connection'], (i) =>
+            deleteConnection(connectionManager, connectionTreeProvider, objectTreeProvider, i.connection)),
+        itemCommand('exasol.renameConnection', ['connection'], (i) =>
+            renameConnection(connectionManager, connectionTreeProvider, objectTreeProvider, i.connection)),
     ];
-    for (const cmd of itemCommands) {
-        context.subscriptions.push(vscode.commands.registerCommand(cmd.command, async (item: any) => {
-            if (cmd.needs.every(k => item?.[k])) { await cmd.handler(item); }
-        }));
-    }
+    context.subscriptions.push(...itemCommands);
     // ────────────────────────────────────────────────────────────────────────
 
     // Create status bar item for result tabs mode
@@ -251,7 +285,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Prevent rapid duplicate executions (e.g., double-click)
     const openObjectExecuting = new Map<string, boolean>();
 
-    const openObjectCmd = vscode.commands.registerCommand('exasol.openObject', async (item: any) => {
+    const openObjectCmd = vscode.commands.registerCommand('exasol.openObject', async (item?: TreeCommandItem) => {
         if (item && item.connection && item.schemaName && item.tableInfo) {
             const key = `${item.connection.id}:${item.schemaName}:${item.tableInfo.name}`;
 
@@ -276,7 +310,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage('Autocomplete cache cleared');
     });
 
-    const setActiveConnectionCmd = vscode.commands.registerCommand('exasol.setActiveConnection', async (item: any) => {
+    const setActiveConnectionCmd = vscode.commands.registerCommand('exasol.setActiveConnection', async (item?: TreeCommandItem) => {
         const connection: StoredConnection | undefined = item?.connection ?? (
             typeof item?.id === 'string' ? connectionManager.getConnection(item.id) : undefined
         );
@@ -307,7 +341,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    const reconnectConnectionCmd = vscode.commands.registerCommand('exasol.reconnectConnection', async (item: any) => {
+    const reconnectConnectionCmd = vscode.commands.registerCommand('exasol.reconnectConnection', async (item?: TreeCommandItem) => {
         const connection: StoredConnection | undefined = item?.connection ?? (
             typeof item?.id === 'string' ? connectionManager.getConnection(item.id) : undefined
         );
@@ -335,7 +369,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    const disconnectConnectionCmd = vscode.commands.registerCommand('exasol.disconnectConnection', async (item: any) => {
+    const disconnectConnectionCmd = vscode.commands.registerCommand('exasol.disconnectConnection', async (item?: TreeCommandItem) => {
         const connection: StoredConnection | undefined = item?.connection;
         const output = getOutputChannel();
         let name: string;
@@ -361,7 +395,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.setStatusBarMessage(`Exasol: Disconnected from '${name}'`, 3000);
     });
 
-    const copyQualifiedNameCmd = vscode.commands.registerCommand('exasol.copyQualifiedName', async (item: any) => {
+    const copyQualifiedNameCmd = vscode.commands.registerCommand('exasol.copyQualifiedName', async (item?: TreeCommandItem) => {
         let qualifiedName: string | undefined;
 
         if (item?.type === 'schema' && item?.schemaName) {
@@ -735,7 +769,7 @@ async function editConnection(
     treeProvider: ConnectionTreeProvider,
     objectsProvider: ObjectTreeProvider,
     context: vscode.ExtensionContext,
-    connection: any
+    connection: StoredConnection
 ) {
     outputChannel.appendLine(`✏️ Editing connection '${connection.name}'`);
 
@@ -756,7 +790,7 @@ async function deleteConnection(
     connectionManager: ConnectionManager,
     treeProvider: ConnectionTreeProvider,
     objectsProvider: ObjectTreeProvider,
-    connection: any
+    connection: StoredConnection
 ) {
     outputChannel.appendLine(`🗑️ Deleting connection '${connection.name}'`);
 
@@ -786,7 +820,7 @@ async function renameConnection(
     connectionManager: ConnectionManager,
     treeProvider: ConnectionTreeProvider,
     objectsProvider: ObjectTreeProvider,
-    connection: any
+    connection: StoredConnection
 ) {
     const newName = await vscode.window.showInputBox({
         title: 'Rename Exasol Connection',

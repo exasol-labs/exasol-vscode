@@ -576,27 +576,6 @@ export class ConnectionManager {
         }
     }
 
-    private isWebSocketHealthy(driver: ExasolDriver): boolean {
-        try {
-            // Access the internal WebSocket connection to check its state
-            // The driver has a connection property that may contain the WebSocket
-            const driverAny = driver as any;
-            const connection = driverAny._connection || driverAny.connection || driverAny._ws || driverAny.ws;
-
-            if (connection && connection.readyState !== undefined) {
-                // WebSocket.OPEN = 1
-                // If not open (CONNECTING=0, CLOSING=2, CLOSED=3), connection is not healthy
-                return connection.readyState === 1;
-            }
-
-            // If we can't access WebSocket state, assume we need to validate with query
-            return true;
-        } catch {
-            // If we can't check WebSocket state, assume we need to validate with query
-            return true;
-        }
-    }
-
     /**
      * Serializes access to the driver's single-connection pool.
      * Callers queue behind each other so only one query runs at a time,
@@ -636,13 +615,6 @@ export class ConnectionManager {
 
     private async validateDriver(driver: ExasolDriver, connectionId: string, role: DriverRole = 'user'): Promise<boolean> {
         try {
-            // FAST CHECK: WebSocket state for instant detection of dead connections
-            if (!this.isWebSocketHealthy(driver)) {
-                const outputChannel = getOutputChannel();
-                outputChannel.appendLine(`WebSocket is closed or closing - connection is stale (${role})`);
-                return false;
-            }
-
             // SKIP expensive SELECT 1 if a query succeeded recently.
             const lastSuccess = this.lastSuccessfulQuery.get(connectionId)?.get(role);
             if (lastSuccess && Date.now() - lastSuccess < VALIDATION_SKIP_MS) {

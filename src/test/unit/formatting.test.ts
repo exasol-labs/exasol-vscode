@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import type * as vscode from 'vscode';
 import { formatDialect, sql } from 'sql-formatter';
 
 /**
@@ -37,9 +38,9 @@ class MockTextEdit {
     }
 }
 
-let configValues: Record<string, any> = {};
+let configValues: Record<string, unknown> = {};
 
-function setMockConfig(values: Record<string, any>): void {
+function setMockConfig(values: Record<string, unknown>): void {
     configValues = values;
 }
 
@@ -64,7 +65,7 @@ const vscodeMock = {
 // we intercept module resolution so the provider gets our mock instead.
 const NodeModule = require('module');
 const originalResolveFilename = NodeModule._resolveFilename;
-NodeModule._resolveFilename = function (request: string, ...args: any[]) {
+NodeModule._resolveFilename = function (request: string, ...args: unknown[]) {
     if (request === 'vscode') {
         return 'vscode';
     }
@@ -78,17 +79,17 @@ require.cache['vscode'] = {
     paths: [],
     children: [],
     path: '',
+    parent: null,
     require: require,
     isPreloading: false,
-} as any;
+};
 
-// Now import the real FormattingProvider -- it will get our vscode mock.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { FormattingProvider } = require('../../providers/formattingProvider');
+// Now import the real FormattingProvider; it will get our vscode mock.
+const { FormattingProvider } = require('../../providers/formattingProvider') as typeof import('../../providers/formattingProvider');
 
-function makeMockDocument(text: string, lineCount?: number): any {
+function makeMockDocument(text: string, lineCount?: number): vscode.TextDocument {
     const lines = text.split('\n');
-    return {
+    const doc = {
         getText(range?: MockRange): string {
             if (!range) { return text; }
             const startOffset = lines.slice(0, range.start.line).join('\n').length +
@@ -98,7 +99,7 @@ function makeMockDocument(text: string, lineCount?: number): any {
             return text.substring(startOffset, endOffset);
         },
         lineCount: lineCount ?? lines.length,
-        lineAt(line: number): any {
+        lineAt(line: number): { text: string; range: MockRange } {
             return {
                 text: lines[line] ?? '',
                 range: new MockRange(
@@ -109,6 +110,7 @@ function makeMockDocument(text: string, lineCount?: number): any {
         },
         get uri() { return { toString: () => 'file:///test.exasql' }; },
     };
+    return doc as unknown as vscode.TextDocument;
 }
 
 /**
@@ -136,10 +138,10 @@ function formatSql(
     });
 }
 
-const mockOptions = { tabSize: 2, insertSpaces: true };
-const mockToken: any = {};
+const mockOptions: vscode.FormattingOptions = { tabSize: 2, insertSpaces: true };
+const mockToken = {} as vscode.CancellationToken;
 
-suite('SQL Formatting — keyword case', () => {
+suite('SQL Formatting, keyword case', () => {
     test('uppercases keywords by default', () => {
         const input = 'select id, name from users where id = 1';
         const result = formatSql(input);
@@ -172,7 +174,7 @@ suite('SQL Formatting — keyword case', () => {
     });
 });
 
-suite('SQL Formatting — indentation with spaces', () => {
+suite('SQL Formatting, indentation with spaces', () => {
     test('indents with 2 spaces by default', () => {
         const input = 'select id from users where id = 1';
         const result = formatSql(input);
@@ -198,7 +200,7 @@ suite('SQL Formatting — indentation with spaces', () => {
     });
 });
 
-suite('SQL Formatting — indentation with tabs', () => {
+suite('SQL Formatting, indentation with tabs', () => {
     test('uses tab characters when useTabs is true', () => {
         const input = 'select id from users where id = 1';
         const result = formatSql(input, { useTabs: true });
@@ -214,7 +216,7 @@ suite('SQL Formatting — indentation with tabs', () => {
     });
 });
 
-suite('SQL Formatting — tabular indent styles', () => {
+suite('SQL Formatting, tabular indent styles', () => {
     test('applies tabularLeft alignment: keywords left-padded to same column width', () => {
         const input = 'select id, name from users where id = 1';
         const result = formatSql(input, { indentStyle: 'tabularLeft' });
@@ -243,7 +245,7 @@ suite('SQL Formatting — tabular indent styles', () => {
     });
 });
 
-suite('SQL Formatting — multi-statement spacing', () => {
+suite('SQL Formatting, multi-statement spacing', () => {
     test('separates statements with 2 blank lines by default', () => {
         const input = 'select 1; select 2;';
         const result = formatSql(input);
@@ -263,7 +265,7 @@ suite('SQL Formatting — multi-statement spacing', () => {
     });
 });
 
-suite('SQL Formatting — comment preservation', () => {
+suite('SQL Formatting, comment preservation', () => {
     test('preserves single-line comments', () => {
         const input = '-- this is a header comment\nselect id from users';
         const result = formatSql(input);
@@ -284,7 +286,7 @@ suite('SQL Formatting — comment preservation', () => {
     });
 });
 
-suite('SQL Formatting — empty and whitespace input', () => {
+suite('SQL Formatting, empty and whitespace input', () => {
     test('returns empty string for empty input', () => {
         const result = formatSql('');
         assert.strictEqual(result.trim(), '');
@@ -296,7 +298,7 @@ suite('SQL Formatting — empty and whitespace input', () => {
     });
 });
 
-suite('SQL Formatting — document provider behavior', () => {
+suite('SQL Formatting, document provider behavior', () => {
     let provider: InstanceType<typeof FormattingProvider>;
 
     setup(() => {
@@ -328,7 +330,7 @@ suite('SQL Formatting — document provider behavior', () => {
     });
 });
 
-suite('SQL Formatting — range formatting', () => {
+suite('SQL Formatting, range formatting', () => {
     let provider: InstanceType<typeof FormattingProvider>;
 
     setup(() => {
@@ -346,7 +348,7 @@ suite('SQL Formatting — range formatting', () => {
         const range = new MockRange(
             new MockPosition(1, 0),
             new MockPosition(1, line2.length)
-        );
+        ) as unknown as vscode.Range;
 
         const edits = provider.provideDocumentRangeFormattingEdits(doc, range, mockOptions, mockToken);
         assert.strictEqual(edits.length, 1);
@@ -365,7 +367,7 @@ suite('SQL Formatting — range formatting', () => {
         const range = new MockRange(
             new MockPosition(1, 0),
             new MockPosition(1, selected.length)
-        );
+        ) as unknown as vscode.Range;
 
         const edits = provider.provideDocumentRangeFormattingEdits(doc, range, mockOptions, mockToken);
         assert.strictEqual(edits.length, 1);
@@ -376,7 +378,7 @@ suite('SQL Formatting — range formatting', () => {
     });
 });
 
-suite('SQL Formatting — combined option scenarios', () => {
+suite('SQL Formatting, combined option scenarios', () => {
     test('lowercase keywords with tab indentation', () => {
         const input = 'SELECT id FROM users WHERE id = 1';
         const result = formatSql(input, { keywordCase: 'lower', useTabs: true });

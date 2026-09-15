@@ -1,60 +1,42 @@
 import * as assert from 'assert';
+import type * as vscode from 'vscode';
+import type { ConnectionManager } from '../../connectionManager';
+// createRawResult/mockConnectionManager imports no vscode (only a type-only
+// import, fully erased at compile time), so a static import is safe here.
+import { createRawResult, TEST_CONNECTION } from '../helpers/mockConnectionManager';
 import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helpers/vscodeMock';
+import {
+    applyCompletionVscodeMock,
+    makeDocument,
+    makeDriver,
+    makePosition,
+    type MockDriver,
+    type RawResult,
+} from '../helpers/completionMocks';
 
-(vscodeMock as any).CompletionItemKind = {
-    Interface: 7, Method: 1, Function: 2, Class: 6, Module: 8, Field: 4, Keyword: 13,
-};
-(vscodeMock as any).CompletionItem = class {
-    detail?: string;
-    insertText?: any;
-    sortText?: string;
-    documentation?: any;
-    constructor(public label: string, public kind?: number) {}
-};
-(vscodeMock as any).MarkdownString = class { constructor(public value: string) {} };
-(vscodeMock as any).SnippetString = class { constructor(public value: string) {} };
-(vscodeMock as any).workspace = {
-    getConfiguration: () => ({ get: (_: string, dflt?: unknown) => dflt }),
-};
-(vscodeMock as any).Position = class { constructor(public line: number, public character: number) {} };
-(vscodeMock as any).Range = class {};
+// Mocks must be applied BEFORE registerVscodeMock(); see the load-order note
+// at the top of completionMocks.ts.
+applyCompletionVscodeMock(vscodeMock);
 
 registerVscodeMock();
 registerExtensionMock();
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { ExasolCompletionProvider } = require('../../providers/completionProvider');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { createRawResult, TEST_CONNECTION } = require('../helpers/mockConnectionManager');
+// completionProvider.ts imports `vscode` at module scope, so it must stay a
+// deferred require() issued AFTER the mocks above are registered. A static
+// import would resolve 'vscode' before require.cache is patched.
+const { ExasolCompletionProvider } = require('../../providers/completionProvider') as typeof import('../../providers/completionProvider');
 
-function makeDriver(handler: (sql: string) => any) {
-    return {
-        query: async (sql: string) => handler(sql),
-        execute: async (sql: string) => handler(sql),
-    };
-}
-function makeManager(driver: any) {
+function makeManager(driver: MockDriver): { manager: { getActiveConnection: () => { id: string }; getDriver: () => Promise<MockDriver>; executeWithRetry: <T>(fn: () => Promise<T>) => Promise<T> } } {
     return {
         manager: {
             getActiveConnection: () => ({ id: TEST_CONNECTION.id }),
             getDriver: async () => driver,
-            executeWithRetry: async (fn: () => Promise<any>) => fn(),
+            executeWithRetry: async <T>(fn: () => Promise<T>) => fn(),
         },
-    };
-}
-function makeDocument(text: string) {
-    const lines = text.split('\n');
-    return {
-        getText: () => text,
-        lineAt: (lineOrPos: any) => {
-            const line = typeof lineOrPos === 'number' ? lineOrPos : lineOrPos.line;
-            return { text: lines[line] ?? '' };
-        },
-        getWordRangeAtPosition: () => undefined,
     };
 }
 
-function defaultDriver(extra?: (sql: string) => any) {
+function defaultDriver(extra?: (sql: string) => RawResult | undefined): MockDriver {
     return makeDriver((sql: string) => {
         if (sql.includes('exa_sql_keywords')) {
             return createRawResult(['KEYWORD'], [['SELECT']]);
@@ -88,15 +70,15 @@ suite('ExasolCompletionProvider - context-driven sortText buckets', () => {
     test('WHERE after FROM: column items rank above schema items', async () => {
         const driver = defaultDriver();
         const { manager } = makeManager(driver);
-        const provider = new ExasolCompletionProvider(manager);
+        const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
 
         const sql = 'SELECT * FROM schema_d.table_dates WHERE ';
-        const doc = makeDocument(sql) as any;
-        const pos = new (vscodeMock as any).Position(0, sql.length);
-        const items = await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
+        const doc = makeDocument(sql);
+        const pos = makePosition(0, sql.length);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
 
-        const col = items.find((i: any) => i.label === 'date_id');
-        const schema = items.find((i: any) => i.label === 'schema_d');
+        const col = items.find((i) => i.label === 'date_id');
+        const schema = items.find((i) => i.label === 'schema_d');
         assert.ok(col, 'expected table_dates column "date_id"');
         assert.ok(schema, 'expected schema "schema_d"');
         assert.ok(
@@ -105,23 +87,23 @@ suite('ExasolCompletionProvider - context-driven sortText buckets', () => {
         );
 
         // `local` keyword must be offered at WHERE so `local.` completes cleanly.
-        const local = items.find((i: any) => i.label === 'local');
+        const local = items.find((i) => i.label === 'local');
         assert.ok(local, 'expected "local" keyword at WHERE');
     });
 
     test('SELECT before FROM: columns rank above schemas', async () => {
         const driver = defaultDriver();
         const { manager } = makeManager(driver);
-        const provider = new ExasolCompletionProvider(manager);
+        const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
 
         const sql = 'SELECT  FROM schema_d.table_dates;';
-        const doc = makeDocument(sql) as any;
+        const doc = makeDocument(sql);
         // Cursor between SELECT and FROM (after the two spaces after SELECT)
-        const pos = new (vscodeMock as any).Position(0, 'SELECT '.length);
-        const items = await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
+        const pos = makePosition(0, 'SELECT '.length);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
 
-        const col = items.find((i: any) => i.label === 'date_id');
-        const schema = items.find((i: any) => i.label === 'schema_d');
+        const col = items.find((i) => i.label === 'date_id');
+        const schema = items.find((i) => i.label === 'schema_d');
         assert.ok(col, 'expected table_dates column');
         assert.ok(schema, 'expected schema');
         assert.ok(
@@ -133,16 +115,16 @@ suite('ExasolCompletionProvider - context-driven sortText buckets', () => {
     test('STATEMENT_START: command keywords rank top, no schemas surfaced', async () => {
         const driver = defaultDriver();
         const { manager } = makeManager(driver);
-        const provider = new ExasolCompletionProvider(manager);
+        const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
 
         const sql = '';
-        const doc = makeDocument(sql) as any;
-        const pos = new (vscodeMock as any).Position(0, 0);
-        const items = await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
+        const doc = makeDocument(sql);
+        const pos = makePosition(0, 0);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
 
-        const select = items.find((i: any) => i.label === 'select');
+        const select = items.find((i) => i.label === 'select');
         assert.ok(select, 'expected command keyword "select"');
-        const schemaItems = items.filter((i: any) => i.detail === 'Schema');
+        const schemaItems = items.filter((i) => i.detail === 'Schema');
         assert.strictEqual(schemaItems.length, 0, 'no schemas at statement start');
         // Command keywords use bucket "0_".
         assert.strictEqual(bucketPrefix(select.sortText), '0');
@@ -151,15 +133,15 @@ suite('ExasolCompletionProvider - context-driven sortText buckets', () => {
     test('AFTER_FROM_OR_JOIN: schemas rank top', async () => {
         const driver = defaultDriver();
         const { manager } = makeManager(driver);
-        const provider = new ExasolCompletionProvider(manager);
+        const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
 
         const sql = 'SELECT * FROM ';
-        const doc = makeDocument(sql) as any;
-        const pos = new (vscodeMock as any).Position(0, sql.length);
-        const items = await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
+        const doc = makeDocument(sql);
+        const pos = makePosition(0, sql.length);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
 
-        const schema = items.find((i: any) => i.detail === 'Schema');
-        const keyword = items.find((i: any) => i.label === 'where');
+        const schema = items.find((i) => i.detail === 'Schema');
+        const keyword = items.find((i) => i.label === 'where');
         assert.ok(schema);
         assert.ok(keyword);
         assert.ok(

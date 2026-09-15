@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { ConnectionManager } from '../connectionManager';
+import type { activate } from '../extension';
 import { QueryExecutor } from '../queryExecutor';
 import { SessionManager } from '../sessionManager';
 import { ObjectActions } from '../objectActions';
@@ -16,14 +17,14 @@ suite('Integration Test Suite', () => {
 
     suiteSetup(async function() {
         this.timeout(60000);
-        const ext = vscode.extensions.getExtension('exasol.exasol-vscode');
+        const ext = vscode.extensions.getExtension<ReturnType<typeof activate>>('exasol.exasol-vscode');
         if (!ext) {
             throw new Error('Extension not found');
         }
         if (!ext.isActive) {
             await ext.activate();
         }
-        context = (ext.exports as any).context;
+        context = ext.exports.context;
 
         // Initialize all components
         connectionManager = new ConnectionManager(context);
@@ -78,7 +79,7 @@ suite('Integration Test Suite', () => {
         // 3. Verify data
         assert.strictEqual(result.rows[0].ID, 1);
         assert.strictEqual(result.rows[0].NAME, 'Item1');
-        assert.strictEqual(parseFloat(result.rows[0].AMOUNT), 10.5);
+        assert.strictEqual(Number(result.rows[0].AMOUNT), 10.5);
     });
 
     test('Session management workflow', async function() {
@@ -132,7 +133,7 @@ suite('Integration Test Suite', () => {
 
         // 4. Generate SELECT statement
         try {
-            await objectActions.generateSelectStatement(conn, TEST_CONFIG.testSchema, TEST_CONFIG.testTable, 'table');
+            await objectActions.generateSelectStatement(conn, TEST_CONFIG.testSchema, TEST_CONFIG.testTable);
         } catch (error) {
             console.log('Generate SELECT test note:', error);
         }
@@ -161,14 +162,14 @@ suite('Integration Test Suite', () => {
         assert.ok(result.columns.includes('AMOUNT_RANK'), 'Should have AMOUNT_RANK column');
 
         // Verify window function results
-        assert.ok(result.rows[0].RUNNING_TOTAL > 0, 'Running total should be calculated');
-        assert.ok(result.rows[0].AMOUNT_RANK > 0, 'Rank should be calculated');
+        assert.ok(Number(result.rows[0].RUNNING_TOTAL) > 0, 'Running total should be calculated');
+        assert.ok(Number(result.rows[0].AMOUNT_RANK) > 0, 'Rank should be calculated');
     });
 
     test('Transaction workflow', async function() {
         this.timeout(30000);
 
-        const driver = await connectionManager.getDriver();
+        await connectionManager.getDriver();
 
         // Create temp table
         await queryExecutor.execute(`

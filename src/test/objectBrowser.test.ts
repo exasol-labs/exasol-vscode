@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { ConnectionManager } from '../connectionManager';
+import type { activate } from '../extension';
 import { ConnectionTreeProvider } from '../providers/connectionTreeProvider';
 import { ObjectTreeProvider } from '../providers/objectTreeProvider';
 import { TEST_CONFIG } from './testConfig';
@@ -15,14 +16,14 @@ suite('Object Browser Test Suite', () => {
 
     suiteSetup(async function() {
         this.timeout(60000);
-        const ext = vscode.extensions.getExtension('exasol.exasol-vscode');
+        const ext = vscode.extensions.getExtension<ReturnType<typeof activate>>('exasol.exasol-vscode');
         if (!ext) {
             throw new Error('Extension not found');
         }
         if (!ext.isActive) {
             await ext.activate();
         }
-        context = (ext.exports as any).context;
+        context = ext.exports.context;
         connectionManager = new ConnectionManager(context);
 
         // Add connection

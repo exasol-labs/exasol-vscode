@@ -12,26 +12,51 @@ registerVscodeMock();
 // helpers then mutate those same objects' nested fields.
 let resolveImportPath: (filePath: string) => string;
 
+interface MockWindow {
+    activeTextEditor: { document: { uri: { scheme: string; fsPath: string } } } | undefined;
+}
+interface MockWorkspace {
+    workspaceFolders: Array<{ uri: { fsPath: string } }> | undefined;
+}
+interface ImportPathVscodeMock {
+    window: MockWindow;
+    workspace: MockWorkspace;
+}
+
+const extendedMock = vscodeMock as unknown as ImportPathVscodeMock;
+
 function setActiveEditor(fsPath: string | undefined, scheme = 'file'): void {
-    (vscodeMock as any).window.activeTextEditor = fsPath
+    extendedMock.window.activeTextEditor = fsPath
         ? { document: { uri: { scheme, fsPath } } }
         : undefined;
 }
 
 function setWorkspaceFolder(fsPath: string | undefined): void {
-    (vscodeMock as any).workspace.workspaceFolders = fsPath
+    extendedMock.workspace.workspaceFolders = fsPath
         ? [{ uri: { fsPath } }]
         : undefined;
 }
 
 suite('resolveImportPath', () => {
+    let savedWindow: MockWindow;
+    let savedWorkspace: MockWorkspace;
+
     setup(() => {
-        (vscodeMock as any).window = { activeTextEditor: undefined };
-        (vscodeMock as any).workspace = { workspaceFolders: undefined };
+        // Save the mock state so another suite that runs after this one (and
+        // does not reinstall its own window/workspace in setup()) does not see
+        // this suite's shape left behind.
+        savedWindow = extendedMock.window;
+        savedWorkspace = extendedMock.workspace;
+        extendedMock.window = { activeTextEditor: undefined };
+        extendedMock.workspace = { workspaceFolders: undefined };
         // Re-require so localCsvImport re-captures the freshly installed objects.
         delete require.cache[require.resolve('../../localCsvImport')];
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        resolveImportPath = require('../../localCsvImport').resolveImportPath;
+        resolveImportPath = (require('../../localCsvImport') as typeof import('../../localCsvImport')).resolveImportPath;
+    });
+
+    teardown(() => {
+        extendedMock.window = savedWindow;
+        extendedMock.workspace = savedWorkspace;
     });
 
     test('returns an absolute path unchanged', () => {

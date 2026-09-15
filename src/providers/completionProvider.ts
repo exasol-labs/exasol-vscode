@@ -277,10 +277,10 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
             await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connectionId, 'background');
                 const result = await rawQuery(driver, 'SELECT keyword FROM sys.exa_sql_keywords WHERE reserved');
-                const rows = getRowsFromResult(result);
+                const rows = getRowsFromResult<{ KEYWORD?: string }>(result);
                 this.reservedKeywords = new Set(
                     rows
-                        .map((r: any) => r?.KEYWORD)
+                        .map(r => r?.KEYWORD)
                         .filter((k: unknown): k is string => typeof k === 'string' && k.length > 0)
                         .map((k: string) => k.toUpperCase())
                 );
@@ -608,9 +608,9 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                     ORDER BY SCHEMA_NAME
                 `;
                 const result = await rawQuery(driver, schemasQuery);
-                const rows = getRowsFromResult(result);
+                const rows = getRowsFromResult<{ SCHEMA_NAME?: string }>(result);
                 const schemas: string[] = rows
-                    .map((r: any) => r.SCHEMA_NAME)
+                    .map(r => r.SCHEMA_NAME)
                     .filter((n: unknown): n is string => typeof n === 'string' && n.length > 0);
 
                 schemas.push('SYS', 'EXA_STATISTICS');

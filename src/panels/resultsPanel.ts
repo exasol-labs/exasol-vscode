@@ -614,11 +614,11 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         let csv = result.columns.join(',') + '\n';
         for (const row of result.rows) {
             const values = result.columns.map(col => {
-                let value = row[col];
-                if (value === null || value === undefined) {
+                const cell = row[col];
+                if (cell === null || cell === undefined) {
                     return '';
                 }
-                value = String(value);
+                let value = String(cell);
                 if (value.includes(',') || value.includes('"') || value.includes('\n')) {
                     value = '"' + value.replace(/"/g, '""') + '"';
                 }

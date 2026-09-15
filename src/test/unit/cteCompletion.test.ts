@@ -1,62 +1,44 @@
 import * as assert from 'assert';
+import type * as vscode from 'vscode';
+import type { ConnectionManager } from '../../connectionManager';
+import type { CteDefinition } from '../../utils/cteParser';
+import { parseCtes } from '../../utils/cteParser';
+// createRawResult/mockConnectionManager imports no vscode (only a type-only
+// import, fully erased at compile time), so a static import is safe here.
+import { createRawResult, TEST_CONNECTION } from '../helpers/mockConnectionManager';
 import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helpers/vscodeMock';
+import {
+    applyCompletionVscodeMock,
+    makeDocument,
+    makeDriver,
+    makePosition,
+    type MockDriver,
+} from '../helpers/completionMocks';
 
-(vscodeMock as any).CompletionItemKind = {
-    Interface: 7, Method: 1, Function: 2, Class: 6, Module: 8, Field: 4, Keyword: 13,
-};
-(vscodeMock as any).CompletionItem = class {
-    detail?: string;
-    insertText?: any;
-    sortText?: string;
-    documentation?: any;
-    constructor(public label: string, public kind?: number) {}
-};
-(vscodeMock as any).MarkdownString = class { constructor(public value: string) {} };
-(vscodeMock as any).SnippetString = class { constructor(public value: string) {} };
-(vscodeMock as any).workspace = {
-    getConfiguration: () => ({ get: (_: string, dflt?: unknown) => dflt }),
-};
-(vscodeMock as any).Position = class { constructor(public line: number, public character: number) {} };
-(vscodeMock as any).Range = class {};
+// Mocks must be applied BEFORE registerVscodeMock(); see the load-order note
+// at the top of completionMocks.ts.
+applyCompletionVscodeMock(vscodeMock);
 
 registerVscodeMock();
 registerExtensionMock();
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { parseCtes } = require('../../utils/cteParser');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { ExasolCompletionProvider } = require('../../providers/completionProvider');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { createRawResult, TEST_CONNECTION } = require('../helpers/mockConnectionManager');
+// completionProvider.ts imports `vscode` at module scope, so it must stay a
+// deferred require() issued AFTER the mocks above are registered. A static
+// import would resolve 'vscode' before require.cache is patched.
+const { ExasolCompletionProvider } = require('../../providers/completionProvider') as typeof import('../../providers/completionProvider');
 
-function makeDriver(handler: (sql: string) => any) {
-    return {
-        query: async (sql: string) => handler(sql),
-        execute: async (sql: string) => handler(sql),
-    };
-}
-
-function makeManager(driver: any) {
+// Deliberate partial double for ConnectionManager (only the methods the
+// provider calls); callers cast it with `as unknown as ConnectionManager`
+// since a full typed double would be larger than the test.
+function makeManager(driver: MockDriver): { getActiveConnection: () => { id: string }; getDriver: () => Promise<MockDriver>; executeWithRetry: <T>(fn: () => Promise<T>) => Promise<T> } {
     return {
         getActiveConnection: () => ({ id: TEST_CONNECTION.id }),
         getDriver: async () => driver,
-        executeWithRetry: async (fn: () => Promise<any>) => fn(),
+        executeWithRetry: async <T>(fn: () => Promise<T>) => fn(),
     };
 }
 
-function makeDocument(text: string) {
-    const lines = text.split('\n');
-    return {
-        getText: () => text,
-        lineAt: (lineOrPos: any) => {
-            const line = typeof lineOrPos === 'number' ? lineOrPos : lineOrPos.line;
-            return { text: lines[line] ?? '' };
-        },
-        getWordRangeAtPosition: () => undefined,
-    };
-}
-
-function metadataOnlyDriver() {
+function metadataOnlyDriver(): MockDriver {
     return makeDriver((sql: string) => {
         if (sql.includes('exa_sql_keywords')) {
             return createRawResult(['KEYWORD'], [['SELECT']]);
@@ -102,7 +84,7 @@ LIMIT 100`;
             b AS (SELECT three FROM t2)
             SELECT * FROM a JOIN b ON a.one = b.three`;
         const ctes = parseCtes(stmt);
-        assert.deepStrictEqual(ctes.map((c: any) => c.name), ['a', 'b']);
+        assert.deepStrictEqual(ctes.map((c: CteDefinition) => c.name), ['a', 'b']);
         assert.deepStrictEqual(ctes[0].columns, ['one', 'two']);
         assert.deepStrictEqual(ctes[1].columns, ['three']);
     });
@@ -151,7 +133,7 @@ LIMIT 100`;
 suite('ExasolCompletionProvider - CTE column completion', () => {
     test('bug-report: t.| inside WITH test AS (...) suggests CTE columns in source order', async () => {
         const driver = metadataOnlyDriver();
-        const provider = new ExasolCompletionProvider(makeManager(driver));
+        const provider = new ExasolCompletionProvider(makeManager(driver) as unknown as ConnectionManager);
 
         const sql = `WITH test AS (
   SELECT b.col_a, b.col_b FROM SCHEMA_A.TABLE_X AS b
@@ -159,72 +141,72 @@ suite('ExasolCompletionProvider - CTE column completion', () => {
 )
 SELECT * FROM test AS t
 WHERE t.`;
-        const doc = makeDocument(sql) as any;
+        const doc = makeDocument(sql);
         // Last line is "WHERE t."
         const lastLineIdx = sql.split('\n').length - 1;
-        const pos = new (vscodeMock as any).Position(lastLineIdx, 'WHERE t.'.length);
-        const items = await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
+        const pos = makePosition(lastLineIdx, 'WHERE t.'.length);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
 
-        const labels = items.map((i: any) => i.label);
+        const labels = items.map((i) => i.label);
         assert.deepStrictEqual(labels, ['col_a', 'col_b']);
     });
 
     test('direct CTE reference: test.| (no alias) suggests CTE columns', async () => {
         const driver = metadataOnlyDriver();
-        const provider = new ExasolCompletionProvider(makeManager(driver));
+        const provider = new ExasolCompletionProvider(makeManager(driver) as unknown as ConnectionManager);
 
         const sql = `WITH test AS (SELECT a, b FROM t)
 SELECT test. FROM test`;
-        const doc = makeDocument(sql) as any;
-        const pos = new (vscodeMock as any).Position(1, 'SELECT test.'.length);
-        const items = await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
-        const labels = items.map((i: any) => i.label);
+        const doc = makeDocument(sql);
+        const pos = makePosition(1, 'SELECT test.'.length);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
+        const labels = items.map((i) => i.label);
         assert.deepStrictEqual(labels, ['a', 'b']);
     });
 
     test('CTE column completions sort in source order, not alphabetical', async () => {
         const driver = metadataOnlyDriver();
-        const provider = new ExasolCompletionProvider(makeManager(driver));
+        const provider = new ExasolCompletionProvider(makeManager(driver) as unknown as ConnectionManager);
 
         const sql = `WITH t AS (SELECT z, a, m FROM x)
 SELECT * FROM t AS s WHERE s.`;
-        const doc = makeDocument(sql) as any;
-        const pos = new (vscodeMock as any).Position(1, 'SELECT * FROM t AS s WHERE s.'.length);
-        const items = await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
+        const doc = makeDocument(sql);
+        const pos = makePosition(1, 'SELECT * FROM t AS s WHERE s.'.length);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
 
-        const bySortText = [...items].sort((x: any, y: any) =>
+        const bySortText = [...items].sort((x, y) =>
             (x.sortText ?? '').localeCompare(y.sortText ?? '')
         );
-        assert.deepStrictEqual(bySortText.map((i: any) => i.label), ['z', 'a', 'm']);
+        assert.deepStrictEqual(bySortText.map((i) => i.label), ['z', 'a', 'm']);
     });
 
     test('CTE does not leak across statements in the same document', async () => {
         const driver = metadataOnlyDriver();
-        const provider = new ExasolCompletionProvider(makeManager(driver));
+        const provider = new ExasolCompletionProvider(makeManager(driver) as unknown as ConnectionManager);
 
         const sql = `WITH test AS (SELECT a, b FROM t1) SELECT * FROM test;
 SELECT test. FROM test;`;
-        const doc = makeDocument(sql) as any;
+        const doc = makeDocument(sql);
         // Cursor on the second statement (line index 1). The CTE from line 0 must
         // not leak into the second statement, so completion returns no CTE-based
         // suggestions; without a real catalog match, the result should be [].
-        const pos = new (vscodeMock as any).Position(1, 'SELECT test.'.length);
-        const items = await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
+        const pos = makePosition(1, 'SELECT test.'.length);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
         // The first statement's CTE name must NOT contribute completions here.
-        const labels = items.map((i: any) => i.label);
+        const labels = items.map((i) => i.label);
         assert.ok(!labels.includes('a'));
         assert.ok(!labels.includes('b'));
     });
 
     test('SELECT * body falls through (no CTE columns to suggest)', async () => {
         const driver = metadataOnlyDriver();
-        const provider = new ExasolCompletionProvider(makeManager(driver));
+        const provider = new ExasolCompletionProvider(makeManager(driver) as unknown as ConnectionManager);
 
         const sql = `WITH test AS (SELECT * FROM t)
 SELECT * FROM test AS s WHERE s.`;
-        const doc = makeDocument(sql) as any;
-        const pos = new (vscodeMock as any).Position(1, 'SELECT * FROM test AS s WHERE s.'.length);
-        const items = await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
+        const doc = makeDocument(sql);
+        const pos = makePosition(1, 'SELECT * FROM test AS s WHERE s.'.length);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
         // No catalog table named 'test' either -> empty.
         assert.deepStrictEqual(items, []);
     });
@@ -250,16 +232,16 @@ suite('ExasolCompletionProvider - sortText preserves source order', () => {
             }
             return createRawResult(['TABLE_SCHEMA', 'TABLE_NAME'], []);
         });
-        const provider = new ExasolCompletionProvider(makeManager(driver));
+        const provider = new ExasolCompletionProvider(makeManager(driver) as unknown as ConnectionManager);
 
         const sql = 'select * from s.t as x\nwhere x.';
-        const doc = makeDocument(sql) as any;
-        const pos = new (vscodeMock as any).Position(1, 'where x.'.length);
-        const items = await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
+        const doc = makeDocument(sql);
+        const pos = makePosition(1, 'where x.'.length);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
 
-        const bySortText = [...items].sort((a: any, b: any) =>
+        const bySortText = [...items].sort((a, b) =>
             (a.sortText ?? '').localeCompare(b.sortText ?? '')
         );
-        assert.deepStrictEqual(bySortText.map((i: any) => i.label), ['z', 'a', 'm']);
+        assert.deepStrictEqual(bySortText.map((i) => i.label), ['z', 'a', 'm']);
     });
 });

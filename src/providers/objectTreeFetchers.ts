@@ -1,10 +1,29 @@
+import type { SQLQueriesResponse, SQLResponse } from '@exasol/exasol-driver-ts';
 import { ConnectionManager, StoredConnection, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
-import { getRowsFromResult, escapeSqlString, escapeSqlIdentifier, rawQuery, safeFetch } from '../utils';
+import { getRowsFromResult, escapeSqlString, escapeSqlIdentifier, rawQuery, safeFetch, throwSqlError } from '../utils';
 
 // ---------------------------------------------------------------------------
 // Helper utilities
 // ---------------------------------------------------------------------------
+
+/**
+ * Row shape for the table fallback chain. Every fallback SELECT aliases the
+ * name to TABLE_NAME, so that is the only key that ever appears in rows; only
+ * the first attempt also selects TABLE_ROW_COUNT.
+ */
+type TableNameRow = {
+    TABLE_NAME: string;
+    TABLE_ROW_COUNT?: unknown;
+};
+
+/**
+ * Row shape for the view fallback chain. Every fallback SELECT aliases the
+ * name to VIEW_NAME, so that is the only key that ever appears in rows.
+ */
+type ViewNameRow = {
+    VIEW_NAME: string;
+};
 
 export function parseRowCount(rowCount: unknown): number | undefined {
     if (rowCount === null || rowCount === undefined) {
@@ -31,14 +50,15 @@ export function isRawDataError(error: unknown): boolean {
     return message.includes('NUMRESULTS') || error instanceof TypeError;
 }
 
-export function getRawResultOrThrow(result: any): any {
+export function getRawResultOrThrow(
+    result: SQLResponse<SQLQueriesResponse> | null | undefined
+): SQLResponse<SQLQueriesResponse> {
     if (!result) {
         throw new Error('Empty result set');
     }
 
-    if (typeof result.status === 'string' && result.status !== 'ok') {
-        const message = result.exception?.text || 'Unknown error';
-        throw new Error(message);
+    if (result.status === 'error') {
+        throwSqlError(result);
     }
 
     if (!result.responseData || typeof result.responseData.numResults !== 'number') {
@@ -84,9 +104,13 @@ export async function fetchSchemas(
                     WHERE s.SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
                     ORDER BY s.SCHEMA_NAME
                 `);
-                const rows = getRowsFromResult(result);
+                const rows = getRowsFromResult<{
+                    SCHEMA_NAME: string;
+                    TABLE_COUNT: unknown;
+                    VIEW_COUNT: unknown;
+                }>(result);
                 outputChannel?.appendLine(`   Schema query with counts returned ${rows.length} rows`);
-                return rows.map((row: any) => ({
+                return rows.map(row => ({
                     name: row.SCHEMA_NAME,
                     tableCount: parseRowCount(row.TABLE_COUNT),
                     viewCount: parseRowCount(row.VIEW_COUNT)
@@ -102,9 +126,9 @@ export async function fetchSchemas(
                     WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
                     ORDER BY SCHEMA_NAME
                 `);
-                const rows = getRowsFromResult(result);
+                const rows = getRowsFromResult<{ SCHEMA_NAME: string }>(result);
                 outputChannel?.appendLine(`   Schema query returned ${rows.length} rows`);
-                return rows.map((row: any) => ({ name: row.SCHEMA_NAME }));
+                return rows.map(row => ({ name: row.SCHEMA_NAME }));
             }
         }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
     } catch (error) {
@@ -122,10 +146,12 @@ export async function fetchTables(
     try {
         return await connectionManager.executeWithRetry(async () => {
             const driver = await connectionManager.getDriver(connection.id, 'background');
+            const mapTableNames = (rows: TableNameRow[]): Array<{ name: string }> =>
+                rows.map(row => ({ name: row.TABLE_NAME }));
             const attempts: Array<{
                 description: string;
                 sql: string;
-                map: (rows: any[]) => Array<{ name: string; rowCount?: number }>;
+                map: (rows: TableNameRow[]) => Array<{ name: string; rowCount?: number }>;
                 isRecoverable: (error: unknown) => boolean;
             }> = [
                 {
@@ -138,7 +164,7 @@ export async function fetchTables(
                         WHERE TABLE_SCHEMA = '${escapeSqlString(schemaName)}'
                         ORDER BY TABLE_NAME
                     `,
-                    map: rows => rows.map((row: any) => ({
+                    map: rows => rows.map(row => ({
                         name: row.TABLE_NAME,
                         rowCount: parseRowCount(row.TABLE_ROW_COUNT)
                     })),
@@ -154,9 +180,7 @@ export async function fetchTables(
                         WHERE TABLE_SCHEMA = '${escapeSqlString(schemaName)}'
                         ORDER BY TABLE_NAME
                     `,
-                    map: rows => rows.map((row: any) => ({
-                        name: row.TABLE_NAME
-                    })),
+                    map: mapTableNames,
                     isRecoverable: error =>
                         isColumnMissingError(error, 'EXA_ALL_TABLES') ||
                         isColumnMissingError(error, 'TABLE_NAME')
@@ -170,9 +194,7 @@ export async function fetchTables(
                         AND OBJECT_TYPE = 'TABLE'
                         ORDER BY OBJECT_NAME
                     `,
-                    map: rows => rows.map((row: any) => ({
-                        name: row.TABLE_NAME ?? row.OBJECT_NAME
-                    })),
+                    map: mapTableNames,
                     isRecoverable: error =>
                         isColumnMissingError(error, 'EXA_ALL_OBJECTS') ||
                         isColumnMissingError(error, 'OBJECT_TYPE')
@@ -186,9 +208,7 @@ export async function fetchTables(
                         AND (COLUMN_OBJECT_TYPE = 'TABLE' OR COLUMN_OBJECT_TYPE IS NULL)
                         ORDER BY COLUMN_TABLE
                     `,
-                    map: rows => rows.map((row: any) => ({
-                        name: row.TABLE_NAME ?? row.COLUMN_TABLE
-                    })),
+                    map: mapTableNames,
                     isRecoverable: () => false
                 }
             ];
@@ -199,7 +219,7 @@ export async function fetchTables(
                 outputChannel?.appendLine(`   Running tables query (${attempt.description}) for '${schemaName}'`);
                 try {
                     const result = await rawQuery(driver, attempt.sql);
-                    const rows = getRowsFromResult(result);
+                    const rows = getRowsFromResult<TableNameRow>(result);
                     outputChannel?.appendLine(`   ${attempt.description} returned ${rows.length} rows`);
                     return attempt.map(rows);
                 } catch (error) {
@@ -233,11 +253,13 @@ export async function fetchViews(
         return await connectionManager.executeWithRetry(async () => {
             outputChannel?.appendLine(`   Running views query for schema '${schemaName}'`);
             const driver = await connectionManager.getDriver(connection.id, 'background');
+            const mapViewNames = (rows: ViewNameRow[]): Array<{ name: string }> =>
+                rows.map(row => ({ name: row.VIEW_NAME }));
 
             const attempts: Array<{
                 description: string;
                 sql: string;
-                map: (rows: any[]) => Array<{ name: string }>;
+                map: (rows: ViewNameRow[]) => Array<{ name: string }>;
                 recoverable: (error: unknown) => boolean;
             }> = [
                 {
@@ -248,7 +270,7 @@ export async function fetchViews(
                         WHERE VIEW_SCHEMA = '${escapeSqlString(schemaName)}'
                         ORDER BY TABLE_NAME
                     `,
-                    map: rows => rows.map((row: any) => ({ name: row.VIEW_NAME ?? row.TABLE_NAME })),
+                    map: mapViewNames,
                     recoverable: error =>
                         isColumnMissingError(error, 'TABLE_NAME') ||
                         isColumnMissingError(error, 'VIEW_SCHEMA') ||
@@ -264,7 +286,7 @@ export async function fetchViews(
                         AND OBJECT_TYPE = 'VIEW'
                         ORDER BY OBJECT_NAME
                     `,
-                    map: rows => rows.map((row: any) => ({ name: row.VIEW_NAME ?? row.OBJECT_NAME })),
+                    map: mapViewNames,
                     recoverable: error =>
                         isColumnMissingError(error, 'OBJECT_NAME') ||
                         isColumnMissingError(error, 'OBJECT_SCHEMA') ||
@@ -285,7 +307,7 @@ export async function fetchViews(
                         )
                         ORDER BY COLUMN_TABLE
                     `,
-                    map: rows => rows.map((row: any) => ({ name: row.VIEW_NAME ?? row.COLUMN_TABLE })),
+                    map: mapViewNames,
                     recoverable: () => false
                 }
             ];
@@ -297,7 +319,7 @@ export async function fetchViews(
                 try {
                     const rawResult = await rawQuery(driver, attempt.sql);
                     const validated = getRawResultOrThrow(rawResult);
-                    const rows = getRowsFromResult(validated);
+                    const rows = getRowsFromResult<ViewNameRow>(validated);
                     outputChannel?.appendLine(`   ${attempt.description} returned ${rows.length} rows`);
                     return attempt.map(rows);
                 } catch (error) {
@@ -327,7 +349,7 @@ export async function fetchColumns(
     connection: StoredConnection,
     schemaName: string,
     tableName: string
-): Promise<Array<{ name: string; type: string; nullable: boolean }>> {
+): Promise<Array<{ name: string; type: string; nullable: boolean | null }>> {
     try {
         return await connectionManager.executeWithRetry(async () => {
             const driver = await connectionManager.getDriver(connection.id, 'background');
@@ -341,10 +363,17 @@ export async function fetchColumns(
                 AND COLUMN_TABLE = '${escapeSqlString(tableName)}'
                 ORDER BY COLUMN_ORDINAL_POSITION
             `);
-            const rows = getRowsFromResult(result);
-            return rows.map((row: any) => ({
+            const rows = getRowsFromResult<{
+                COLUMN_NAME: string;
+                COLUMN_TYPE: string;
+                COLUMN_IS_NULLABLE: boolean | null;
+            }>(result);
+            return rows.map(row => ({
                 name: row.COLUMN_NAME,
                 type: row.COLUMN_TYPE,
+                // EXA_ALL_COLUMNS.COLUMN_IS_NULLABLE is null for view columns
+                // (nullability is not tracked for views); pass that through
+                // rather than guessing a value the database did not report.
                 nullable: row.COLUMN_IS_NULLABLE
             }));
         }, connection.id, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' });
@@ -368,10 +397,10 @@ export async function fetchScriptCounts(
                 WHERE SCRIPT_SCHEMA = '${escapeSqlString(schemaName)}'
                 GROUP BY SCRIPT_TYPE
             `);
-            const rows = getRowsFromResult(result);
+            const rows = getRowsFromResult<{ SCRIPT_TYPE: string; SCRIPT_COUNT: unknown }>(result);
             const counts = new Map<string, number>();
             for (const row of rows) {
-                const scriptType = row.SCRIPT_TYPE as string;
+                const scriptType = row.SCRIPT_TYPE;
                 const count = parseRowCount(row.SCRIPT_COUNT) ?? 0;
                 if (scriptType && count > 0) {
                     counts.set(scriptType, count);
@@ -399,7 +428,7 @@ export async function fetchFunctionCount(
                 FROM SYS.EXA_ALL_FUNCTIONS
                 WHERE FUNCTION_SCHEMA = '${escapeSqlString(schemaName)}'
             `);
-            const rows = getRowsFromResult(result);
+            const rows = getRowsFromResult<{ FUNCTION_COUNT: unknown }>(result);
             return parseRowCount(rows[0]?.FUNCTION_COUNT) ?? 0;
         }, connection.id, { role: 'background' });
     } catch (error) {
@@ -428,8 +457,13 @@ export async function fetchScripts(
                 AND SCRIPT_TYPE = '${escapeSqlString(scriptType)}'
                 ORDER BY SCRIPT_NAME
             `);
-            const rows = getRowsFromResult(result);
-            return rows.map((row: any) => ({
+            const rows = getRowsFromResult<{
+                SCRIPT_NAME: string;
+                SCRIPT_LANGUAGE: string;
+                SCRIPT_INPUT_TYPE: string | null;
+                SCRIPT_TYPE: string;
+            }>(result);
+            return rows.map(row => ({
                 name: row.SCRIPT_NAME,
                 language: row.SCRIPT_LANGUAGE,
                 inputType: row.SCRIPT_INPUT_TYPE ?? null,
@@ -453,8 +487,8 @@ export async function fetchFunctions(
                 WHERE FUNCTION_SCHEMA = '${escapeSqlString(schemaName)}'
                 ORDER BY FUNCTION_NAME
             `);
-            const rows = getRowsFromResult(result);
-            return rows.map((row: any) => ({
+            const rows = getRowsFromResult<{ FUNCTION_NAME: string }>(result);
+            return rows.map(row => ({
                 name: row.FUNCTION_NAME
             }));
         }, connection.id, { role: 'background' }),
@@ -477,7 +511,7 @@ export async function fetchConstraintCount(
                 WHERE CONSTRAINT_SCHEMA = '${escapeSqlString(schemaName)}'
                 AND CONSTRAINT_TABLE = '${escapeSqlString(tableName)}'
             `);
-            const rows = getRowsFromResult(result);
+            const rows = getRowsFromResult<{ CONSTRAINT_COUNT: unknown }>(result);
             return parseRowCount(rows[0]?.CONSTRAINT_COUNT) ?? 0;
         }, connection.id, { role: 'background' });
     } catch (error) {
@@ -502,7 +536,7 @@ export async function fetchIndexCount(
                 WHERE INDEX_SCHEMA = '${escapeSqlString(schemaName)}'
                 AND INDEX_TABLE = '${escapeSqlString(tableName)}'
             `);
-            const rows = getRowsFromResult(result);
+            const rows = getRowsFromResult<{ INDEX_COUNT: unknown }>(result);
             return parseRowCount(rows[0]?.INDEX_COUNT) ?? 0;
         }, connection.id, { role: 'background' });
     } catch (error) {
@@ -527,8 +561,8 @@ export async function fetchConstraints(
                 AND CONSTRAINT_TABLE = '${escapeSqlString(tableName)}'
                 ORDER BY CONSTRAINT_NAME
             `);
-            const rows = getRowsFromResult(result);
-            return rows.map((row: any) => ({
+            const rows = getRowsFromResult<{ CONSTRAINT_NAME: string; CONSTRAINT_TYPE: string }>(result);
+            return rows.map(row => ({
                 name: row.CONSTRAINT_NAME,
                 type: row.CONSTRAINT_TYPE
             }));
@@ -554,8 +588,8 @@ export async function fetchConstraintColumns(
                 AND CONSTRAINT_NAME = '${escapeSqlString(constraintName)}'
                 ORDER BY ORDINAL_POSITION
             `);
-            const rows = getRowsFromResult(result);
-            return rows.map((row: any) => ({
+            const rows = getRowsFromResult<{ COLUMN_NAME: string }>(result);
+            return rows.map(row => ({
                 name: row.COLUMN_NAME
             }));
         }, connection.id, { role: 'background' }),
@@ -578,8 +612,12 @@ export async function fetchIndices(
                 AND INDEX_TABLE = '${escapeSqlString(tableName)}'
                 ORDER BY INDEX_NAME
             `);
-            const rows = getRowsFromResult(result);
-            return rows.map((row: any) => ({
+            const rows = getRowsFromResult<{
+                INDEX_NAME?: string;
+                INDEX_TYPE?: string;
+                INDEX_COLUMNS?: string;
+            }>(result);
+            return rows.map(row => ({
                 name: row.INDEX_NAME ?? row.INDEX_TYPE ?? 'INDEX',
                 columns: row.INDEX_COLUMNS ?? ''
             }));
@@ -604,8 +642,13 @@ export async function fetchVirtualSchemas(
                 FROM SYS.EXA_ALL_VIRTUAL_SCHEMAS
                 ORDER BY SCHEMA_NAME
             `);
-            const rows = getRowsFromResult(result);
-            return rows.map((row: any) => ({
+            const rows = getRowsFromResult<{
+                SCHEMA_NAME: string;
+                ADAPTER_SCRIPT_NAME: string | null;
+                LAST_REFRESH: string | null;
+                LAST_REFRESH_BY: string | null;
+            }>(result);
+            return rows.map(row => ({
                 name: row.SCHEMA_NAME,
                 adapterName: row.ADAPTER_SCRIPT_NAME ?? undefined,
                 lastRefresh: row.LAST_REFRESH ?? undefined,
@@ -629,8 +672,8 @@ export async function fetchVirtualTables(
                 WHERE TABLE_SCHEMA = '${escapeSqlString(virtualSchemaName)}'
                 ORDER BY TABLE_NAME
             `);
-            const rows = getRowsFromResult(result);
-            return rows.map((row: any) => ({
+            const rows = getRowsFromResult<{ TABLE_NAME: string }>(result);
+            return rows.map(row => ({
                 name: row.TABLE_NAME
             }));
         }, connection.id, { role: 'background' }),
@@ -653,8 +696,8 @@ export async function fetchVirtualColumns(
                 AND COLUMN_TABLE = '${escapeSqlString(tableName)}'
                 ORDER BY COLUMN_ORDINAL_POSITION
             `);
-            const rows = getRowsFromResult(result);
-            return rows.map((row: any) => ({
+            const rows = getRowsFromResult<{ COLUMN_NAME: string; COLUMN_TYPE: string }>(result);
+            return rows.map(row => ({
                 name: row.COLUMN_NAME,
                 type: row.COLUMN_TYPE
             }));
@@ -676,8 +719,8 @@ export async function fetchSystemTables(
                 WHERE SCHEMA_NAME = '${escapeSqlString(schemaName)}'
                 ORDER BY OBJECT_NAME
             `);
-            const rows = getRowsFromResult(result);
-            return rows.map((row: any) => ({
+            const rows = getRowsFromResult<{ OBJECT_NAME: string }>(result);
+            return rows.map(row => ({
                 name: row.OBJECT_NAME
             }));
         }, connection.id, { role: 'background' }),
@@ -696,8 +739,8 @@ export async function fetchSystemTableColumns(
             const result = await rawQuery(driver, `
                 DESCRIBE "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(tableName)}"
             `);
-            const rows = getRowsFromResult(result);
-            return rows.map((row: any) => ({
+            const rows = getRowsFromResult<{ COLUMN_NAME: string; SQL_TYPE?: string }>(result);
+            return rows.map(row => ({
                 name: row.COLUMN_NAME,
                 type: row.SQL_TYPE ?? 'UNKNOWN'
             }));

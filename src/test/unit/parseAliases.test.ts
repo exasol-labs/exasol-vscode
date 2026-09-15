@@ -1,18 +1,18 @@
 import * as assert from 'assert';
 import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helpers/vscodeMock';
+import { applyCompletionVscodeMock } from '../helpers/completionMocks';
 
-(vscodeMock as any).CompletionItemKind = {
-    Interface: 7, Method: 1, Function: 2, Class: 6, Module: 8, Field: 4, Keyword: 13,
-};
-(vscodeMock as any).CompletionItem = class { constructor(public label: string, public kind?: number) {} };
-(vscodeMock as any).MarkdownString = class { constructor(public value: string) {} };
-(vscodeMock as any).SnippetString = class { constructor(public value: string) {} };
+// Mocks must be applied BEFORE registerVscodeMock(); see the load-order note
+// at the top of completionMocks.ts.
+applyCompletionVscodeMock(vscodeMock);
 
 registerVscodeMock();
 registerExtensionMock();
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { parseAliases } = require('../../providers/completionProvider');
+// completionProvider.ts imports `vscode` at module scope, so it must stay a
+// deferred require() issued AFTER the mocks above are registered. A static
+// import would resolve 'vscode' before require.cache is patched.
+const { parseAliases } = require('../../providers/completionProvider') as typeof import('../../providers/completionProvider');
 
 suite('parseAliases', () => {
     test('unquoted: FROM users u', () => {

@@ -1,13 +1,23 @@
 import * as assert from 'assert';
 import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helpers/vscodeMock';
+import { asConnectionManager, type ConfigWorkspaceMock, type FakeConnectionManager } from '../helpers/completionMocks';
 
 registerVscodeMock();
 registerExtensionMock();
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { QueryExecutor } = require('../../queryExecutor');
+const { QueryExecutor } = require('../../queryExecutor') as typeof import('../../queryExecutor');
 
-import { createEmptyRawResult, createRawResult } from '../helpers/mockConnectionManager';
+import { createEmptyRawResult, createRawResult, TEST_CONNECTION } from '../helpers/mockConnectionManager';
+
+interface StatementIdentityVscodeMock {
+    workspace: ConfigWorkspaceMock;
+}
+
+interface FakeDriver {
+    query: (sql: string) => Promise<unknown>;
+    execute?: (...args: unknown[]) => Promise<unknown>;
+    importFromCsvFile?: (...args: unknown[]) => Promise<number>;
+}
 
 /**
  * Builds a QueryExecutor whose fake driver returns `mainResult` for the real
@@ -15,10 +25,10 @@ import { createEmptyRawResult, createRawResult } from '../helpers/mockConnection
  * SESSION_ID/STMT_ID rows for the baseline identity-capture query
  * captureBaselineStatementIdentity() issues *before* the real statement.
  */
-function makeExecutor(options: { mainResult: any; identityRows?: any[] | 'throw'; executionPlanAvailable?: boolean }): { qe: any; queryCalls: string[] } {
+function makeExecutor(options: { mainResult: unknown; identityRows?: Array<Array<string | number>> | 'throw'; executionPlanAvailable?: boolean }): { qe: InstanceType<typeof QueryExecutor>; queryCalls: string[] } {
     const queryCalls: string[] = [];
 
-    const fakeDriver = {
+    const fakeDriver: FakeDriver = {
         execute: async () => options.mainResult,
         query: async (sql: string) => {
             queryCalls.push(sql);
@@ -32,19 +42,19 @@ function makeExecutor(options: { mainResult: any; identityRows?: any[] | 'throw'
         }
     };
 
-    const fakeConnectionManager = {
-        getActiveConnection: () => ({ id: 'conn-1', name: 'Test' }),
+    const fakeConnectionManager: FakeConnectionManager<FakeDriver> = {
+        getActiveConnection: () => TEST_CONNECTION,
         isExecutionPlanAvailable: () => options.executionPlanAvailable ?? true,
         getDriver: async () => fakeDriver,
-        executeWithRetry: async (fn: () => Promise<any>) => fn()
+        executeWithRetry: async (fn) => fn()
     };
 
-    return { qe: new QueryExecutor(fakeConnectionManager), queryCalls };
+    return { qe: new QueryExecutor(asConnectionManager(fakeConnectionManager)), queryCalls };
 }
 
 suite('QueryExecutor.execute: baseline statement identity capture', () => {
     setup(() => {
-        (vscodeMock as any).workspace = {
+        (vscodeMock as unknown as StatementIdentityVscodeMock).workspace = {
             getConfiguration: () => ({
                 get: (_key: string, fallback?: unknown) => fallback
             })
@@ -88,7 +98,7 @@ suite('QueryExecutor.execute: baseline statement identity capture', () => {
 
     test('captures the baseline before the real statement runs, not after', async () => {
         const calls: string[] = [];
-        const fakeDriver = {
+        const fakeDriver: FakeDriver = {
             query: async (sql: string) => {
                 calls.push(sql);
                 if (sql.includes('CURRENT_SESSION')) {
@@ -97,12 +107,12 @@ suite('QueryExecutor.execute: baseline statement identity capture', () => {
                 return createRawResult(['X'], [[1]]);
             }
         };
-        const fakeConnectionManager = {
-            getActiveConnection: () => ({ id: 'conn-1', name: 'Test' }),
+        const fakeConnectionManager: FakeConnectionManager<FakeDriver> = {
+            getActiveConnection: () => TEST_CONNECTION,
             getDriver: async () => fakeDriver,
-            executeWithRetry: async (fn: () => Promise<any>) => fn()
+            executeWithRetry: async (fn) => fn()
         };
-        const qe = new QueryExecutor(fakeConnectionManager);
+        const qe = new QueryExecutor(asConnectionManager(fakeConnectionManager));
 
         await qe.execute('SELECT 1 AS X');
 
@@ -149,7 +159,7 @@ suite('QueryExecutor.execute: baseline statement identity capture', () => {
     });
 
     test('does not capture identity when execution plans are disabled', async () => {
-        (vscodeMock as any).workspace = {
+        (vscodeMock as unknown as StatementIdentityVscodeMock).workspace = {
             getConfiguration: () => ({
                 get: (key: string, fallback?: unknown) => key === 'executionPlan' ? false : fallback
             })
@@ -184,7 +194,7 @@ suite('QueryExecutor.execute: baseline statement identity capture', () => {
 
     test('does not inflate executionTime with the baseline capture round-trip', async () => {
         let queryCallCount = 0;
-        const fakeDriver = {
+        const fakeDriver: FakeDriver = {
             query: async (sql: string) => {
                 queryCallCount++;
                 if (sql.includes('CURRENT_SESSION')) {
@@ -195,12 +205,12 @@ suite('QueryExecutor.execute: baseline statement identity capture', () => {
                 return createRawResult(['X'], [[1]]);
             }
         };
-        const fakeConnectionManager = {
-            getActiveConnection: () => ({ id: 'conn-1', name: 'Test' }),
+        const fakeConnectionManager: FakeConnectionManager<FakeDriver> = {
+            getActiveConnection: () => TEST_CONNECTION,
             getDriver: async () => fakeDriver,
-            executeWithRetry: async (fn: () => Promise<any>) => fn()
+            executeWithRetry: async (fn) => fn()
         };
-        const qe = new QueryExecutor(fakeConnectionManager);
+        const qe = new QueryExecutor(asConnectionManager(fakeConnectionManager));
 
         const result = await qe.execute('SELECT 1 AS X');
 
@@ -208,9 +218,9 @@ suite('QueryExecutor.execute: baseline statement identity capture', () => {
         assert.ok(result.executionTime < 40, `executionTime (${result.executionTime}ms) should exclude the ~50ms baseline capture`);
     });
 
-    test('captures identity for a local CSV import too — it is still a real, profiled IMPORT statement', async () => {
+    test('captures identity for a local CSV import too; it is still a real, profiled IMPORT statement', async () => {
         const calls: string[] = [];
-        const fakeDriver = {
+        const fakeDriver: FakeDriver = {
             importFromCsvFile: async () => 5,
             query: async (sql: string) => {
                 calls.push(sql);
@@ -220,12 +230,12 @@ suite('QueryExecutor.execute: baseline statement identity capture', () => {
                 return createEmptyRawResult([]);
             }
         };
-        const fakeConnectionManager = {
-            getActiveConnection: () => ({ id: 'conn-1', name: 'Test' }),
+        const fakeConnectionManager: FakeConnectionManager<FakeDriver> = {
+            getActiveConnection: () => TEST_CONNECTION,
             getDriver: async () => fakeDriver,
-            executeWithRetry: async (fn: () => Promise<any>) => fn()
+            executeWithRetry: async (fn) => fn()
         };
-        const qe = new QueryExecutor(fakeConnectionManager);
+        const qe = new QueryExecutor(asConnectionManager(fakeConnectionManager));
 
         const result = await qe.execute("IMPORT INTO t FROM LOCAL CSV FILE '/abs/x.csv'");
 
@@ -238,16 +248,16 @@ suite('QueryExecutor.execute: baseline statement identity capture', () => {
     });
 
     test('leaves sessionId/baselineStmtId undefined (not throw) when identity capture fails for a local CSV import', async () => {
-        const fakeDriver = {
+        const fakeDriver: FakeDriver = {
             importFromCsvFile: async () => 5,
             query: async () => { throw new Error('simulated identity capture failure'); }
         };
-        const fakeConnectionManager = {
-            getActiveConnection: () => ({ id: 'conn-1', name: 'Test' }),
+        const fakeConnectionManager: FakeConnectionManager<FakeDriver> = {
+            getActiveConnection: () => TEST_CONNECTION,
             getDriver: async () => fakeDriver,
-            executeWithRetry: async (fn: () => Promise<any>) => fn()
+            executeWithRetry: async (fn) => fn()
         };
-        const qe = new QueryExecutor(fakeConnectionManager);
+        const qe = new QueryExecutor(asConnectionManager(fakeConnectionManager));
 
         const result = await qe.execute("IMPORT INTO t FROM LOCAL CSV FILE '/abs/x.csv'");
 
@@ -258,7 +268,7 @@ suite('QueryExecutor.execute: baseline statement identity capture', () => {
 
     test('does not inflate executionTime with the baseline capture round-trip, for a local CSV import too', async () => {
         let queryCallCount = 0;
-        const fakeDriver = {
+        const fakeDriver: FakeDriver = {
             importFromCsvFile: async () => 5,
             query: async () => {
                 queryCallCount++;
@@ -267,12 +277,12 @@ suite('QueryExecutor.execute: baseline statement identity capture', () => {
                 return createRawResult(['SID', 'STID'], [[1, 1]]);
             }
         };
-        const fakeConnectionManager = {
-            getActiveConnection: () => ({ id: 'conn-1', name: 'Test' }),
+        const fakeConnectionManager: FakeConnectionManager<FakeDriver> = {
+            getActiveConnection: () => TEST_CONNECTION,
             getDriver: async () => fakeDriver,
-            executeWithRetry: async (fn: () => Promise<any>) => fn()
+            executeWithRetry: async (fn) => fn()
         };
-        const qe = new QueryExecutor(fakeConnectionManager);
+        const qe = new QueryExecutor(asConnectionManager(fakeConnectionManager));
 
         const result = await qe.execute("IMPORT INTO t FROM LOCAL CSV FILE '/abs/x.csv'");
 
