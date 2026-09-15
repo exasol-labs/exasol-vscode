@@ -1,23 +1,24 @@
 import * as assert from 'assert';
-import { createWebviewRenderContext, escapeJsonForDataIsland } from '../../utils';
+import type * as vscode from 'vscode';
+import { createWebviewRenderContext } from '../../utils';
 
 /**
  * Minimal stubs for vscode.Webview and vscode.Uri (no vscode runtime needed
  * because createWebviewRenderContext receives joinPath as a plain argument).
  */
-function makeWebviewStub(cspSource: string) {
+function makeWebviewStub(cspSource: string): vscode.Webview {
     return {
         cspSource,
-        asWebviewUri: (uri: any) => uri,
-    } as any;
+        asWebviewUri: (uri: vscode.Uri) => uri,
+    } as unknown as vscode.Webview;
 }
 
-function makeUriStub(path: string) {
-    return { path } as any;
+function makeUriStub(path: string): vscode.Uri {
+    return { path } as unknown as vscode.Uri;
 }
 
-function joinPathStub(base: any, ...segments: string[]): any {
-    return { path: [base.path, ...segments].join('/') };
+function joinPathStub(base: vscode.Uri, ...segments: string[]): vscode.Uri {
+    return { path: [base.path, ...segments].join('/') } as unknown as vscode.Uri;
 }
 
 suite('createWebviewRenderContext', () => {
@@ -85,13 +86,13 @@ suite('createWebviewRenderContext', () => {
 
     test('mediaUri calls joinPath and asWebviewUri with correct segments', () => {
         const cspSource = 'https://file.example.com';
-        const calls: any[][] = [];
+        const calls: Array<[vscode.Uri, ...string[]]> = [];
         const webview = {
             cspSource,
-            asWebviewUri: (uri: any) => ({ webviewUri: uri }),
-        } as any;
+            asWebviewUri: (uri: vscode.Uri) => ({ webviewUri: uri }) as unknown as vscode.Uri,
+        } as unknown as vscode.Webview;
         const extensionUri = makeUriStub('/ext');
-        const trackedJoinPath = (base: any, ...segments: string[]) => {
+        const trackedJoinPath = (base: vscode.Uri, ...segments: string[]) => {
             calls.push([base, ...segments]);
             return joinPathStub(base, ...segments);
         };

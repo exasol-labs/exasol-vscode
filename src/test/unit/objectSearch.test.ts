@@ -1,9 +1,36 @@
 import * as assert from 'assert';
+import type * as vscode from 'vscode';
+import type { ConnectionManager } from '../../connectionManager';
+import type { ObjectNode } from '../../providers/objectTreeProvider';
 import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helpers/vscodeMock';
+import type { MockDriver, ConfigWorkspaceMock } from '../helpers/completionMocks';
 
 // Track calls to vscode.window methods
-const windowCalls: { method: string; args: any[] }[] = [];
-let mockQuickPick: any;
+const windowCalls: { method: string; args: unknown[] }[] = [];
+
+interface MockQuickPickItem {
+    label: string;
+    description?: string;
+    detail?: string;
+}
+
+interface MockQuickPick {
+    placeholder: string;
+    matchOnDescription: boolean;
+    matchOnDetail: boolean;
+    busy: boolean;
+    items: MockQuickPickItem[];
+    selectedItems: MockQuickPickItem[];
+    onDidAccept: (cb: () => void) => void;
+    onDidHide: (cb: () => void) => void;
+    show: () => void;
+    hide: () => void;
+    dispose: () => void;
+    _acceptCallback: (() => void) | null;
+    _hideCallback: (() => void) | null;
+}
+
+let mockQuickPick: MockQuickPick;
 
 function resetWindowCalls(): void {
     windowCalls.length = 0;
@@ -12,25 +39,46 @@ function resetWindowCalls(): void {
         matchOnDescription: false,
         matchOnDetail: false,
         busy: false,
-        items: [] as any[],
-        selectedItems: [] as any[],
-        onDidAccept: (_cb: () => void) => { mockQuickPick._acceptCallback = _cb; },
-        onDidHide: (_cb: () => void) => { mockQuickPick._hideCallback = _cb; },
+        items: [],
+        selectedItems: [],
+        onDidAccept: (cb: () => void) => { mockQuickPick._acceptCallback = cb; },
+        onDidHide: (cb: () => void) => { mockQuickPick._hideCallback = cb; },
         show: () => { windowCalls.push({ method: 'quickPick.show', args: [] }); },
         hide: () => { windowCalls.push({ method: 'quickPick.hide', args: [] }); },
         dispose: () => { windowCalls.push({ method: 'quickPick.dispose', args: [] }); },
-        _acceptCallback: null as (() => void) | null,
-        _hideCallback: null as (() => void) | null,
+        _acceptCallback: null,
+        _hideCallback: null,
     };
 }
 
-// Enhance the vscode mock with window methods and workspace configuration
-(vscodeMock as any).window = {
-    showInformationMessage: (...args: any[]) => {
+// This file's own vscode.window surface (QuickPick + message boxes), not
+// shared with resolveImportPath's differently-shaped MockWindow (that one
+// mocks activeTextEditor, a completely different part of the API).
+interface MockWindow {
+    showInformationMessage: (...args: string[]) => Promise<undefined>;
+    showErrorMessage: (...args: string[]) => Promise<undefined>;
+    createQuickPick: () => MockQuickPick;
+}
+interface ObjectSearchVscodeMock {
+    window: MockWindow;
+    workspace: ConfigWorkspaceMock;
+}
+
+const extendedMock = vscodeMock as unknown as ObjectSearchVscodeMock;
+
+// Enhance the vscode mock with window methods. The workspace config getter is
+// installed per-test in setup() below, not here at module load: vscodeMock is
+// a process-wide singleton shared by every test file in the same mocha run,
+// and installing it here would race with whichever file's own top-level
+// mutation of vscodeMock.workspace happens to load last (see
+// completionMocks.ts's applyCompletionVscodeMock, which the completion-family
+// tests use, for the same reasoning applied there).
+extendedMock.window = {
+    showInformationMessage: (...args: string[]) => {
         windowCalls.push({ method: 'showInformationMessage', args });
         return Promise.resolve(undefined);
     },
-    showErrorMessage: (...args: any[]) => {
+    showErrorMessage: (...args: string[]) => {
         windowCalls.push({ method: 'showErrorMessage', args });
         return Promise.resolve(undefined);
     },
@@ -39,36 +87,46 @@ function resetWindowCalls(): void {
         return mockQuickPick;
     }
 };
-// Enable column search in tests so column-related assertions still pass
-(vscodeMock as any).workspace = {
-    getConfiguration: () => ({
-        get: (key: string, defaultValue?: any) => {
-            if (key === 'searchIncludesColumns') { return true; }
-            return defaultValue;
-        }
-    })
-};
 
 registerVscodeMock();
 registerExtensionMock();
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { ObjectSearchProvider } = require('../../providers/objectSearchProvider');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { ObjectTreeProvider } = require('../../providers/objectTreeProvider');
+const { ObjectSearchProvider } = require('../../providers/objectSearchProvider') as typeof import('../../providers/objectSearchProvider');
+const { ObjectTreeProvider, ObjectTreeItem } = require('../../providers/objectTreeProvider') as typeof import('../../providers/objectTreeProvider');
 
 import { createRawResult, createEmptyRawResult, MockConnectionManager } from '../helpers/mockConnectionManager';
 
+type ObjectTreeItemInstance = InstanceType<typeof ObjectTreeItem>;
+type ObjectTreeView = vscode.TreeView<ObjectNode>;
+
+// Minimal partial double for vscode.TreeView<ObjectNode> (only `reveal` is
+// exercised); a fully typed double would be far larger than these tests need.
+interface MockTreeView {
+    reveal: (element: ObjectTreeItemInstance, options?: { select?: boolean; focus?: boolean; expand?: boolean | number }) => Promise<void>;
+}
+
 suite('ObjectSearchProvider', () => {
 
-    let searchProvider: any;
-    let mockDriver: any;
-    let mockCM: any;
-    let objectTreeProvider: any;
-    let mockTreeView: any;
+    let searchProvider: InstanceType<typeof ObjectSearchProvider>;
+    let mockDriver: MockDriver;
+    let mockCM: InstanceType<typeof MockConnectionManager>;
+    let objectTreeProvider: InstanceType<typeof ObjectTreeProvider>;
+    let mockTreeView: MockTreeView;
 
     setup(() => {
         resetWindowCalls();
+        // Enable column search in tests so column-related assertions still pass.
+        // Installed per-test (not at module load) since vscodeMock.workspace is
+        // a shared singleton other test files also mutate; see the comment
+        // above extendedMock.window for why.
+        extendedMock.workspace = {
+            getConfiguration: () => ({
+                get: (key: string, defaultValue?: unknown) => {
+                    if (key === 'searchIncludesColumns') { return true; }
+                    return defaultValue;
+                }
+            })
+        };
         mockDriver = {
             query: async (sql: string) => {
                 if (sql.includes('EXA_ALL_TABLES') && sql.includes('UNION')) {
@@ -114,25 +172,35 @@ suite('ObjectSearchProvider', () => {
             }
         };
         mockCM = new MockConnectionManager(mockDriver);
-        objectTreeProvider = new ObjectTreeProvider(mockCM);
+        objectTreeProvider = new ObjectTreeProvider(mockCM as unknown as ConnectionManager);
         mockTreeView = {
             reveal: async () => {}
         };
-        searchProvider = new ObjectSearchProvider(mockCM, objectTreeProvider, mockTreeView);
+        searchProvider = new ObjectSearchProvider(
+            mockCM as unknown as ConnectionManager,
+            objectTreeProvider,
+            mockTreeView as unknown as ObjectTreeView
+        );
     });
 
     test('shows info message when no active connection', async () => {
         mockCM = new MockConnectionManager(mockDriver);
         // Override to return null
         mockCM.getActiveConnection = () => null;
-        searchProvider = new ObjectSearchProvider(mockCM, objectTreeProvider, mockTreeView);
+        searchProvider = new ObjectSearchProvider(
+            mockCM as unknown as ConnectionManager,
+            objectTreeProvider,
+            mockTreeView as unknown as ObjectTreeView
+        );
 
         await searchProvider.showSearch();
 
         const infoCall = windowCalls.find(c => c.method === 'showInformationMessage');
         assert.ok(infoCall, 'Should call showInformationMessage');
+        const infoMessage = infoCall.args[0];
+        assert.ok(typeof infoMessage === 'string');
         assert.ok(
-            infoCall.args[0].includes('No active connection'),
+            infoMessage.includes('No active connection'),
             'Message should mention no active connection'
         );
     });
@@ -152,39 +220,39 @@ suite('ObjectSearchProvider', () => {
         assert.ok(mockQuickPick.items.length > 0, 'Should have items');
 
         const tableItem = mockQuickPick.items.find(
-            (i: any) => i.label.includes('USERS') && i.detail === 'Table'
+            (i) => i.label.includes('USERS') && i.detail === 'Table'
         );
         assert.ok(tableItem, 'Should find USERS table item');
         assert.strictEqual(tableItem.description, 'MY_SCHEMA', 'Description should be schema name');
         assert.ok(tableItem.label.includes('$('), 'Label should contain icon codicon');
 
         const viewItem = mockQuickPick.items.find(
-            (i: any) => i.label.includes('ACTIVE_USERS') && i.detail === 'View'
+            (i) => i.label.includes('ACTIVE_USERS') && i.detail === 'View'
         );
         assert.ok(viewItem, 'Should find ACTIVE_USERS view item');
 
         const scriptItem = mockQuickPick.items.find(
-            (i: any) => i.label.includes('MY_UDF') && i.detail === 'Script'
+            (i) => i.label.includes('MY_UDF') && i.detail === 'Script'
         );
         assert.ok(scriptItem, 'Should find MY_UDF script item');
 
         const funcItem = mockQuickPick.items.find(
-            (i: any) => i.label.includes('MY_FUNC') && i.detail === 'Function'
+            (i) => i.label.includes('MY_FUNC') && i.detail === 'Function'
         );
         assert.ok(funcItem, 'Should find MY_FUNC function item');
 
         const virtualItem = mockQuickPick.items.find(
-            (i: any) => i.label.includes('REMOTE_TABLE') && i.detail === 'Virtual Table'
+            (i) => i.label.includes('REMOTE_TABLE') && i.detail === 'Virtual Table'
         );
         assert.ok(virtualItem, 'Should find REMOTE_TABLE virtual table item');
 
         const sysItem = mockQuickPick.items.find(
-            (i: any) => i.label.includes('EXA_ALL_COLUMNS') && i.detail === 'System Table'
+            (i) => i.label.includes('EXA_ALL_COLUMNS') && i.detail === 'System Table'
         );
         assert.ok(sysItem, 'Should find EXA_ALL_COLUMNS system table item');
 
         const colItem = mockQuickPick.items.find(
-            (i: any) => i.label.includes('ID') && i.detail === 'Column'
+            (i) => i.label.includes('ID') && i.detail === 'Column'
         );
         assert.ok(colItem, 'Should find ID column item');
     });
@@ -196,18 +264,24 @@ suite('ObjectSearchProvider', () => {
     });
 
     test('shows error message on database error', async () => {
-        const failDriver = {
+        const failDriver: MockDriver = {
             query: async () => { throw new Error('Connection lost'); }
         };
         const failCM = new MockConnectionManager(failDriver);
-        const failSearch = new ObjectSearchProvider(failCM, objectTreeProvider, mockTreeView);
+        const failSearch = new ObjectSearchProvider(
+            failCM as unknown as ConnectionManager,
+            objectTreeProvider,
+            mockTreeView as unknown as ObjectTreeView
+        );
 
         await failSearch.showSearch();
 
         const errorCall = windowCalls.find(c => c.method === 'showErrorMessage');
         assert.ok(errorCall, 'Should call showErrorMessage');
+        const errorMessage = errorCall.args[0];
+        assert.ok(typeof errorMessage === 'string');
         assert.ok(
-            errorCall.args[0].includes('Failed to fetch objects'),
+            errorMessage.includes('Failed to fetch objects'),
             'Error message should mention failure to fetch objects'
         );
 
@@ -216,32 +290,35 @@ suite('ObjectSearchProvider', () => {
     });
 
     test('onDidAccept calls treeView.reveal with the selected item', async () => {
-        const revealCalls: { node: any; options: any }[] = [];
-        mockTreeView.reveal = async (node: any, options: any) => {
+        const revealCalls: { node: ObjectTreeItemInstance; options: { select?: boolean; focus?: boolean; expand?: boolean | number } | undefined }[] = [];
+        mockTreeView.reveal = async (node, options) => {
             revealCalls.push({ node, options });
         };
 
         // We need an objectTreeProvider that returns nodes matching the search results
-        const mockSchemaNode = new (require('../../providers/objectTreeProvider').ObjectTreeItem)({
+        const mockSchemaNode = new ObjectTreeItem({
             label: 'MY_SCHEMA',
+            id: 'schema-my_schema',
+            collapsibleState: 0 as vscode.TreeItemCollapsibleState,
             type: 'schema',
-            connectionId: 'conn-1',
             schemaName: 'MY_SCHEMA',
         });
-        const mockTablesFolder = new (require('../../providers/objectTreeProvider').ObjectTreeItem)({
+        const mockTablesFolder = new ObjectTreeItem({
             label: 'Tables',
+            id: 'tables-folder-my_schema',
+            collapsibleState: 0 as vscode.TreeItemCollapsibleState,
             type: 'tables-folder',
-            connectionId: 'conn-1',
             schemaName: 'MY_SCHEMA',
         });
-        const mockTableNode = new (require('../../providers/objectTreeProvider').ObjectTreeItem)({
+        const mockTableNode = new ObjectTreeItem({
             label: 'USERS',
+            id: 'table-my_schema-users',
+            collapsibleState: 0 as vscode.TreeItemCollapsibleState,
             type: 'table',
-            connectionId: 'conn-1',
             schemaName: 'MY_SCHEMA',
         });
 
-        objectTreeProvider.getChildren = async (element?: any) => {
+        objectTreeProvider.getChildren = async (element?: ObjectNode) => {
             if (!element) {
                 return [mockSchemaNode];
             }
@@ -254,11 +331,15 @@ suite('ObjectSearchProvider', () => {
             return [];
         };
 
-        searchProvider = new ObjectSearchProvider(mockCM, objectTreeProvider, mockTreeView);
+        searchProvider = new ObjectSearchProvider(
+            mockCM as unknown as ConnectionManager,
+            objectTreeProvider,
+            mockTreeView as unknown as ObjectTreeView
+        );
         await searchProvider.showSearch();
 
         const tableItem = mockQuickPick.items.find(
-            (i: any) => i.label.includes('USERS') && i.detail === 'Table'
+            (i) => i.label.includes('USERS') && i.detail === 'Table'
         );
         assert.ok(tableItem, 'Should find USERS table item');
 
@@ -279,19 +360,19 @@ suite('ObjectSearchProvider', () => {
         await searchProvider.showSearch();
 
         const tableItem = mockQuickPick.items.find(
-            (i: any) => i.detail === 'Table'
+            (i) => i.detail === 'Table'
         );
         assert.ok(tableItem, 'Should find a table item');
         assert.ok(tableItem.label.includes('$(table)'), 'Table should use table icon');
 
         const viewItem = mockQuickPick.items.find(
-            (i: any) => i.detail === 'View'
+            (i) => i.detail === 'View'
         );
         assert.ok(viewItem, 'Should find a view item');
         assert.ok(viewItem.label.includes('$(eye)'), 'View should use eye icon');
 
         const colItem = mockQuickPick.items.find(
-            (i: any) => i.detail === 'Column'
+            (i) => i.detail === 'Column'
         );
         assert.ok(colItem, 'Should find a column item');
         assert.ok(colItem.label.includes('$(symbol-field)'), 'Column should use symbol-field icon');

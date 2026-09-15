@@ -52,8 +52,8 @@ suite('formatError', () => {
     });
 
     test('includes error code when both message and code are present', () => {
-        const err = new Error('connect ECONNREFUSED 127.0.0.1:9999');
-        (err as any).code = 'ECONNREFUSED';
+        const err = new Error('connect ECONNREFUSED 127.0.0.1:9999') as NodeJS.ErrnoException;
+        err.code = 'ECONNREFUSED';
         assert.strictEqual(
             formatError(err),
             'connect ECONNREFUSED 127.0.0.1:9999 (ECONNREFUSED)'
@@ -61,8 +61,8 @@ suite('formatError', () => {
     });
 
     test('falls back to code when message is empty', () => {
-        const err = new Error('');
-        (err as any).code = 'ECONNREFUSED';
+        const err = new Error('') as NodeJS.ErrnoException;
+        err.code = 'ECONNREFUSED';
         assert.strictEqual(formatError(err), 'ECONNREFUSED');
     });
 
@@ -190,7 +190,7 @@ suite('extractFingerprintError', () => {
     test('extracts mismatch error from cause chain', () => {
         const cause = new FingerprintMismatchError(SAMPLE_FP, OTHER_FP);
         const wrapped = new Error('Server certificate fingerprint has changed');
-        (wrapped as any).cause = cause;
+        wrapped.cause = cause;
         const result = extractFingerprintError(wrapped);
         assert.ok(result instanceof FingerprintMismatchError);
         assert.strictEqual((result as FingerprintMismatchError).storedFingerprint, SAMPLE_FP);

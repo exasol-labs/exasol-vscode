@@ -1,64 +1,53 @@
 import * as assert from 'assert';
+import type * as vscode from 'vscode';
+import type { ConnectionManager } from '../../connectionManager';
+// createRawResult/mockConnectionManager imports no vscode (only a type-only
+// import, fully erased at compile time), so a static import is safe here.
+import { createRawResult, TEST_CONNECTION } from '../helpers/mockConnectionManager';
 import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helpers/vscodeMock';
+import {
+    applyCompletionVscodeMock,
+    makeDocument,
+    makeDriver,
+    makePosition,
+    type MockDriver,
+} from '../helpers/completionMocks';
 
-// vscode shape used by completionProvider
-(vscodeMock as any).CompletionItemKind = {
-    Interface: 7, Method: 1, Function: 2, Class: 6, Module: 8, Field: 4, Keyword: 13,
-};
-(vscodeMock as any).CompletionItem = class {
-    detail?: string;
-    insertText?: any;
-    sortText?: string;
-    documentation?: any;
-    constructor(public label: string, public kind?: number) {}
-};
-(vscodeMock as any).MarkdownString = class { constructor(public value: string) {} };
-(vscodeMock as any).SnippetString = class { constructor(public value: string) {} };
-(vscodeMock as any).workspace = {
-    getConfiguration: () => ({ get: (_: string, dflt?: unknown) => dflt }),
-};
-(vscodeMock as any).Position = class { constructor(public line: number, public character: number) {} };
-(vscodeMock as any).Range = class {};
+// Mocks must be applied BEFORE registerVscodeMock(); see the load-order note
+// at the top of completionMocks.ts.
+applyCompletionVscodeMock(vscodeMock);
 
 registerVscodeMock();
 registerExtensionMock();
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { ExasolCompletionProvider } = require('../../providers/completionProvider');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { createRawResult, TEST_CONNECTION } = require('../helpers/mockConnectionManager');
+// completionProvider.ts imports `vscode` at module scope, so it must stay a
+// deferred require() issued AFTER the mocks above are registered. A static
+// import would resolve 'vscode' before require.cache is patched.
+const { ExasolCompletionProvider } = require('../../providers/completionProvider') as typeof import('../../providers/completionProvider');
 
 interface QueryCall { sql: string; }
 
-function makeDriver(handler: (sql: string) => any) {
-    return {
-        query: async (sql: string) => handler(sql),
-        execute: async (sql: string) => handler(sql),
-    };
-}
-
-function makeManager(driver: any) {
+// Deliberate partial double for ConnectionManager (only the methods the
+// provider calls); callers cast the `manager` field with `as unknown as
+// ConnectionManager` since a full typed double would be larger than the test.
+function makeManager(driver: MockDriver): { calls: QueryCall[]; manager: { getActiveConnection: () => { id: string }; getDriver: () => Promise<MockDriver>; executeWithRetry: <T>(fn: () => Promise<T>) => Promise<T> } } {
     const calls: QueryCall[] = [];
     return {
         calls,
         manager: {
             getActiveConnection: () => ({ id: TEST_CONNECTION.id }),
             getDriver: async () => driver,
-            executeWithRetry: async (fn: () => Promise<any>) => fn(),
+            executeWithRetry: async <T>(fn: () => Promise<T>) => fn(),
         },
     };
 }
 
-function makeDocument(text: string, _cursorChar: number) {
-    const lines = text.split('\n');
-    return {
-        getText: () => text,
-        lineAt: (lineOrPos: any) => {
-            const line = typeof lineOrPos === 'number' ? lineOrPos : lineOrPos.line;
-            return { text: lines[line] ?? '' };
-        },
-        getWordRangeAtPosition: () => undefined,
-    };
+// Exposes the completion provider's private caching internals for the cache-cap
+// test below; a typed peek is smaller and clearer than reimplementing the cache.
+interface CompletionProviderInternals {
+    COLUMNS_CACHE_MAX: number;
+    columnsCache: Map<string, string[]>;
+    getColumnsForTable(connectionId: string, schema: string, table: string): Promise<string[] | undefined>;
 }
 
 suite('ExasolCompletionProvider - lazy column fetch', () => {
@@ -85,14 +74,14 @@ suite('ExasolCompletionProvider - lazy column fetch', () => {
             return createRawResult(['TABLE_SCHEMA', 'TABLE_NAME'], []);
         });
         const { manager } = makeManager(driver);
-        const provider = new ExasolCompletionProvider(manager);
+        const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
 
         const sql = 'select * from "SCHEMA_A"."TABLE_X" as b\nwhere b.';
-        const doc = makeDocument(sql, sql.length) as any;
-        const pos = new (vscodeMock as any).Position(1, 8);
-        const items = await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
+        const doc = makeDocument(sql);
+        const pos = makePosition(1, 8);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
 
-        const labels = items.map((i: any) => i.label).sort();
+        const labels = items.map((i) => i.label).sort();
         assert.deepStrictEqual(labels, ['col_a', 'col_c', 'col_d']);
         // Bulk EXA_ALL_COLUMNS scan must NOT be issued anymore.
         const bulkScan = seenSql.find(s =>
@@ -119,12 +108,12 @@ suite('ExasolCompletionProvider - lazy column fetch', () => {
             return createRawResult(['TABLE_SCHEMA', 'TABLE_NAME'], []);
         });
         const { manager } = makeManager(driver);
-        const provider = new ExasolCompletionProvider(manager);
+        const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
 
         const sql = 'select * from "SCHEMA_A"."TABLE_X" as b\nwhere b.';
-        const doc = makeDocument(sql, sql.length) as any;
-        const pos = new (vscodeMock as any).Position(1, 8);
-        const items = await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
+        const doc = makeDocument(sql);
+        const pos = makePosition(1, 8);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
 
         // Bug A regression: must NOT fall through to schema/object suggestions.
         assert.deepStrictEqual(items, []);
@@ -151,21 +140,21 @@ suite('ExasolCompletionProvider - lazy column fetch', () => {
             return createRawResult(['TABLE_SCHEMA', 'TABLE_NAME'], []);
         });
         const { manager } = makeManager(driver);
-        const provider = new ExasolCompletionProvider(manager);
+        const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
 
         const sql = 'select * from ';
-        const doc = makeDocument(sql, sql.length) as any;
-        const pos = new (vscodeMock as any).Position(0, sql.length);
-        const items = await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
+        const doc = makeDocument(sql);
+        const pos = makePosition(0, sql.length);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
 
         const tableNames = items
-            .filter((i: any) => i.detail && /table in /.test(i.detail))
-            .map((i: any) => i.label);
+            .filter((i) => i.detail && /table in /.test(i.detail))
+            .map((i) => i.label);
         assert.deepStrictEqual(tableNames, ['good']);
 
         const schemaItems = items
-            .filter((i: any) => i.detail === 'Schema')
-            .map((i: any) => i.label)
+            .filter((i) => i.detail === 'Schema')
+            .map((i) => i.label)
             .sort();
         // SYS / EXA_STATISTICS are always pushed; user schema 'S' must be there; nulls/blank must be filtered.
         assert.ok(schemaItems.includes('s'));
@@ -183,14 +172,15 @@ suite('ExasolCompletionProvider - lazy column fetch', () => {
             return createRawResult(['TABLE_SCHEMA', 'TABLE_NAME'], []);
         });
         const { manager } = makeManager(driver);
-        const provider = new ExasolCompletionProvider(manager);
+        const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
         // Drive the lazy fetch directly for many distinct schema.table keys.
-        const cap = (provider as any).COLUMNS_CACHE_MAX as number;
+        const internals = provider as unknown as CompletionProviderInternals;
+        const cap = internals.COLUMNS_CACHE_MAX;
         const total = cap + 50;
         for (let i = 0; i < total; i++) {
-            await (provider as any).getColumnsForTable('conn1', 'S', `T${i}`);
+            await internals.getColumnsForTable('conn1', 'S', `T${i}`);
         }
-        const size = ((provider as any).columnsCache as Map<string, string[]>).size;
+        const size = internals.columnsCache.size;
         assert.ok(size <= cap, `columnsCache size ${size} exceeded cap ${cap}`);
     });
 
@@ -213,13 +203,13 @@ suite('ExasolCompletionProvider - lazy column fetch', () => {
             return createRawResult(['TABLE_SCHEMA', 'TABLE_NAME'], []);
         });
         const { manager } = makeManager(driver);
-        const provider = new ExasolCompletionProvider(manager);
+        const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
 
         const sql = 'select * from s.t as a\nwhere a.';
-        const doc = makeDocument(sql, sql.length) as any;
-        const pos = new (vscodeMock as any).Position(1, 8);
-        await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
-        await provider.provideCompletionItems(doc, pos, {} as any, {} as any);
+        const doc = makeDocument(sql);
+        const pos = makePosition(1, 8);
+        await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
+        await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
         assert.strictEqual(columnQueries, 1, 'expected exactly one column fetch (second hit cache)');
     });
 });

@@ -12,26 +12,38 @@ registerVscodeMock();
 // helpers then mutate those same objects' nested fields.
 let resolveImportPath: (filePath: string) => string;
 
+interface MockWindow {
+    activeTextEditor: { document: { uri: { scheme: string; fsPath: string } } } | undefined;
+}
+interface MockWorkspace {
+    workspaceFolders: Array<{ uri: { fsPath: string } }> | undefined;
+}
+interface ImportPathVscodeMock {
+    window: MockWindow;
+    workspace: MockWorkspace;
+}
+
+const extendedMock = vscodeMock as unknown as ImportPathVscodeMock;
+
 function setActiveEditor(fsPath: string | undefined, scheme = 'file'): void {
-    (vscodeMock as any).window.activeTextEditor = fsPath
+    extendedMock.window.activeTextEditor = fsPath
         ? { document: { uri: { scheme, fsPath } } }
         : undefined;
 }
 
 function setWorkspaceFolder(fsPath: string | undefined): void {
-    (vscodeMock as any).workspace.workspaceFolders = fsPath
+    extendedMock.workspace.workspaceFolders = fsPath
         ? [{ uri: { fsPath } }]
         : undefined;
 }
 
 suite('resolveImportPath', () => {
     setup(() => {
-        (vscodeMock as any).window = { activeTextEditor: undefined };
-        (vscodeMock as any).workspace = { workspaceFolders: undefined };
+        extendedMock.window = { activeTextEditor: undefined };
+        extendedMock.workspace = { workspaceFolders: undefined };
         // Re-require so localCsvImport re-captures the freshly installed objects.
         delete require.cache[require.resolve('../../localCsvImport')];
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        resolveImportPath = require('../../localCsvImport').resolveImportPath;
+        resolveImportPath = (require('../../localCsvImport') as typeof import('../../localCsvImport')).resolveImportPath;
     });
 
     test('returns an absolute path unchanged', () => {

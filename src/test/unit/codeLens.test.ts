@@ -5,6 +5,7 @@
 // We test the parser output (statement counts and positions) rather than
 // making assertions about the VS Code CodeLens API itself.
 import * as assert from 'assert';
+import type * as vscode from 'vscode';
 
 // ---------------------------------------------------------------------------
 // Minimal vscode mock: must be registered before codeLensProvider is required
@@ -59,14 +60,14 @@ if (!require.cache['vscode']) {
         paths: [],
         children: [],
         path: '',
+        parent: null,
         require,
         isPreloading: false,
-    } as any;
+    };
 }
 
 // Require codeLensProvider AFTER the vscode mock is registered
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { ExasolCodeLensProvider } = require('../../providers/codeLensProvider');
+const { ExasolCodeLensProvider } = require('../../providers/codeLensProvider') as typeof import('../../providers/codeLensProvider');
 // findStatementRanges is exercised through provideCodeLenses (which builds the
 // CodeLens range from its output), but a few tests pin range positions directly
 // to lock down the anchor-on-first-code-line behaviour.
@@ -76,12 +77,15 @@ import { findStatementRanges, buildLineOffsets, offsetToLine } from '../../utils
 // Helper: build a minimal TextDocument mock
 // ---------------------------------------------------------------------------
 
-function makeDoc(text: string, scheme = 'file'): { getText(): string; uri: { scheme: string } } {
-    return {
+function makeDoc(text: string, scheme = 'file'): vscode.TextDocument {
+    const doc = {
         getText(): string { return text; },
         uri: { scheme },
     };
+    return doc as unknown as vscode.TextDocument;
 }
+
+const mockToken = {} as vscode.CancellationToken;
 
 // ---------------------------------------------------------------------------
 // provideCodeLenses integration tests (CodeLens count via mocked provider)
@@ -90,7 +94,7 @@ function makeDoc(text: string, scheme = 'file'): { getText(): string; uri: { sch
 suite('ExasolCodeLensProvider: CodeLens count', () => {
     function lensCount(text: string): number {
         const provider = new ExasolCodeLensProvider();
-        const result = provider.provideCodeLenses(makeDoc(text), {});
+        const result = provider.provideCodeLenses(makeDoc(text), mockToken);
         return (result as unknown[]).length;
     }
 
@@ -116,7 +120,7 @@ suite('ExasolCodeLensProvider: CodeLens count', () => {
 
     test('notebook cell scheme returns 0 CodeLenses', () => {
         const provider = new ExasolCodeLensProvider();
-        const result = provider.provideCodeLenses(makeDoc('SELECT 1;', 'vscode-notebook-cell'), {});
+        const result = provider.provideCodeLenses(makeDoc('SELECT 1;', 'vscode-notebook-cell'), mockToken);
         assert.strictEqual((result as unknown[]).length, 0);
     });
 });
@@ -129,7 +133,7 @@ suite('ExasolCodeLensProvider: CodeLens count', () => {
 
 function lenses(text: string): MockCodeLens[] {
     const provider = new ExasolCodeLensProvider();
-    return provider.provideCodeLenses(makeDoc(text), {}) as MockCodeLens[];
+    return provider.provideCodeLenses(makeDoc(text), mockToken) as unknown as MockCodeLens[];
 }
 
 suite('ExasolCodeLensProvider: CodeLens anchor line', () => {

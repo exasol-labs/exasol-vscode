@@ -1,24 +1,26 @@
 import * as assert from 'assert';
+import type { ConnectionManager } from '../../connectionManager';
+import type { ObjectNode } from '../../providers/objectTreeProvider';
 import { registerVscodeMock, registerExtensionMock } from '../helpers/vscodeMock';
 
 registerVscodeMock();
 registerExtensionMock();
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { ObjectTreeProvider } = require('../../providers/objectTreeProvider');
+const { ObjectTreeProvider } = require('../../providers/objectTreeProvider') as typeof import('../../providers/objectTreeProvider');
 
 import { createRawResult, createEmptyRawResult } from '../helpers/mockConnectionManager';
 import { MockConnectionManager } from '../helpers/mockConnectionManager';
+import type { MockDriver } from '../helpers/completionMocks';
 
-function getLabelText(item: any): string {
+function getLabelText(item: ObjectNode | undefined): string {
     if (!item || !item.label) { return ''; }
     return typeof item.label === 'string' ? item.label : item.label?.label ?? '';
 }
 
-suite('ObjectTreeProvider — getParent()', () => {
+suite('ObjectTreeProvider, getParent()', () => {
 
-    let provider: any;
-    let mockDriver: any;
+    let provider: InstanceType<typeof ObjectTreeProvider>;
+    let mockDriver: MockDriver;
 
     setup(() => {
         mockDriver = {
@@ -81,7 +83,7 @@ suite('ObjectTreeProvider — getParent()', () => {
             }
         };
         const mockCM = new MockConnectionManager(mockDriver);
-        provider = new ObjectTreeProvider(mockCM);
+        provider = new ObjectTreeProvider(mockCM as unknown as ConnectionManager);
     });
 
     test('getParent exists and is a function', () => {
@@ -90,7 +92,7 @@ suite('ObjectTreeProvider — getParent()', () => {
 
     test('root schemas have null parent', async () => {
         const rootChildren = await provider.getChildren();
-        const schema = rootChildren.find((c: any) => getLabelText(c) === 'MY_SCHEMA');
+        const schema = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'MY_SCHEMA');
         assert.ok(schema, 'Should find MY_SCHEMA');
         const parent = provider.getParent(schema);
         assert.strictEqual(parent, null, 'Schema parent should be null');
@@ -98,7 +100,7 @@ suite('ObjectTreeProvider — getParent()', () => {
 
     test('system-schemas-folder has null parent', async () => {
         const rootChildren = await provider.getChildren();
-        const folder = rootChildren.find((c: any) => getLabelText(c) === 'System Schemas');
+        const folder = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'System Schemas');
         assert.ok(folder, 'Should find System Schemas folder');
         const parent = provider.getParent(folder);
         assert.strictEqual(parent, null, 'System-schemas-folder parent should be null');
@@ -106,9 +108,9 @@ suite('ObjectTreeProvider — getParent()', () => {
 
     test('tables-folder parent is schema', async () => {
         const rootChildren = await provider.getChildren();
-        const schema = rootChildren.find((c: any) => getLabelText(c) === 'MY_SCHEMA');
+        const schema = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'MY_SCHEMA');
         const schemaChildren = await provider.getChildren(schema);
-        const tablesFolder = schemaChildren.find((c: any) => getLabelText(c) === 'Tables');
+        const tablesFolder = schemaChildren.find((c: ObjectNode) => getLabelText(c) === 'Tables');
         assert.ok(tablesFolder, 'Should find Tables folder');
         const parent = provider.getParent(tablesFolder);
         assert.strictEqual(parent, schema, 'Tables-folder parent should be the schema');
@@ -116,9 +118,9 @@ suite('ObjectTreeProvider — getParent()', () => {
 
     test('views-folder parent is schema', async () => {
         const rootChildren = await provider.getChildren();
-        const schema = rootChildren.find((c: any) => getLabelText(c) === 'MY_SCHEMA');
+        const schema = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'MY_SCHEMA');
         const schemaChildren = await provider.getChildren(schema);
-        const viewsFolder = schemaChildren.find((c: any) => getLabelText(c) === 'Views');
+        const viewsFolder = schemaChildren.find((c: ObjectNode) => getLabelText(c) === 'Views');
         assert.ok(viewsFolder, 'Should find Views folder');
         const parent = provider.getParent(viewsFolder);
         assert.strictEqual(parent, schema, 'Views-folder parent should be the schema');
@@ -126,11 +128,11 @@ suite('ObjectTreeProvider — getParent()', () => {
 
     test('table parent is tables-folder', async () => {
         const rootChildren = await provider.getChildren();
-        const schema = rootChildren.find((c: any) => getLabelText(c) === 'MY_SCHEMA');
+        const schema = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'MY_SCHEMA');
         const schemaChildren = await provider.getChildren(schema);
-        const tablesFolder = schemaChildren.find((c: any) => getLabelText(c) === 'Tables');
+        const tablesFolder = schemaChildren.find((c: ObjectNode) => getLabelText(c) === 'Tables');
         const tables = await provider.getChildren(tablesFolder);
-        const usersTable = tables.find((c: any) => getLabelText(c) === 'USERS');
+        const usersTable = tables.find((c: ObjectNode) => getLabelText(c) === 'USERS');
         assert.ok(usersTable, 'Should find USERS table');
         const parent = provider.getParent(usersTable);
         assert.strictEqual(parent, tablesFolder, 'Table parent should be tables-folder');
@@ -138,11 +140,11 @@ suite('ObjectTreeProvider — getParent()', () => {
 
     test('column parent is table', async () => {
         const rootChildren = await provider.getChildren();
-        const schema = rootChildren.find((c: any) => getLabelText(c) === 'MY_SCHEMA');
+        const schema = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'MY_SCHEMA');
         const schemaChildren = await provider.getChildren(schema);
-        const tablesFolder = schemaChildren.find((c: any) => getLabelText(c) === 'Tables');
+        const tablesFolder = schemaChildren.find((c: ObjectNode) => getLabelText(c) === 'Tables');
         const tables = await provider.getChildren(tablesFolder);
-        const usersTable = tables.find((c: any) => getLabelText(c) === 'USERS');
+        const usersTable = tables.find((c: ObjectNode) => getLabelText(c) === 'USERS');
         const columns = await provider.getChildren(usersTable);
         assert.ok(columns.length > 0, 'Should have columns');
         const parent = provider.getParent(columns[0]);
@@ -152,10 +154,10 @@ suite('ObjectTreeProvider — getParent()', () => {
     test('system-schema parent is system-schemas-folder', async () => {
         const rootChildren = await provider.getChildren();
         const systemSchemasFolder = rootChildren.find(
-            (c: any) => getLabelText(c) === 'System Schemas'
+            (c: ObjectNode) => getLabelText(c) === 'System Schemas'
         );
         const systemSchemas = await provider.getChildren(systemSchemasFolder);
-        const sysNode = systemSchemas.find((c: any) => getLabelText(c) === 'SYS');
+        const sysNode = systemSchemas.find((c: ObjectNode) => getLabelText(c) === 'SYS');
         assert.ok(sysNode, 'Should find SYS');
         const parent = provider.getParent(sysNode);
         assert.strictEqual(parent, systemSchemasFolder, 'System-schema parent should be system-schemas-folder');
@@ -164,10 +166,10 @@ suite('ObjectTreeProvider — getParent()', () => {
     test('system-table parent is system-schema', async () => {
         const rootChildren = await provider.getChildren();
         const systemSchemasFolder = rootChildren.find(
-            (c: any) => getLabelText(c) === 'System Schemas'
+            (c: ObjectNode) => getLabelText(c) === 'System Schemas'
         );
         const systemSchemas = await provider.getChildren(systemSchemasFolder);
-        const sysNode = systemSchemas.find((c: any) => getLabelText(c) === 'SYS');
+        const sysNode = systemSchemas.find((c: ObjectNode) => getLabelText(c) === 'SYS');
         const tables = await provider.getChildren(sysNode);
         assert.ok(tables.length > 0, 'Should have system tables');
         const parent = provider.getParent(tables[0]);
@@ -176,21 +178,21 @@ suite('ObjectTreeProvider — getParent()', () => {
 
     test('view parent is views-folder', async () => {
         const rootChildren = await provider.getChildren();
-        const schema = rootChildren.find((c: any) => getLabelText(c) === 'MY_SCHEMA');
+        const schema = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'MY_SCHEMA');
         const schemaChildren = await provider.getChildren(schema);
-        const viewsFolder = schemaChildren.find((c: any) => getLabelText(c) === 'Views');
+        const viewsFolder = schemaChildren.find((c: ObjectNode) => getLabelText(c) === 'Views');
         const views = await provider.getChildren(viewsFolder);
-        const activeUsersView = views.find((c: any) => getLabelText(c) === 'ACTIVE_USERS');
+        const activeUsersView = views.find((c: ObjectNode) => getLabelText(c) === 'ACTIVE_USERS');
         assert.ok(activeUsersView, 'Should find ACTIVE_USERS view');
         const parent = provider.getParent(activeUsersView);
         assert.strictEqual(parent, viewsFolder, 'View parent should be views-folder');
     });
 });
 
-suite('ObjectTreeProvider — getParent() extended node types', () => {
+suite('ObjectTreeProvider, getParent() extended node types', () => {
 
-    let provider: any;
-    let mockDriver: any;
+    let provider: InstanceType<typeof ObjectTreeProvider>;
+    let mockDriver: MockDriver;
 
     setup(() => {
         mockDriver = {
@@ -298,12 +300,12 @@ suite('ObjectTreeProvider — getParent() extended node types', () => {
             }
         };
         const mockCM = new MockConnectionManager(mockDriver);
-        provider = new ObjectTreeProvider(mockCM);
+        provider = new ObjectTreeProvider(mockCM as unknown as ConnectionManager);
     });
 
     test('virtual-schema has null parent', async () => {
         const rootChildren = await provider.getChildren();
-        const vs = rootChildren.find((c: any) => getLabelText(c) === 'VS_ORACLE');
+        const vs = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'VS_ORACLE');
         assert.ok(vs, 'Should find VS_ORACLE');
         const parent = provider.getParent(vs);
         assert.strictEqual(parent, null, 'Virtual-schema parent should be null');
@@ -311,9 +313,9 @@ suite('ObjectTreeProvider — getParent() extended node types', () => {
 
     test('virtual-table parent is virtual-schema', async () => {
         const rootChildren = await provider.getChildren();
-        const vs = rootChildren.find((c: any) => getLabelText(c) === 'VS_ORACLE');
+        const vs = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'VS_ORACLE');
         const vsTables = await provider.getChildren(vs);
-        const remoteTable = vsTables.find((c: any) => getLabelText(c) === 'REMOTE_TABLE');
+        const remoteTable = vsTables.find((c: ObjectNode) => getLabelText(c) === 'REMOTE_TABLE');
         assert.ok(remoteTable, 'Should find REMOTE_TABLE');
         const parent = provider.getParent(remoteTable);
         assert.strictEqual(parent, vs, 'Virtual-table parent should be virtual-schema');
@@ -321,12 +323,12 @@ suite('ObjectTreeProvider — getParent() extended node types', () => {
 
     test('script parent is udfs-folder', async () => {
         const rootChildren = await provider.getChildren();
-        const schema = rootChildren.find((c: any) => getLabelText(c) === 'TEST_SCHEMA');
+        const schema = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'TEST_SCHEMA');
         const schemaChildren = await provider.getChildren(schema);
-        const udfsFolder = schemaChildren.find((c: any) => getLabelText(c) === 'UDFs');
+        const udfsFolder = schemaChildren.find((c: ObjectNode) => getLabelText(c) === 'UDFs');
         assert.ok(udfsFolder, 'Should find UDFs folder');
         const scripts = await provider.getChildren(udfsFolder);
-        const myUdf = scripts.find((c: any) => getLabelText(c) === 'MY_UDF');
+        const myUdf = scripts.find((c: ObjectNode) => getLabelText(c) === 'MY_UDF');
         assert.ok(myUdf, 'Should find MY_UDF script');
         const parent = provider.getParent(myUdf);
         assert.strictEqual(parent, udfsFolder, 'Script parent should be udfs-folder');
@@ -334,12 +336,12 @@ suite('ObjectTreeProvider — getParent() extended node types', () => {
 
     test('script parent is procedures-folder', async () => {
         const rootChildren = await provider.getChildren();
-        const schema = rootChildren.find((c: any) => getLabelText(c) === 'TEST_SCHEMA');
+        const schema = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'TEST_SCHEMA');
         const schemaChildren = await provider.getChildren(schema);
-        const procsFolder = schemaChildren.find((c: any) => getLabelText(c) === 'Procedures');
+        const procsFolder = schemaChildren.find((c: ObjectNode) => getLabelText(c) === 'Procedures');
         assert.ok(procsFolder, 'Should find Procedures folder');
         const scripts = await provider.getChildren(procsFolder);
-        const myProc = scripts.find((c: any) => getLabelText(c) === 'MY_PROC');
+        const myProc = scripts.find((c: ObjectNode) => getLabelText(c) === 'MY_PROC');
         assert.ok(myProc, 'Should find MY_PROC script');
         const parent = provider.getParent(myProc);
         assert.strictEqual(parent, procsFolder, 'Script parent should be procedures-folder');
@@ -347,12 +349,12 @@ suite('ObjectTreeProvider — getParent() extended node types', () => {
 
     test('script parent is adapters-folder', async () => {
         const rootChildren = await provider.getChildren();
-        const schema = rootChildren.find((c: any) => getLabelText(c) === 'TEST_SCHEMA');
+        const schema = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'TEST_SCHEMA');
         const schemaChildren = await provider.getChildren(schema);
-        const adaptersFolder = schemaChildren.find((c: any) => getLabelText(c) === 'Adapters');
+        const adaptersFolder = schemaChildren.find((c: ObjectNode) => getLabelText(c) === 'Adapters');
         assert.ok(adaptersFolder, 'Should find Adapters folder');
         const scripts = await provider.getChildren(adaptersFolder);
-        const adapter = scripts.find((c: any) => getLabelText(c) === 'ORA_ADAPTER');
+        const adapter = scripts.find((c: ObjectNode) => getLabelText(c) === 'ORA_ADAPTER');
         assert.ok(adapter, 'Should find ORA_ADAPTER script');
         const parent = provider.getParent(adapter);
         assert.strictEqual(parent, adaptersFolder, 'Script parent should be adapters-folder');
@@ -360,12 +362,12 @@ suite('ObjectTreeProvider — getParent() extended node types', () => {
 
     test('function parent is functions-folder', async () => {
         const rootChildren = await provider.getChildren();
-        const schema = rootChildren.find((c: any) => getLabelText(c) === 'TEST_SCHEMA');
+        const schema = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'TEST_SCHEMA');
         const schemaChildren = await provider.getChildren(schema);
-        const functionsFolder = schemaChildren.find((c: any) => getLabelText(c) === 'Functions');
+        const functionsFolder = schemaChildren.find((c: ObjectNode) => getLabelText(c) === 'Functions');
         assert.ok(functionsFolder, 'Should find Functions folder');
         const functions = await provider.getChildren(functionsFolder);
-        const myFunc = functions.find((c: any) => getLabelText(c) === 'MY_FUNC');
+        const myFunc = functions.find((c: ObjectNode) => getLabelText(c) === 'MY_FUNC');
         assert.ok(myFunc, 'Should find MY_FUNC');
         const parent = provider.getParent(myFunc);
         assert.strictEqual(parent, functionsFolder, 'Function parent should be functions-folder');
@@ -373,16 +375,16 @@ suite('ObjectTreeProvider — getParent() extended node types', () => {
 
     test('constraint parent is constraints-folder', async () => {
         const rootChildren = await provider.getChildren();
-        const schema = rootChildren.find((c: any) => getLabelText(c) === 'TEST_SCHEMA');
+        const schema = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'TEST_SCHEMA');
         const schemaChildren = await provider.getChildren(schema);
-        const tablesFolder = schemaChildren.find((c: any) => getLabelText(c) === 'Tables');
+        const tablesFolder = schemaChildren.find((c: ObjectNode) => getLabelText(c) === 'Tables');
         const tables = await provider.getChildren(tablesFolder);
-        const myTable = tables.find((c: any) => getLabelText(c) === 'MY_TABLE');
+        const myTable = tables.find((c: ObjectNode) => getLabelText(c) === 'MY_TABLE');
         const tableChildren = await provider.getChildren(myTable);
-        const constraintsFolder = tableChildren.find((c: any) => getLabelText(c) === 'Constraints');
+        const constraintsFolder = tableChildren.find((c: ObjectNode) => getLabelText(c) === 'Constraints');
         assert.ok(constraintsFolder, 'Should find Constraints folder');
         const constraints = await provider.getChildren(constraintsFolder);
-        const pk = constraints.find((c: any) => getLabelText(c) === 'PK_MY_TABLE');
+        const pk = constraints.find((c: ObjectNode) => getLabelText(c) === 'PK_MY_TABLE');
         assert.ok(pk, 'Should find PK_MY_TABLE');
         const parent = provider.getParent(pk);
         assert.strictEqual(parent, constraintsFolder, 'Constraint parent should be constraints-folder');
@@ -390,16 +392,16 @@ suite('ObjectTreeProvider — getParent() extended node types', () => {
 
     test('index parent is indices-folder', async () => {
         const rootChildren = await provider.getChildren();
-        const schema = rootChildren.find((c: any) => getLabelText(c) === 'TEST_SCHEMA');
+        const schema = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'TEST_SCHEMA');
         const schemaChildren = await provider.getChildren(schema);
-        const tablesFolder = schemaChildren.find((c: any) => getLabelText(c) === 'Tables');
+        const tablesFolder = schemaChildren.find((c: ObjectNode) => getLabelText(c) === 'Tables');
         const tables = await provider.getChildren(tablesFolder);
-        const myTable = tables.find((c: any) => getLabelText(c) === 'MY_TABLE');
+        const myTable = tables.find((c: ObjectNode) => getLabelText(c) === 'MY_TABLE');
         const tableChildren = await provider.getChildren(myTable);
-        const indicesFolder = tableChildren.find((c: any) => getLabelText(c) === 'Indices');
+        const indicesFolder = tableChildren.find((c: ObjectNode) => getLabelText(c) === 'Indices');
         assert.ok(indicesFolder, 'Should find Indices folder');
         const indices = await provider.getChildren(indicesFolder);
-        const idx = indices.find((c: any) => getLabelText(c) === 'IDX_COL_A');
+        const idx = indices.find((c: ObjectNode) => getLabelText(c) === 'IDX_COL_A');
         assert.ok(idx, 'Should find IDX_COL_A');
         const parent = provider.getParent(idx);
         assert.strictEqual(parent, indicesFolder, 'Index parent should be indices-folder');

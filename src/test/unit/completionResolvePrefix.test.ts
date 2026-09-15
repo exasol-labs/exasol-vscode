@@ -1,25 +1,19 @@
 import * as assert from 'assert';
+import type { DatabaseObject, AliasTarget } from '../../providers/completionProvider';
 import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helpers/vscodeMock';
+import { applyCompletionVscodeMock } from '../helpers/completionMocks';
 
-(vscodeMock as any).CompletionItemKind = {
-    Interface: 7, Method: 1, Function: 2, Class: 6, Module: 8, Field: 4, Keyword: 13,
-};
-(vscodeMock as any).CompletionItem = class { constructor(public label: string, public kind?: number) {} };
-(vscodeMock as any).MarkdownString = class { constructor(public value: string) {} };
-(vscodeMock as any).SnippetString = class { constructor(public value: string) {} };
+// Mocks must be applied BEFORE registerVscodeMock(); see the load-order note
+// at the top of completionMocks.ts.
+applyCompletionVscodeMock(vscodeMock);
 
 registerVscodeMock();
 registerExtensionMock();
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { resolvePrefixCompletions } = require('../../providers/completionProvider');
-
-type AliasTarget = { schema?: string; table: string };
-type DatabaseObject = {
-    schema: string;
-    name: string;
-    type: 'table' | 'view' | 'script' | 'function' | 'virtual-table' | 'system-table';
-};
+// completionProvider.ts imports `vscode` at module scope, so it must stay a
+// deferred require() issued AFTER the mocks above are registered. A static
+// import would resolve 'vscode' before require.cache is patched.
+const { resolvePrefixCompletions } = require('../../providers/completionProvider') as typeof import('../../providers/completionProvider');
 
 function objs(): DatabaseObject[] {
     return [
@@ -48,6 +42,7 @@ suite('resolvePrefixCompletions', () => {
     test('bare schema prefix -> schemaObjects kind', () => {
         const r = resolvePrefixCompletions(objs(), new Map(), 'schema_a');
         assert.strictEqual(r.kind, 'schemaObjects');
+        if (r.kind !== 'schemaObjects') { throw new Error('unreachable'); }
         assert.strictEqual(r.objects.length, 2);
     });
 
