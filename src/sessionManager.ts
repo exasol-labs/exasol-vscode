@@ -45,11 +45,15 @@ export class SessionManager {
                 this.connectionManager.executeWithRetry(async () => {
                     const driver = await this.connectionManager.getDriver();
                     await executeWithoutResult(driver, `OPEN SCHEMA ${schemaName}`);
-                }),
+                }, undefined, { retryOnConnectionError: false }),
                 this.connectionManager.executeWithRetry(async () => {
                     const driver = await this.connectionManager.getDriver(undefined, 'background');
                     await executeWithoutResult(driver, `OPEN SCHEMA ${schemaName}`);
-                }, undefined, { timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS, role: 'background' }),
+                }, undefined, {
+                    timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS,
+                    role: 'background',
+                    retryOnConnectionError: false
+                }),
             ]);
             this.currentSchema = schemaName;
             await this.saveSession();

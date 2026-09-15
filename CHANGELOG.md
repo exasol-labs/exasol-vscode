@@ -2,6 +2,25 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.8.0] - 2026-09-15
+
+### Added
+- Local Parquet import through `IMPORT INTO <table> FROM LOCAL PARQUET FILE '<path>'` for Exasol 2025.1.9 and later
+- Direct CSV export for a table or parenthesized query through the `Exasol: Export Table or Query to CSV` command
+- `exasol.fetchSize` setting for configuring result-set fetch requests
+- `exasol.exportSource` setting for pre-filling the direct CSV export source
+- Driver-backed cancellation for local CSV/Parquet imports and CSV exports
+- Broken driver eviction and fail-fast transport error handling after socket loss
+- Automatic retry is limited to result-set operations; DML and other side-effecting statements are not replayed
+- Official driver bundles `node-forge` again for login encryption and local transfer support, increasing the extension bundle by approximately 290 KB
+
+### Changed
+- Migrated from the forked driver to the official `@exasol/exasol-driver-ts` 0.8.0 release
+- Local file transfer operations now use the driver's resource cleanup and `AbortSignal` support
+- Exasol sessions identify the VS Code client and extension version while retaining the driver's own version metadata
+- Driver sessions also report the client OS, runtime, and operating-system username using the official driver's defaults
+- Added Docker-backed driver smoke coverage for metadata, Parquet import, CSV export, and cancellation
+
 ## [1.7.1] - 2026-09-15
 
 ### Changed

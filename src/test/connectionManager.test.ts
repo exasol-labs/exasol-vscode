@@ -62,6 +62,21 @@ suite('ConnectionManager Test Suite', () => {
         assert.strictEqual(rows[0].TEST_COL, 1, 'Should return correct value');
     });
 
+    test('Should pass configured fetch size to the official driver', async function() {
+        this.timeout(30000);
+        const config = vscode.workspace.getConfiguration('exasol');
+        await config.update('fetchSize', 65536, vscode.ConfigurationTarget.Global);
+        const configuredManager = new ConnectionManager(context);
+        try {
+            const driver = await configuredManager.getDriver();
+            const internal = driver as unknown as { config?: { fetchSize?: number } };
+            assert.strictEqual(internal.config?.fetchSize, 65536, 'driver should receive the configured fetch size');
+        } finally {
+            await configuredManager.closeAll();
+            await config.update('fetchSize', undefined, vscode.ConfigurationTarget.Global);
+        }
+    });
+
     test('Should test connection successfully', async function() {
         this.timeout(30000);
 

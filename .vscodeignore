@@ -28,6 +28,8 @@ WORKFLOW_*.md
 *DRAFT*.md
 CC_*.md
 .claude/**
+.claire/**
+scripts/**
 specs/**
 examples/**
 .serena/**

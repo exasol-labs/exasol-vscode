@@ -22,8 +22,10 @@ import { createEmptyRawResult, TEST_CONNECTION } from '../helpers/mockConnection
 
 interface DriverCalls {
     importFromCsvFile: unknown[][];
+    importFromParquetFile: unknown[][];
     execute: unknown[][];
     query: unknown[][];
+    retryOptions: unknown[];
 }
 
 interface QueryExecutorVscodeMock {
@@ -32,6 +34,7 @@ interface QueryExecutorVscodeMock {
 
 interface FakeQueryExecutorDriver {
     importFromCsvFile: (...args: unknown[]) => Promise<number>;
+    importFromParquetFile: (...args: unknown[]) => Promise<number>;
     execute: (...args: unknown[]) => Promise<unknown>;
     query: (...args: unknown[]) => Promise<unknown>;
 }
@@ -42,12 +45,16 @@ interface FakeQueryExecutorDriver {
  * just invokes the supplied fn so routing logic runs unchanged.
  */
 function makeExecutor(): { qe: InstanceType<typeof QueryExecutor>; calls: DriverCalls } {
-    const calls: DriverCalls = { importFromCsvFile: [], execute: [], query: [] };
+    const calls: DriverCalls = { importFromCsvFile: [], importFromParquetFile: [], execute: [], query: [], retryOptions: [] };
 
     const fakeDriver = {
         importFromCsvFile: async (...args: unknown[]) => {
             calls.importFromCsvFile.push(args);
             return 42;
+        },
+        importFromParquetFile: async (...args: unknown[]) => {
+            calls.importFromParquetFile.push(args);
+            return 43;
         },
         // rawExecute -> driver.execute(sql, undefined, undefined, 'raw')
         execute: async (...args: unknown[]) => {
@@ -64,7 +71,10 @@ function makeExecutor(): { qe: InstanceType<typeof QueryExecutor>; calls: Driver
     const fakeConnectionManager: FakeConnectionManager<FakeQueryExecutorDriver> = {
         getActiveConnection: () => TEST_CONNECTION,
         getDriver: async () => fakeDriver,
-        executeWithRetry: async (fn) => fn()
+        executeWithRetry: async (fn, _connectionId, options) => {
+            calls.retryOptions.push(options);
+            return fn();
+        }
     };
 
     return { qe: new QueryExecutor(asConnectionManager(fakeConnectionManager)), calls };
@@ -103,6 +113,7 @@ suite('QueryExecutor.execute routing: local CSV import interception', () => {
         assert.ok(identitySql.includes('CURRENT_SESSION'));
 
         assert.strictEqual(result.rowCount, 42);
+        assert.strictEqual((calls.retryOptions[0] as { retryOnConnectionError: boolean }).retryOnConnectionError, false);
     });
 
     test('a cloud import (FROM CSV AT) does not call importFromCsvFile and goes through execute()', async () => {
@@ -119,5 +130,36 @@ suite('QueryExecutor.execute routing: local CSV import interception', () => {
         const identitySql = calls.query[0][0];
         assert.ok(typeof identitySql === 'string');
         assert.ok(identitySql.includes('CURRENT_SESSION'));
+    });
+});
+
+suite('QueryExecutor.execute routing: local Parquet import interception', () => {
+    setup(() => {
+        (vscodeMock as unknown as QueryExecutorVscodeMock).workspace = {
+            getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback })
+        };
+    });
+
+    test('a LOCAL Parquet import calls the driver API and passes an AbortSignal', async () => {
+        const { qe, calls } = makeExecutor();
+        const result = await qe.execute("IMPORT INTO t FROM LOCAL PARQUET FILE '/abs/x.parquet'");
+
+        assert.strictEqual(calls.importFromParquetFile.length, 1);
+        const [table, absPath, parquetOptions, importOptions] = calls.importFromParquetFile[0];
+        assert.strictEqual(table, 't');
+        assert.strictEqual(absPath, '/abs/x.parquet');
+        assert.deepStrictEqual(parquetOptions, {});
+        assert.ok(importOptions && typeof importOptions === 'object' && 'signal' in importOptions);
+        assert.strictEqual(calls.execute.length, 0);
+        assert.strictEqual(result.rowCount, 43);
+        assert.strictEqual((calls.retryOptions[0] as { retryOnConnectionError: boolean }).retryOnConnectionError, false);
+    });
+
+    test('a result-set query remains eligible for connection retry', async () => {
+        const { qe, calls } = makeExecutor();
+        await qe.execute('SELECT 1');
+
+        const options = calls.retryOptions.find(value => value && typeof value === 'object' && 'retryOnConnectionError' in value);
+        assert.strictEqual((options as { retryOnConnectionError: boolean }).retryOnConnectionError, true);
     });
 });

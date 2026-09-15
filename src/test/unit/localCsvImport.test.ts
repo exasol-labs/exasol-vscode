@@ -5,7 +5,21 @@ import { RowSeparator, TrimMode } from '@exasol/exasol-driver-ts';
 registerVscodeMock();
 
 // Load after the vscode mock is configured, since localCsvImport imports 'vscode'.
-const { parseLocalCsvImport } = require('../../localCsvImport') as typeof import('../../localCsvImport');
+const { parseLocalCsvImport, parseLocalParquetImport } = require('../../localCsvImport') as typeof import('../../localCsvImport');
+
+suite('parseLocalParquetImport', () => {
+    test('detects a local Parquet import and extracts target and path', () => {
+        const result = parseLocalParquetImport("IMPORT INTO myschema.t FROM LOCAL PARQUET FILE '/data/in.parquet';");
+        assert.ok(result);
+        assert.strictEqual(result.table, 'myschema.t');
+        assert.strictEqual(result.filePath, '/data/in.parquet');
+    });
+
+    test('does not confuse CSV or cloud imports with Parquet', () => {
+        assert.strictEqual(parseLocalParquetImport("IMPORT INTO t FROM LOCAL CSV FILE '/data/in.csv'"), null);
+        assert.strictEqual(parseLocalParquetImport("IMPORT INTO t FROM PARQUET AT 'https://example.com' FILE 'in.parquet'"), null);
+    });
+});
 
 suite('parseLocalCsvImport: detection and extraction', () => {
     test('detects a basic local CSV import and extracts table and path', () => {

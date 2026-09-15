@@ -3,7 +3,7 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "publisher": "exasol",
   "license": "MIT",
   "repository": {
@@ -110,6 +110,10 @@
       {
         "command": "exasol.exportResults",
         "title": "Exasol: Export Results to CSV"
+      },
+      {
+        "command": "exasol.exportSourceToCSV",
+        "title": "Exasol: Export Table or Query to CSV"
       },
       {
         "command": "exasol.previewTable",
@@ -463,6 +467,17 @@
           "default": 10000,
           "description": "Maximum number of rows to fetch from query results"
         },
+        "exasol.fetchSize": {
+          "type": "number",
+          "default": 1048576,
+          "minimum": 1024,
+          "description": "Approximate number of bytes fetched per result-set request"
+        },
+        "exasol.exportSource": {
+          "type": "string",
+          "default": "",
+          "description": "Optional default table or parenthesized query source for driver-based CSV export"
+        },
         "exasol.connectionValidationTimeout": {
           "type": "number",
           "default": 1,
@@ -574,6 +589,7 @@
     "test": "node ./out/test/runTest.js",
     "test:unit": "mocha --ui tdd --node-option=import=tsx 'src/test/unit/**/*.test.ts'",
     "test:local": "mocha --ui tdd --node-option=import=tsx 'src/test/local/*.test.ts'",
+    "test:driver-docker": "node scripts/driver080-docker-smoke.mjs",
     "test:watch": "mocha --ui tdd --node-option=import=tsx --watch 'src/test/unit/**/*.test.ts'",
     "test:e2e": "node ./out/test/local/e2e/runTest.js"
   },
@@ -593,6 +609,7 @@
     "esbuild": "^0.28.0",
     "eslint": "^10.4.0",
     "glob": "^13.0.0",
+    "hyparquet-writer": "^0.16.9",
     "jsdom": "^29.1.1",
     "mocha": "^11.7.1",
     "ovsx": "^0.10.12",
@@ -601,7 +618,7 @@
     "typescript-eslint": "^8.59.4"
   },
   "dependencies": {
-    "@exasol/exasol-driver-ts": "github:mikhail-zhadanov/exasol-driver-ts#46d96eff6dd109aa201275b7347a94e9a5f52612",
+    "@exasol/exasol-driver-ts": "0.8.0",
     "@glideapps/glide-data-grid": "^6.0.3",
     "async-mutex": "^0.5.0",
     "react": "^18.3.1",

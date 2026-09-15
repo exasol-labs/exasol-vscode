@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import type { SQLQueriesResponse, SQLResponse } from '@exasol/exasol-driver-ts';
-import { getColumnsFromResult, getRowsFromResult } from '../../utils';
+import { getColumnsFromResult, getRowsFromResult, SqlError } from '../../utils';
 import type { RawSqlResponse } from '../../utils';
 
 suite('getRowsFromResult', () => {
@@ -58,7 +58,11 @@ suite('getRowsFromResult', () => {
             }
         };
 
-        assert.throws(() => getRowsFromResult(mockErrorResult), /^Error: SQL Error \[42000\]: Query failed$/);
+        assert.throws(() => getRowsFromResult(mockErrorResult), error =>
+            error instanceof SqlError
+            && error.sqlCode === '42000'
+            && error.message === 'SQL Error [42000]: Query failed'
+        );
     });
 
     test('throws the fallback message when sqlCode and text are both empty', () => {
@@ -71,7 +75,11 @@ suite('getRowsFromResult', () => {
             }
         };
 
-        assert.throws(() => getRowsFromResult(mockErrorResult), /^Error: Query execution failed$/);
+        assert.throws(() => getRowsFromResult(mockErrorResult), error =>
+            error instanceof SqlError
+            && error.sqlCode === ''
+            && error.message === 'Query execution failed'
+        );
     });
 
     test('Should handle raw response with no results', () => {
@@ -229,7 +237,11 @@ suite('getColumnsFromResult', () => {
             }
         };
 
-        assert.throws(() => getColumnsFromResult(mockErrorResult), /^Error: SQL Error \[42000\]: Column fetch failed$/);
+        assert.throws(() => getColumnsFromResult(mockErrorResult), error =>
+            error instanceof SqlError
+            && error.sqlCode === '42000'
+            && error.message === 'SQL Error [42000]: Column fetch failed'
+        );
     });
 
     test('Should handle raw response with no columns', () => {

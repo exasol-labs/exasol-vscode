@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { ExasolDriver } from '@exasol/exasol-driver-ts';
 import { ConnectionManager } from './connectionManager';
 import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, ColumnMetadata, SqlRow, stripCommentsPreservingStrings, safeFetch } from './utils';
-import { parseLocalCsvImport, resolveImportPath } from './localCsvImport';
+import { parseLocalCsvImport, parseLocalParquetImport, resolveImportPath } from './localCsvImport';
 import { getOutputChannel } from './extension';
 import { isExecutionPlanEnabled } from './settings';
 
@@ -63,6 +63,12 @@ export class QueryExecutor {
 
     constructor(private connectionManager: ConnectionManager) {}
 
+    private createAbortSignal(cancellationToken?: vscode.CancellationToken): { signal: AbortSignal; abort: () => void; dispose: () => void } {
+        const controller = new AbortController();
+        const subscription = cancellationToken?.onCancellationRequested(() => controller.abort());
+        return { signal: controller.signal, abort: () => controller.abort(), dispose: () => subscription?.dispose() };
+    }
+
     async execute(query: string, cancellationToken?: vscode.CancellationToken): Promise<QueryResult> {
         const activeConnection = this.connectionManager.getActiveConnection();
         if (!activeConnection) {
@@ -76,13 +82,9 @@ export class QueryExecutor {
         // Clean the query - remove trailing semicolons and trim
         let finalQuery = query.trim().replace(/;+\s*$/, '').trim();
 
-        // Intercept local CSV imports: raw SQL cannot stream a local file over the
+        // Intercept local file imports: raw SQL cannot stream a local file over the
         // WebSocket protocol, so route them through the driver's programmatic import.
         //
-        // Cancelling the wrapper here only abandons this promise: it does NOT stop
-        // the in-flight server-side load nor tear down the driver's import tunnel.
-        // Stopping a streaming import cleanly needs a driver-side AbortSignal,
-        // tracked in exasol/exasol-driver-ts#68.
         const localImport = parseLocalCsvImport(finalQuery);
         if (localImport) {
             // Unlike the SELECT/DDL branches, the import branch passes a timeout:
@@ -101,20 +103,62 @@ export class QueryExecutor {
                 const importStartTime = Date.now();
 
                 const absPath = resolveImportPath(localImport.filePath);
-                const rowCount = await driver.importFromCsvFile(localImport.table, absPath, localImport.options);
+                const abort = this.createAbortSignal(cancellationToken);
+                try {
+                    const rowCount = await driver.importFromCsvFile(localImport.table, absPath, localImport.options, { signal: abort.signal });
 
-                const executionTime = Date.now() - importStartTime;
+                    const executionTime = Date.now() - importStartTime;
 
-                return {
-                    columns: [],
-                    columnMetadata: [],
-                    rows: [],
-                    rowCount,
-                    executionTime,
-                    connectionId: activeConnection.id,
-                    ...identity
-                };
-            }, undefined, { timeoutMs: queryTimeoutMs, ...(cancellationToken ? { cancellationToken } : {}) });
+                    return {
+                        columns: [],
+                        columnMetadata: [],
+                        rows: [],
+                        rowCount,
+                        executionTime,
+                        connectionId: activeConnection.id,
+                        ...identity
+                    };
+                } finally {
+                    abort.abort();
+                    abort.dispose();
+                }
+            }, undefined, {
+                timeoutMs: queryTimeoutMs,
+                retryOnConnectionError: false,
+                ...(cancellationToken ? { cancellationToken } : {})
+            });
+        }
+
+        const localParquetImport = parseLocalParquetImport(finalQuery);
+        if (localParquetImport) {
+            return await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver();
+                const shouldCapturePlanIdentity = isExecutionPlanEnabled()
+                    && (this.connectionManager.isExecutionPlanAvailable?.(activeConnection.id) ?? true);
+                const identity = shouldCapturePlanIdentity ? await captureBaselineStatementIdentity(driver) : {};
+                const importStartTime = Date.now();
+                const abort = this.createAbortSignal(cancellationToken);
+                try {
+                    const rowCount = await driver.importFromParquetFile(
+                        localParquetImport.table,
+                        resolveImportPath(localParquetImport.filePath),
+                        {},
+                        { signal: abort.signal }
+                    );
+                    return {
+                        columns: [], columnMetadata: [], rows: [], rowCount,
+                        executionTime: Date.now() - importStartTime,
+                        connectionId: activeConnection.id, ...identity
+                    };
+                } finally {
+                    abort.abort();
+                    abort.dispose();
+                }
+            }, undefined, {
+                timeoutMs: queryTimeoutMs,
+                retryOnConnectionError: false,
+                ...(cancellationToken ? { cancellationToken } : {})
+            });
         }
 
         // Auto-add LIMIT to SELECT queries without explicit LIMIT
@@ -129,6 +173,7 @@ export class QueryExecutor {
         // reflects only the real statement's own round-trip, excluding both
         // the identity-capture query and any time spent queued behind another
         // in-flight operation on the same connection.
+        const isResultSet = this.isResultSetQuery(finalQuery);
         return await this.connectionManager.executeWithRetry(async () => {
             const driver = await this.connectionManager.getDriver();
             const shouldCapturePlanIdentity = isExecutionPlanEnabled()
@@ -140,14 +185,11 @@ export class QueryExecutor {
             const queryStartTime = Date.now();
 
             // Classify the query to determine which driver method to use
-            const isResultSet = this.isResultSetQuery(finalQuery);
-
             if (isResultSet) {
                 // Result-set queries (SELECT, SHOW, DESCRIBE, etc.) - use query()
-                // Use 'raw' response type to avoid a driver bug where error responses
-                // (status:'error', responseData:undefined) crash on `responseData.numResults`
-                // access. Our getColumnsFromResult/getRowsFromResult handle raw responses
-                // correctly and surface proper SQL error messages.
+                // Use 'raw' response type so status, exception.sqlCode, and exception.text
+                // remain available for consistent SQL error handling. Our extractors inspect
+                // raw error responses and surface the proper SQL error message.
                 const result = await rawQuery(driver, finalQuery);
 
                 const executionTime = Date.now() - queryStartTime;
@@ -189,7 +231,10 @@ export class QueryExecutor {
                     ...identity
                 };
             }
-        }, undefined, cancellationToken ? { cancellationToken } : undefined);
+        }, undefined, {
+            retryOnConnectionError: isResultSet,
+            ...(cancellationToken ? { cancellationToken } : {})
+        });
     }
 
     setCancellationToken(token: vscode.CancellationTokenSource) {
