@@ -579,15 +579,9 @@ export class ConnectionManager {
                 // that getDriver() already exhausted its own connect retries;
                 // otherwise let the retry callback reconnect the evicted driver.
                 && !this.recentFailures.get(id)?.has(role)) {
-                // Only retry if a driver existed — meaning the query itself failed
-                // on an established connection. If no driver exists, getDriver()/
-                // connectWithRetry() already exhausted its retries; retrying here
-                // would just double-stack connection attempts.
                 const outputChannel = getOutputChannel();
                 outputChannel.appendLine(`Connection error detected (${role}), retrying...`);
 
-                // Clear stale caches so getDriver() validates properly on retry.
-                this.recentFailures.get(id)?.delete(role);
                 this.lastSuccessfulQuery.get(id)?.delete(role);
 
                 const result = await this.runExclusive(raceable, role);
