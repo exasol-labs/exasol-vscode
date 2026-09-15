@@ -736,6 +736,7 @@ export class ConnectionManager {
 
     private async createDriver(connection: StoredConnection, role: DriverRole = 'user'): Promise<ExasolDriver> {
         await this.validateFingerprint(connection);
+        const fetchSize = vscode.workspace.getConfiguration('exasol').get<number>('fetchSize', 1024 * 1024);
         const wsErrors: { lastError?: Error } = {};
         const clientName = role === 'background' ? 'VSCode Exasol (background)' : 'VSCode Exasol';
         const driver = new ExasolDriver(this.createWebSocketFactory(connection, wsErrors), {
@@ -745,7 +746,8 @@ export class ConnectionManager {
             password: connection.password,
             encryption: true,
             clientName,
-            clientVersion: this.extensionVersion
+            clientVersion: this.extensionVersion,
+            fetchSize
         });
 
         try {
@@ -772,6 +774,7 @@ export class ConnectionManager {
         outputChannel.appendLine(`   TLS mode: ${connection.tlsMode || 'off'}`);
 
         const wsErrors: { lastError?: Error } = {};
+        const fetchSize = vscode.workspace.getConfiguration('exasol').get<number>('fetchSize', 1024 * 1024);
         const driver = new ExasolDriver(this.createWebSocketFactory(connection, wsErrors), {
             host: connection.host,
             port: connection.port,
@@ -779,7 +782,8 @@ export class ConnectionManager {
             password: connection.password,
             encryption: true,
             clientName: 'VSCode Exasol',
-            clientVersion: this.extensionVersion
+            clientVersion: this.extensionVersion,
+            fetchSize
         });
 
         try {

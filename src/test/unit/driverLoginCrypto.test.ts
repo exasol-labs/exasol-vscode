@@ -1,16 +1,15 @@
 import * as assert from 'assert';
 import { constants as cryptoConstants, createPublicKey, generateKeyPairSync, privateDecrypt, publicEncrypt } from 'node:crypto';
 
-// These tests pin down the RSA-PKCS1-v1.5 encryption path used by the patched
-// @exasol/exasol-driver-ts fork (commit f6eca4d3) for loginBasicAuth. The
-// driver used to depend on node-forge for this; the fork swaps in node:crypto.
+// The driver performs RSA-PKCS1 login encryption. These tests document the
+// wire-compatible behavior used by the official driver package.
 //
 // We do not import the driver here because the encrypt logic lives inside a
 // private method of SQLClient. Instead we reproduce the call shape exactly
 // (modulus/exponent hex -> JWK -> publicEncrypt with RSA_PKCS1_PADDING ->
 // base64) and round-trip it through privateDecrypt with the matching key.
-// Any divergence between this test and the driver should be caught the next
-// time the fork is rebased against upstream.
+// Any divergence between this test and the driver should be caught during a
+// driver upgrade review.
 
 const padHex = (hex: string) => (hex.length % 2 === 0 ? hex : '0' + hex);
 

@@ -273,6 +273,55 @@ export function activate(context: vscode.ExtensionContext) {
         await ResultsPanel.exportCurrentToCSV();
     });
 
+    const exportSourceToCsvCmd = vscode.commands.registerCommand('exasol.exportSourceToCSV', async () => {
+        if (!connectionManager.getActiveConnection()) {
+            vscode.window.showWarningMessage('No active Exasol connection.');
+            return;
+        }
+        const settings = vscode.workspace.getConfiguration('exasol');
+        const source = await vscode.window.showInputBox({
+            prompt: 'Enter a table name or parenthesized query to export',
+            placeHolder: 'MY_SCHEMA.MY_TABLE or (SELECT ...)',
+            value: settings.get<string>('exportSource', '')
+        });
+        if (!source?.trim()) {
+            return;
+        }
+        const target = await vscode.window.showSaveDialog({
+            saveLabel: 'Export CSV',
+            filters: { 'CSV files': ['csv'] }
+        });
+        if (!target) {
+            return;
+        }
+
+        try {
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: 'Exporting Exasol data to CSV',
+                cancellable: true
+            }, async (_progress, token) => {
+                const controller = new AbortController();
+                const cancellation = token.onCancellationRequested(() => controller.abort());
+                try {
+                    await connectionManager.executeWithRetry(async () => {
+                        const driver = await connectionManager.getDriver();
+                        await driver.exportToCsvFile(source.trim(), target.fsPath, { withColumnNames: true }, { signal: controller.signal });
+                    }, undefined, { timeoutMs: settings.get<number>('queryTimeout', 300) * 1000, cancellationToken: token });
+                    vscode.window.showInformationMessage(`CSV export completed: ${target.fsPath}`);
+                } finally {
+                    controller.abort();
+                    cancellation.dispose();
+                }
+            });
+        } catch (error: unknown) {
+            const message = formatError(error);
+            if (!message.toLowerCase().includes('cancel')) {
+                vscode.window.showErrorMessage(`CSV export failed: ${message}`);
+            }
+        }
+    });
+
     const openQueryFromHistoryCmd = vscode.commands.registerCommand('exasol.openQueryFromHistory', async (query: string) => {
         const document = await vscode.workspace.openTextDocument({
             content: query,
@@ -468,6 +517,7 @@ export function activate(context: vscode.ExtensionContext) {
         executeStatementCmd,
         showQueryHistoryCmd,
         exportResultsCmd,
+        exportSourceToCsvCmd,
         openQueryFromHistoryCmd,
         openObjectCmd,
         clearCacheCmd,

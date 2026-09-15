@@ -17,11 +17,19 @@ export interface ParsedLocalCsvImport {
     options: CsvFormatOptions;
 }
 
+export interface ParsedLocalParquetImport {
+    table: string;
+    filePath: string;
+}
+
 // IMPORT INTO <target> FROM LOCAL [SECURE] CSV FILE '<path>' [trailing-options]
 // - target is captured non-greedily up to FROM LOCAL [SECURE] CSV FILE
 // - dotall so multi-line statements match
 const LOCAL_CSV_IMPORT_RE =
     /^IMPORT\s+INTO\s+(?<target>.+?)\s+FROM\s+LOCAL\s+(?:SECURE\s+)?CSV\s+FILE\s+'(?<path>(?:[^']|'')*)'(?<rest>.*)$/is;
+
+const LOCAL_PARQUET_IMPORT_RE =
+    /^IMPORT\s+INTO\s+(?<target>.+?)\s+FROM\s+LOCAL\s+PARQUET\s+FILE\s+'(?<path>(?:[^']|'')*)'\s*$/is;
 
 /**
  * Detects a local CSV import statement and parses it into the shape the driver's
@@ -49,6 +57,21 @@ export function parseLocalCsvImport(sql: string): ParsedLocalCsvImport | null {
         table,
         filePath,
         options: parseCsvOptions(rest)
+    };
+}
+
+export function parseLocalParquetImport(sql: string): ParsedLocalParquetImport | null {
+    const cleaned = stripCommentsPreservingStrings(sql)
+        .trim()
+        .replace(/;+\s*$/, '')
+        .trim();
+    const match = LOCAL_PARQUET_IMPORT_RE.exec(cleaned);
+    if (!match || !match.groups) {
+        return null;
+    }
+    return {
+        table: match.groups.target.trim(),
+        filePath: match.groups.path.replace(/''/g, "'")
     };
 }
 

@@ -22,6 +22,7 @@ import { createEmptyRawResult, TEST_CONNECTION } from '../helpers/mockConnection
 
 interface DriverCalls {
     importFromCsvFile: unknown[][];
+    importFromParquetFile: unknown[][];
     execute: unknown[][];
     query: unknown[][];
 }
@@ -32,6 +33,7 @@ interface QueryExecutorVscodeMock {
 
 interface FakeQueryExecutorDriver {
     importFromCsvFile: (...args: unknown[]) => Promise<number>;
+    importFromParquetFile: (...args: unknown[]) => Promise<number>;
     execute: (...args: unknown[]) => Promise<unknown>;
     query: (...args: unknown[]) => Promise<unknown>;
 }
@@ -42,12 +44,16 @@ interface FakeQueryExecutorDriver {
  * just invokes the supplied fn so routing logic runs unchanged.
  */
 function makeExecutor(): { qe: InstanceType<typeof QueryExecutor>; calls: DriverCalls } {
-    const calls: DriverCalls = { importFromCsvFile: [], execute: [], query: [] };
+    const calls: DriverCalls = { importFromCsvFile: [], importFromParquetFile: [], execute: [], query: [] };
 
     const fakeDriver = {
         importFromCsvFile: async (...args: unknown[]) => {
             calls.importFromCsvFile.push(args);
             return 42;
+        },
+        importFromParquetFile: async (...args: unknown[]) => {
+            calls.importFromParquetFile.push(args);
+            return 43;
         },
         // rawExecute -> driver.execute(sql, undefined, undefined, 'raw')
         execute: async (...args: unknown[]) => {
@@ -119,5 +125,27 @@ suite('QueryExecutor.execute routing: local CSV import interception', () => {
         const identitySql = calls.query[0][0];
         assert.ok(typeof identitySql === 'string');
         assert.ok(identitySql.includes('CURRENT_SESSION'));
+    });
+});
+
+suite('QueryExecutor.execute routing: local Parquet import interception', () => {
+    setup(() => {
+        (vscodeMock as unknown as QueryExecutorVscodeMock).workspace = {
+            getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback })
+        };
+    });
+
+    test('a LOCAL Parquet import calls the driver API and passes an AbortSignal', async () => {
+        const { qe, calls } = makeExecutor();
+        const result = await qe.execute("IMPORT INTO t FROM LOCAL PARQUET FILE '/abs/x.parquet'");
+
+        assert.strictEqual(calls.importFromParquetFile.length, 1);
+        const [table, absPath, parquetOptions, importOptions] = calls.importFromParquetFile[0];
+        assert.strictEqual(table, 't');
+        assert.strictEqual(absPath, '/abs/x.parquet');
+        assert.deepStrictEqual(parquetOptions, {});
+        assert.ok(importOptions && typeof importOptions === 'object' && 'signal' in importOptions);
+        assert.strictEqual(calls.execute.length, 0);
+        assert.strictEqual(result.rowCount, 43);
     });
 });
