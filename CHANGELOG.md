@@ -24,6 +24,16 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - `CREATE SCRIPT` and `CREATE FUNCTION` statements are no longer cut before their final `;`, so the stored source keeps the final `;` of the body and a comment after it
 - Object search and SQL completion no longer list virtual schemas and virtual tables as regular schemas and tables
 - The `EXA_ALL_OBJECTS` fallback for listing tables and views filtered on `OBJECT_SCHEMA`, a column that does not exist; it now uses `ROOT_NAME`
+- Set as Active Schema showed success when `OPEN SCHEMA` failed. It now shows the database error, and the schema name is quoted
+- The Indices folder of a table was always empty. It now lists each index with its description from `EXA_ALL_INDICES`, for example `LOCAL INDEX (NAME)`
+- Expanding a system table in the Objects view listed no columns for users without read access to the table. The columns now come from `EXA_SYS_COLUMNS`, as in Describe Table
+- SQL completion now suggests the columns of `SYS` and `EXA_STATISTICS` tables
+- Describe Table and Generate SELECT Statement on an object without visible columns opened an empty panel or an invalid `SELECT`. They now show the message `No columns visible for "SCHEMA"."NAME"`
+- Show View DDL repeated the `CREATE VIEW` header. It now opens the stored statement as `CREATE OR REPLACE VIEW` with the name qualified by its schema
+- A schema without visible tables or views was labeled `empty`. The label is gone, because the counts include only the objects the user can see
+- The Objects view shows `No schemas visible for this user` when the user sees no schema
+- The first query for the views of a schema read `TABLE_NAME`, a column that `EXA_ALL_VIEWS` does not have, so it always failed and the views came from `EXA_ALL_OBJECTS`. It now reads `VIEW_NAME`
+- Object search now writes the database error to the Exasol output channel when a part of the search fails
 
 ### Security
 - Updated `brace-expansion` to 2.1.7 and 5.0.12, and `source-map-js` to 1.2.2
