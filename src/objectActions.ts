@@ -264,34 +264,68 @@ export class ObjectActions {
     async explainPushdown(connection: StoredConnection, schemaName: string, tableName: string) {
         try {
             const query = `EXPLAIN VIRTUAL SELECT * FROM "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(tableName)}" LIMIT 10`;
-            const queryResult = await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
+            const queryResult = await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: `Explaining pushdown for ${schemaName}.${tableName}...`,
+                    cancellable: false
+                },
+                () => this.connectionManager.executeWithRetry(async () => {
+                    const driver = await this.connectionManager.getDriver(connection.id);
 
-                const startTime = Date.now();
-                const result = await rawQuery(driver, query);
-                const executionTime = Date.now() - startTime;
+                    const startTime = Date.now();
+                    const result = await rawQuery(driver, query);
+                    const executionTime = Date.now() - startTime;
 
-                // PUSHDOWN_JSON contains the virtual schema properties in clear text,
-                // credentials included, so only known safe columns reach the results panel.
-                const columnsMeta = getColumnsFromResult(result).filter(col => PUSHDOWN_SAFE_COLUMNS.has(col.name));
-                const rows = getRowsFromResult(result).map(row => Object.fromEntries(
-                    Object.entries(row).filter(([key]) => PUSHDOWN_SAFE_COLUMNS.has(key))
-                ));
-                const columns = columnsMeta.map(extractColumnName);
-                const columnMetadata = extractColumnMetadata(columnsMeta);
+                    // PUSHDOWN_JSON contains the virtual schema properties in clear text,
+                    // credentials included, so only known safe columns reach the results panel.
+                    const columnsMeta = getColumnsFromResult(result).filter(col => PUSHDOWN_SAFE_COLUMNS.has(col.name));
+                    const rows = getRowsFromResult(result).map(row => Object.fromEntries(
+                        Object.entries(row).filter(([key]) => PUSHDOWN_SAFE_COLUMNS.has(key))
+                    ));
+                    const columns = columnsMeta.map(extractColumnName);
+                    const columnMetadata = extractColumnMetadata(columnsMeta);
 
-                return {
-                    columns,
-                    columnMetadata,
-                    rows,
-                    rowCount: rows.length,
-                    executionTime
-                };
-            }, connection.id);
+                    return {
+                        columns,
+                        columnMetadata,
+                        rows,
+                        rowCount: rows.length,
+                        executionTime
+                    };
+                }, connection.id)
+            );
 
             ResultsPanel.show(queryResult, query);
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to explain pushdown: ${error}`);
         }
+    }
+}
+
+/** What refreshVirtualSchemaAndReload needs from the extension's providers. */
+export interface VirtualSchemaRefreshTargets {
+    objectActions: Pick<ObjectActions, 'refreshVirtualSchema'>;
+    completionProvider: { clearCache(connectionId: string): void };
+    objectTreeProvider: { refresh(): void };
+}
+
+/**
+ * Runs Refresh Metadata for a virtual schema, or for one virtual table when
+ * `tableName` is given. Only a successful refresh clears the connection's
+ * completion cache and reloads the Objects view.
+ */
+export async function refreshVirtualSchemaAndReload(
+    targets: VirtualSchemaRefreshTargets,
+    connection: StoredConnection,
+    schemaName: string,
+    tableName?: string
+): Promise<void> {
+    if (await targets.objectActions.refreshVirtualSchema(connection, schemaName, tableName)) {
+        targets.completionProvider.clearCache(connection.id);
+        // Both refresh forms update the schema's LAST_REFRESH, which the
+        // root-level node shows in its tooltip. Stable node ids keep the
+        // expansion state, so expanded nodes reload their children.
+        targets.objectTreeProvider.refresh();
     }
 }

@@ -22,8 +22,33 @@ import {
     fetchSystemTables,
     fetchSystemTableColumns
 } from './objectTreeFetchers';
+import { escapeSqlIdentifier } from '../utils';
 
 export type ObjectNode = ObjectTreeItem | ObjectMessageItem;
+
+/**
+ * The quoted SQL name of a schema, table, view or column node, as used by
+ * drag and drop and Copy Name; undefined for other node types.
+ */
+export function getQualifiedName(
+    item: Partial<Pick<ObjectTreeItem, 'type' | 'schemaName' | 'tableInfo' | 'columnInfo'>>
+): string | undefined {
+    switch (item.type) {
+        case 'schema':
+        case 'virtual-schema':
+            return item.schemaName ? `"${escapeSqlIdentifier(item.schemaName)}"` : undefined;
+        case 'table':
+        case 'view':
+        case 'virtual-table':
+            return item.schemaName && item.tableInfo
+                ? `"${escapeSqlIdentifier(item.schemaName)}"."${escapeSqlIdentifier(item.tableInfo.name)}"`
+                : undefined;
+        case 'column':
+            return item.columnInfo ? `"${escapeSqlIdentifier(item.columnInfo.name)}"` : undefined;
+        default:
+            return undefined;
+    }
+}
 
 export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, vscode.TreeDragAndDropController<ObjectNode> {
     private readonly onDidChangeTreeDataEmitter = new vscode.EventEmitter<ObjectNode | undefined | null | void>();
@@ -46,7 +71,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
 
         // Get the qualified text for each item
         const texts = items
-            .map(item => this.getQualifiedName(item))
+            .map(getQualifiedName)
             .filter((text): text is string => !!text);
 
         if (texts.length === 0) {
@@ -58,24 +83,6 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
 
         // Set as plain text for drag-and-drop
         dataTransfer.set('text/plain', new vscode.DataTransferItem(dragText));
-    }
-
-    private getQualifiedName(item: ObjectTreeItem): string | undefined {
-        switch (item.type) {
-            case 'schema':
-            case 'virtual-schema':
-                return item.schemaName ? `"${item.schemaName}"` : undefined;
-            case 'table':
-            case 'view':
-            case 'virtual-table':
-                return item.schemaName && item.tableInfo
-                    ? `"${item.schemaName}"."${item.tableInfo.name}"`
-                    : undefined;
-            case 'column':
-                return item.columnInfo ? `"${item.columnInfo.name}"` : undefined;
-            default:
-                return undefined;
-        }
     }
 
     // We don't support drop operations
@@ -600,7 +607,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     type: 'column',
                     connection: element.connection,
                     schemaName: element.schemaName,
-                    columnInfo: { name: col.name, type: col.type, nullable: false },
+                    columnInfo: col,
                     parent: element
                 });
             });

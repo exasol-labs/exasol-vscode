@@ -17,7 +17,13 @@ import type { MockDriver } from '../helpers/mockConnectionManager';
  */
 suite('EXA_ALL_OBJECTS fallback, schema filter', () => {
 
-    function createDriver(queries: string[], firstErrorTable: string, firstErrorText: string, resultColumn: string): MockDriver {
+    function createDriver(
+        queries: string[],
+        firstErrorTable: string,
+        firstErrorText: string,
+        resultColumn: string,
+        objectsErrorText = 'object ROOT_NAME not found [line 4, column 31]'
+    ): MockDriver {
         return {
             query: async (sql: string) => {
                 queries.push(sql);
@@ -25,7 +31,7 @@ suite('EXA_ALL_OBJECTS fallback, schema filter', () => {
                     throw new Error(firstErrorText);
                 }
                 if (sql.includes('EXA_ALL_OBJECTS')) {
-                    throw new Error('object ROOT_NAME not found [line 4, column 31]');
+                    throw new Error(objectsErrorText);
                 }
                 if (sql.includes('EXA_ALL_COLUMNS')) {
                     return createRawResult([resultColumn], [['FROM_COLUMNS']]);
@@ -66,6 +72,25 @@ suite('EXA_ALL_OBJECTS fallback, schema filter', () => {
         assert.ok(objectQuery.includes("ROOT_NAME = 'MY_SCHEMA'"), 'must filter on ROOT_NAME');
         assert.ok(objectQuery.includes("ROOT_TYPE = 'SCHEMA'"), 'must restrict ROOT_TYPE to SCHEMA');
         assert.ok(!objectQuery.includes('OBJECT_SCHEMA'), 'OBJECT_SCHEMA does not exist in EXA_ALL_OBJECTS');
+        assert.ok(queries[queries.length - 1].includes('EXA_ALL_COLUMNS'), 'chain must continue to EXA_ALL_COLUMNS');
+    });
+
+    test('fetchTables continues to EXA_ALL_COLUMNS when OBJECT_IS_VIRTUAL is missing', async () => {
+        const queries: string[] = [];
+        const mockCM = new MockConnectionManager(
+            createDriver(
+                queries,
+                'EXA_ALL_TABLES',
+                'object EXA_ALL_TABLES not found',
+                'TABLE_NAME',
+                'object OBJECT_IS_VIRTUAL not found [line 6, column 29]'
+            )
+        );
+
+        const tables = await fetchTables(asConnectionManager(mockCM), TEST_CONNECTION, 'MY_SCHEMA');
+
+        assert.deepStrictEqual(tables.map(t => t.name), ['FROM_COLUMNS']);
+        assert.ok(queries.some(sql => sql.includes('OBJECT_IS_VIRTUAL = FALSE')), 'EXA_ALL_OBJECTS attempt must run');
         assert.ok(queries[queries.length - 1].includes('EXA_ALL_COLUMNS'), 'chain must continue to EXA_ALL_COLUMNS');
     });
 });

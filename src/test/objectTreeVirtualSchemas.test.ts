@@ -105,11 +105,11 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
                         assert.ok(sql.includes("'VS_S3'"), 'query should filter by virtual schema');
                         assert.ok(sql.includes("'BUCKET_DATA'"), 'query should filter by table name');
                         return createRawResult(
-                            ['COLUMN_NAME', 'COLUMN_TYPE'],
+                            ['COLUMN_NAME', 'COLUMN_TYPE', 'COLUMN_IS_NULLABLE'],
                             [
-                                ['ID', 'DECIMAL(18,0)'],
-                                ['FILE_PATH', 'VARCHAR(2000)'],
-                                ['SIZE', 'DECIMAL(18,0)']
+                                ['ID', 'DECIMAL(18,0)', false],
+                                ['FILE_PATH', 'VARCHAR(2000)', true],
+                                ['SIZE', 'DECIMAL(18,0)', null]
                             ]
                         );
                     }
@@ -126,6 +126,7 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             assert.strictEqual(columns[0].type, 'DECIMAL(18,0)');
             assert.strictEqual(columns[1].name, 'FILE_PATH');
             assert.strictEqual(columns[1].type, 'VARCHAR(2000)');
+            assert.deepStrictEqual(columns.map(c => c.nullable), [false, true, null]);
         });
 
         test('returns empty array on query failure', async () => {
@@ -265,10 +266,10 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
                 async query(sql: string) {
                     if (sql.includes('EXA_ALL_COLUMNS')) {
                         return createRawResult(
-                            ['COLUMN_NAME', 'COLUMN_TYPE'],
+                            ['COLUMN_NAME', 'COLUMN_TYPE', 'COLUMN_IS_NULLABLE'],
                             [
-                                ['COL_A', 'INTEGER'],
-                                ['COL_B', 'VARCHAR(100)']
+                                ['COL_A', 'INTEGER', false],
+                                ['COL_B', 'VARCHAR(100)', true]
                             ]
                         );
                     }
@@ -295,6 +296,8 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             assert.strictEqual(children[0].label, 'COL_A (INTEGER)');
             assert.strictEqual((children[0] as ObjectTreeItem).type, 'column');
             assert.strictEqual(children[1].label, 'COL_B (VARCHAR(100))');
+            assert.strictEqual(children[0].tooltip, 'COL_A: INTEGER');
+            assert.strictEqual(children[1].tooltip, 'COL_B: VARCHAR(100) (nullable)');
         });
     });
 });

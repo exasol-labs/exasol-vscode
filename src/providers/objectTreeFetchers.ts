@@ -205,7 +205,8 @@ export async function fetchTables(
                         isColumnMissingError(error, 'EXA_ALL_OBJECTS') ||
                         isColumnMissingError(error, 'ROOT_NAME') ||
                         isColumnMissingError(error, 'ROOT_TYPE') ||
-                        isColumnMissingError(error, 'OBJECT_TYPE')
+                        isColumnMissingError(error, 'OBJECT_TYPE') ||
+                        isColumnMissingError(error, 'OBJECT_IS_VIRTUAL')
                 },
                 {
                     description: 'tables from EXA_ALL_COLUMNS fallback',
@@ -694,21 +695,27 @@ export async function fetchVirtualColumns(
     connection: StoredConnection,
     virtualSchemaName: string,
     tableName: string
-): Promise<Array<{ name: string; type: string }>> {
+): Promise<Array<{ name: string; type: string; nullable: boolean | null }>> {
     return safeFetch(`Failed to fetch virtual columns for '${virtualSchemaName}'.'${tableName}'`, () =>
         connectionManager.executeWithRetry(async () => {
             const driver = await connectionManager.getDriver(connection.id, 'background');
             const result = await rawQuery(driver, `
-                SELECT COLUMN_NAME, COLUMN_TYPE
+                SELECT COLUMN_NAME, COLUMN_TYPE, COLUMN_IS_NULLABLE
                 FROM SYS.EXA_ALL_COLUMNS
                 WHERE COLUMN_SCHEMA = '${escapeSqlString(virtualSchemaName)}'
                 AND COLUMN_TABLE = '${escapeSqlString(tableName)}'
                 ORDER BY COLUMN_ORDINAL_POSITION
             `);
-            const rows = getRowsFromResult<{ COLUMN_NAME: string; COLUMN_TYPE: string }>(result);
+            const rows = getRowsFromResult<{
+                COLUMN_NAME: string;
+                COLUMN_TYPE: string;
+                COLUMN_IS_NULLABLE: boolean | null;
+            }>(result);
+            // COLUMN_IS_NULLABLE can be null; pass it through as fetchColumns does.
             return rows.map(row => ({
                 name: row.COLUMN_NAME,
-                type: row.COLUMN_TYPE
+                type: row.COLUMN_TYPE,
+                nullable: row.COLUMN_IS_NULLABLE
             }));
         }, connection.id, { role: 'background' }),
     [], getOutputChannel());

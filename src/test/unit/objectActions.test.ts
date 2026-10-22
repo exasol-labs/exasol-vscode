@@ -82,7 +82,7 @@ registerExtensionMock();
 // original textual position, and the module under test must see the mock above
 // rather than the real 'vscode' module (which does not exist outside the
 // extension host).
-const { ObjectActions } = require('../../objectActions') as typeof import('../../objectActions');
+const { ObjectActions, refreshVirtualSchemaAndReload } = require('../../objectActions') as typeof import('../../objectActions');
 const { ResultsPanel } = require('../../panels/resultsPanel') as typeof import('../../panels/resultsPanel');
 
 import { createRawResult, createEmptyRawResult, createRawErrorResult, MockConnectionManager, TEST_CONNECTION, asConnectionManager, type MockDriver } from '../helpers/mockConnectionManager';
@@ -482,24 +482,50 @@ suite('ObjectActions virtual schema actions', () => {
         assert.strictEqual(errorMessages.length, 0);
     });
 
-    test('refreshVirtualSchema runs inside a progress notification', async () => {
-        const progressTitles: string[] = [];
-        let queriesInsideProgress = 0;
-        let insideProgress = false;
+    /**
+     * Replaces withProgress with one that records each title and reports
+     * whether a task is running, so a test can check that its SQL runs
+     * while the progress notification is shown.
+     */
+    function trackProgress(): { titles: string[]; isInside: () => boolean } {
+        const titles: string[] = [];
+        let inside = false;
         extendedVscodeMock.window = {
             ...extendedVscodeMock.window,
             withProgress: async (opts, task) => {
-                progressTitles.push((opts as vscode.ProgressOptions).title ?? '');
-                insideProgress = true;
+                titles.push((opts as vscode.ProgressOptions).title ?? '');
+                inside = true;
                 try {
                     return await task();
                 } finally {
-                    insideProgress = false;
+                    inside = false;
                 }
             },
         };
+        return { titles, isInside: () => inside };
+    }
+
+    test('explainPushdown runs inside a progress notification', async () => {
+        const progress = trackProgress();
+        let queriesInsideProgress = 0;
         const { oa } = makeObjectActions(async () => {
-            if (insideProgress) {
+            if (progress.isInside()) {
+                queriesInsideProgress++;
+            }
+            return createRawResult(['PUSHDOWN_ID', 'PUSHDOWN_SQL'], [[1, 'SELECT 1']]);
+        });
+
+        await explainAndCapture(oa, 'VS', 'T');
+
+        assert.deepStrictEqual(progress.titles, ['Explaining pushdown for VS.T...']);
+        assert.strictEqual(queriesInsideProgress, 1, 'EXPLAIN VIRTUAL must run while the progress is shown');
+    });
+
+    test('refreshVirtualSchema runs inside a progress notification', async () => {
+        const progress = trackProgress();
+        let queriesInsideProgress = 0;
+        const { oa } = makeObjectActions(async () => {
+            if (progress.isInside()) {
                 queriesInsideProgress++;
             }
             return createEmptyRawResult([]);
@@ -508,7 +534,7 @@ suite('ObjectActions virtual schema actions', () => {
         const ok = await oa.refreshVirtualSchema(TEST_CONNECTION, 'VS', 'T');
 
         assert.strictEqual(ok, true);
-        assert.deepStrictEqual(progressTitles, ['Refreshing virtual schema metadata for VS.T...']);
+        assert.deepStrictEqual(progress.titles, ['Refreshing virtual schema metadata for VS.T...']);
         assert.strictEqual(queriesInsideProgress, 1, 'the refresh statement must run while the progress is shown');
     });
 
@@ -529,6 +555,46 @@ suite('ObjectActions virtual schema actions', () => {
 
         assert.strictEqual(ok, false);
         assert.deepStrictEqual(errorMessages, [`Failed to refresh virtual schema: Error: SQL Error [42500]: ${text}`]);
+    });
+
+    /** Runs refreshVirtualSchemaAndReload and records the cache clears and tree refreshes it causes. */
+    async function refreshAndRecord(
+        oa: InstanceType<typeof ObjectActions>,
+        tableName?: string
+    ): Promise<{ clearedConnections: string[]; treeRefreshes: number }> {
+        const clearedConnections: string[] = [];
+        let treeRefreshes = 0;
+        await refreshVirtualSchemaAndReload(
+            {
+                objectActions: oa,
+                completionProvider: { clearCache: (connectionId: string) => { clearedConnections.push(connectionId); } },
+                objectTreeProvider: { refresh: () => { treeRefreshes++; } },
+            },
+            TEST_CONNECTION,
+            'VS',
+            tableName
+        );
+        return { clearedConnections, treeRefreshes };
+    }
+
+    test('refreshVirtualSchemaAndReload clears the completion cache and reloads the tree on success', async () => {
+        const { oa, capturedSql } = makeObjectActions(async () => createEmptyRawResult([]));
+
+        const { clearedConnections, treeRefreshes } = await refreshAndRecord(oa, 'T');
+
+        assert.deepStrictEqual(capturedSql, ['ALTER VIRTUAL SCHEMA "VS" REFRESH TABLES "T"']);
+        assert.deepStrictEqual(clearedConnections, [TEST_CONNECTION.id]);
+        assert.strictEqual(treeRefreshes, 1);
+    });
+
+    test('refreshVirtualSchemaAndReload keeps the completion cache and the tree when the refresh fails', async () => {
+        const { oa } = makeObjectActions(async () => createRawErrorResult('42500', 'insufficient privileges'));
+
+        const { clearedConnections, treeRefreshes } = await refreshAndRecord(oa);
+
+        assert.deepStrictEqual(clearedConnections, []);
+        assert.strictEqual(treeRefreshes, 0);
+        assert.strictEqual(errorMessages.length, 1);
     });
 });
 
