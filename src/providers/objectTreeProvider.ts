@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from '../connectionManager';
 import { getOutputChannel } from '../extension';
-import { ObjectTreeItemType, getNodeTypeConfig } from './objectTreeTypes';
+import { ObjectTreeItemType, DbConnectionInfo, getNodeTypeConfig } from './objectTreeTypes';
 import {
     fetchSchemas,
     fetchTables,
@@ -20,19 +20,20 @@ import {
     fetchVirtualTables,
     fetchVirtualColumns,
     fetchSystemTables,
-    fetchSystemTableColumns
+    fetchSystemTableColumns,
+    fetchDbConnections
 } from './objectTreeFetchers';
 import { escapeSqlIdentifier } from '../utils';
 
 export type ObjectNode = ObjectTreeItem | ObjectMessageItem;
 
 /**
- * The quoted SQL name of a schema, table, view, column or script node,
- * including system schemas and tables, as used by drag and drop and Copy
- * Name; undefined for other node types.
+ * The quoted SQL name of a schema, table, view, column, script or
+ * connection node, including system schemas and tables, as used by drag and
+ * drop and Copy Name; undefined for other node types.
  */
 export function getQualifiedName(
-    item: Partial<Pick<ObjectTreeItem, 'type' | 'schemaName' | 'tableInfo' | 'columnInfo' | 'scriptInfo'>>
+    item: Partial<Pick<ObjectTreeItem, 'type' | 'schemaName' | 'tableInfo' | 'columnInfo' | 'scriptInfo' | 'dbConnectionInfo'>>
 ): string | undefined {
     switch (item.type) {
         case 'schema':
@@ -52,6 +53,8 @@ export function getQualifiedName(
             return item.schemaName && item.scriptInfo
                 ? `"${escapeSqlIdentifier(item.schemaName)}"."${escapeSqlIdentifier(item.scriptInfo.name)}"`
                 : undefined;
+        case 'db-connection':
+            return item.dbConnectionInfo ? `"${escapeSqlIdentifier(item.dbConnectionInfo.name)}"` : undefined;
         default:
             return undefined;
     }
@@ -130,9 +133,10 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             // Directly show schemas without the connection node
             try {
                 outputChannel?.appendLine(`📂 Objects view: Fetching schemas for active connection '${activeConnection.name}'`);
-                const [schemas, virtualSchemas] = await Promise.all([
+                const [schemas, virtualSchemas, dbConnections] = await Promise.all([
                     fetchSchemas(this.connectionManager, activeConnection),
-                    fetchVirtualSchemas(this.connectionManager, activeConnection)
+                    fetchVirtualSchemas(this.connectionManager, activeConnection),
+                    fetchDbConnections(this.connectionManager, activeConnection)
                 ]);
                 outputChannel?.appendLine(`📂 Objects view: Found ${schemas.length} schemas, ${virtualSchemas.length} virtual schemas`);
 
@@ -246,6 +250,15 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                         }));
                     }
                 }
+
+                allNodes.push(new ObjectTreeItem({
+                    label: 'Connections',
+                    id: `${activeConnection.id}:db-connections-folder`,
+                    collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                    type: 'db-connections-folder',
+                    connection: activeConnection,
+                    dbConnections
+                }));
 
                 allNodes.push(new ObjectTreeItem({
                     label: 'System Schemas',
@@ -644,6 +657,18 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             ];
         }
 
+        if (element.type === 'db-connections-folder') {
+            return (element.dbConnections ?? []).map(info => new ObjectTreeItem({
+                label: info.name,
+                id: `${element.connection!.id}:${info.name}:db-connection`,
+                collapsibleState: vscode.TreeItemCollapsibleState.None,
+                type: 'db-connection',
+                connection: element.connection,
+                dbConnectionInfo: info,
+                parent: element
+            }));
+        }
+
         if (element.type === 'system-schema') {
             const tables = await fetchSystemTables(this.connectionManager, element.connection!, element.schemaName!);
             return tables.map(table => {
@@ -727,6 +752,8 @@ interface ObjectTreeItemOptions {
     functionInfo?: { name: string };
     parent?: ObjectTreeItem | null;
     groupedSchemas?: SchemaInfo[];
+    dbConnections?: DbConnectionInfo[];
+    dbConnectionInfo?: DbConnectionInfo;
 }
 
 export class ObjectTreeItem extends vscode.TreeItem {
@@ -745,6 +772,8 @@ export class ObjectTreeItem extends vscode.TreeItem {
     public readonly functionInfo?: { name: string };
     public readonly parent: ObjectTreeItem | null;
     public readonly groupedSchemas?: SchemaInfo[];
+    public readonly dbConnections?: DbConnectionInfo[];
+    public readonly dbConnectionInfo?: DbConnectionInfo;
 
     constructor(options: ObjectTreeItemOptions) {
         super(options.label, options.collapsibleState);
@@ -764,6 +793,8 @@ export class ObjectTreeItem extends vscode.TreeItem {
         this.functionInfo = options.functionInfo;
         this.parent = options.parent ?? null;
         this.groupedSchemas = options.groupedSchemas;
+        this.dbConnections = options.dbConnections;
+        this.dbConnectionInfo = options.dbConnectionInfo;
 
         const config = getNodeTypeConfig(options.type, {
             scriptType: this.scriptType,
@@ -875,6 +906,24 @@ export class ObjectTreeItem extends vscode.TreeItem {
             case 'constraint':
                 if (this.constraintType) {
                     this.description = this.constraintType;
+                }
+                break;
+            case 'db-connections-folder':
+                this.description = `${this.dbConnections?.length ?? 0}`;
+                break;
+            case 'db-connection':
+                // Never the address or user: those are readable only with dictionary privileges.
+                if (this.dbConnectionInfo) {
+                    const parts: string[] = [];
+                    if (this.dbConnectionInfo.created) {
+                        parts.push(`Created: ${this.dbConnectionInfo.created}`);
+                    }
+                    if (this.dbConnectionInfo.comment) {
+                        parts.push(`Comment: ${this.dbConnectionInfo.comment}`);
+                    }
+                    if (parts.length > 0) {
+                        this.tooltip = parts.join('\n');
+                    }
                 }
                 break;
         }

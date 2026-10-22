@@ -24,7 +24,7 @@ import { TabResultCollector } from './execution/tabResultCollector';
  * ObjectTreeItem and ConnectionTreeItem satisfy it structurally, and some
  * commands are also invoked programmatically with a bare `{ connection }`.
  */
-type TreeCommandItem = Partial<Pick<ObjectTreeItem, 'type' | 'connection' | 'schemaName' | 'tableInfo' | 'columnInfo' | 'scriptInfo' | 'functionInfo'>> & {
+type TreeCommandItem = Partial<Pick<ObjectTreeItem, 'type' | 'connection' | 'schemaName' | 'tableInfo' | 'columnInfo' | 'scriptInfo' | 'functionInfo' | 'dbConnectionInfo'>> & {
     id?: string;
 };
 
@@ -193,6 +193,12 @@ export function activate(context: vscode.ExtensionContext) {
             objectActions.generateScriptCall(i.connection, i.schemaName, i.scriptInfo.name)),
         itemCommand('exasol.openFunctionSource', ['connection', 'schemaName', 'functionInfo'], (i) =>
             objectActions.openFunctionSource(i.connection, i.schemaName, i.functionInfo.name)),
+        itemCommand('exasol.showConnectionDDL', ['connection', 'dbConnectionInfo'], (i) =>
+            objectActions.showConnectionDDL(i.connection, i.dbConnectionInfo.name, i.dbConnectionInfo.comment)),
+        itemCommand('exasol.generateImport', ['dbConnectionInfo'], (i) =>
+            objectActions.generateTransfer('IMPORT', i.dbConnectionInfo.name)),
+        itemCommand('exasol.generateExport', ['dbConnectionInfo'], (i) =>
+            objectActions.generateTransfer('EXPORT', i.dbConnectionInfo.name)),
         itemCommand('exasol.setSchema', ['schemaName'], (i) =>
             sessionManager.setSchema(i.schemaName)),
         itemCommand('exasol.editConnection', ['connection'], (i) =>

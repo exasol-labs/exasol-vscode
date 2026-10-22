@@ -20,7 +20,16 @@ export type ObjectTreeItemType =
     | 'system-schemas-folder'
     | 'system-schema'
     | 'system-table'
-    | 'schema-group';
+    | 'schema-group'
+    | 'db-connections-folder'
+    | 'db-connection';
+
+/** A database CONNECTION object; address and user are never part of it. */
+export interface DbConnectionInfo {
+    name: string;
+    created?: string;
+    comment?: string;
+}
 
 export interface NodeTypeConfig {
     icon: string;
@@ -76,6 +85,10 @@ export function getNodeTypeConfig(
             return { icon: 'database', contextValue: 'system-schema' };
         case 'system-table':
             return { icon: 'table', contextValue: 'system-table' };
+        case 'db-connections-folder':
+            return { icon: 'folder', contextValue: 'db-connections-folder' };
+        case 'db-connection':
+            return { icon: 'plug', contextValue: 'db-connection' };
         default:
             return undefined;
     }

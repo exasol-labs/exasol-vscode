@@ -152,6 +152,18 @@
         "title": "Generate Call"
       },
       {
+        "command": "exasol.showConnectionDDL",
+        "title": "Show Connection DDL"
+      },
+      {
+        "command": "exasol.generateImport",
+        "title": "Generate IMPORT Statement"
+      },
+      {
+        "command": "exasol.generateExport",
+        "title": "Generate EXPORT Statement"
+      },
+      {
         "command": "exasol.openFunctionSource",
         "title": "Open Source"
       },
@@ -366,8 +378,23 @@
           "group": "exasol@2"
         },
         {
+          "command": "exasol.showConnectionDDL",
+          "when": "view == exasol.objects && viewItem == db-connection",
+          "group": "exasol@1"
+        },
+        {
+          "command": "exasol.generateImport",
+          "when": "view == exasol.objects && viewItem == db-connection",
+          "group": "exasol@2"
+        },
+        {
+          "command": "exasol.generateExport",
+          "when": "view == exasol.objects && viewItem == db-connection",
+          "group": "exasol@3"
+        },
+        {
           "command": "exasol.copyQualifiedName",
-          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == schema || viewItem == virtual-table || viewItem == virtual-schema || viewItem == script-udf || viewItem == script-adapter || viewItem == system-schema || viewItem == system-table)",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == schema || viewItem == virtual-table || viewItem == virtual-schema || viewItem == script-udf || viewItem == script-adapter || viewItem == system-schema || viewItem == system-table || viewItem == db-connection)",
           "group": "inline@1"
         },
         {
@@ -470,6 +497,18 @@
         },
         {
           "command": "exasol.generateScriptCall",
+          "when": "false"
+        },
+        {
+          "command": "exasol.showConnectionDDL",
+          "when": "false"
+        },
+        {
+          "command": "exasol.generateImport",
+          "when": "false"
+        },
+        {
+          "command": "exasol.generateExport",
           "when": "false"
         },
         {

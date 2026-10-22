@@ -82,7 +82,7 @@ registerExtensionMock();
 // original textual position, and the module under test must see the mock above
 // rather than the real 'vscode' module (which does not exist outside the
 // extension host).
-const { ObjectActions, refreshVirtualSchemaAndReload, qualifyScriptText, qualifyFunctionText, buildScriptCall } = require('../../objectActions') as typeof import('../../objectActions');
+const { ObjectActions, refreshVirtualSchemaAndReload, qualifyScriptText, qualifyFunctionText, buildScriptCall, buildConnectionDDL, buildTransferTemplate } = require('../../objectActions') as typeof import('../../objectActions');
 const { ResultsPanel } = require('../../panels/resultsPanel') as typeof import('../../panels/resultsPanel');
 
 import { createRawResult, createEmptyRawResult, createRawErrorResult, MockConnectionManager, TEST_CONNECTION, asConnectionManager, type MockDriver } from '../helpers/mockConnectionManager';
@@ -919,4 +919,222 @@ suite('ObjectActions on system tables', () => {
             assert.strictEqual(await columnsViewUsed(action, 'sys'), 'SYS.EXA_ALL_COLUMNS');
         });
     }
+});
+
+suite('buildConnectionDDL', () => {
+    const full = {
+        CONNECTION_STRING: 'https://example-bucket.s3.eu-west-1.amazonaws.com',
+        USER_NAME: 'key_id',
+        PUBLIC_KEY: null,
+        CLIENT_ID: null
+    };
+
+    test('full definition with user and comment', () => {
+        assert.strictEqual(
+            buildConnectionDDL('VS_TEST_CONN', 'test comment', full),
+            'CREATE OR REPLACE CONNECTION "VS_TEST_CONN"\n'
+            + "    TO 'https://example-bucket.s3.eu-west-1.amazonaws.com'\n"
+            + "    USER 'key_id'\n"
+            + "    IDENTIFIED BY '<password>';\n"
+            + 'COMMENT ON CONNECTION "VS_TEST_CONN" IS \'test comment\';'
+        );
+    });
+
+    test('no user and no comment', () => {
+        assert.strictEqual(
+            buildConnectionDDL('C', null, { ...full, CONNECTION_STRING: 'jdbc:mysql://h/db', USER_NAME: null }),
+            "CREATE OR REPLACE CONNECTION \"C\"\n    TO 'jdbc:mysql://h/db';"
+        );
+    });
+
+    test('quotes in string, user, comment and name are escaped', () => {
+        assert.strictEqual(
+            buildConnectionDDL('VS_LOWER"Q', "it's", { ...full, CONNECTION_STRING: "a'b", USER_NAME: "o'u" }),
+            'CREATE OR REPLACE CONNECTION "VS_LOWER""Q"\n'
+            + "    TO 'a''b'\n"
+            + "    USER 'o''u'\n"
+            + "    IDENTIFIED BY '<password>';\n"
+            + 'COMMENT ON CONNECTION "VS_LOWER""Q" IS \'it\'\'s\';'
+        );
+    });
+
+    test('PUBLIC_KEY and CLIENT_ID get a TODO line each', () => {
+        const ddl = buildConnectionDDL('C', null, { ...full, PUBLIC_KEY: 'k', CLIENT_ID: 'id' });
+        const lines = ddl.split('\n');
+        assert.ok(lines[0].startsWith('-- TODO: PUBLIC_KEY '), lines[0]);
+        assert.ok(lines[1].startsWith('-- TODO: CLIENT_ID '), lines[1]);
+        assert.strictEqual(lines[2], 'CREATE OR REPLACE CONNECTION "C"');
+        assert.ok(!ddl.includes("'k'") && !ddl.includes("'id'"));
+    });
+
+    test('without a definition address and user are placeholders', () => {
+        assert.strictEqual(
+            buildConnectionDDL('C', "x'y"),
+            '-- Address and user are readable only with the SELECT ANY DICTIONARY system privilege.\n'
+            + 'CREATE OR REPLACE CONNECTION "C"\n'
+            + "    TO '<address>'\n"
+            + "    USER '<user>'\n"
+            + "    IDENTIFIED BY '<password>';\n"
+            + 'COMMENT ON CONNECTION "C" IS \'x\'\'y\';'
+        );
+    });
+});
+
+suite('ObjectActions.showConnectionDDL', () => {
+    let savedWindow: ObjectActionsVscodeMock['window'];
+    let savedWorkspace: ObjectActionsVscodeMock['workspace'];
+    let opened: string[];
+    let warnings: string[];
+    let errors: string[];
+
+    setup(() => {
+        savedWindow = extendedVscodeMock.window;
+        savedWorkspace = extendedVscodeMock.workspace;
+        opened = [];
+        warnings = [];
+        errors = [];
+        extendedVscodeMock.window = {
+            ...buildWindowMock(),
+            showWarningMessage: (msg: string) => { warnings.push(msg); return Promise.resolve(undefined); },
+            showErrorMessage: (msg: string) => { errors.push(msg); return Promise.resolve(undefined); },
+        };
+        extendedVscodeMock.workspace = {
+            ...buildWorkspaceMock(),
+            openTextDocument: (opts: unknown) => {
+                opened.push((opts as { content: string }).content);
+                return Promise.resolve({ languageId: 'exasol-sql' });
+            },
+        };
+    });
+
+    teardown(() => {
+        extendedVscodeMock.window = savedWindow;
+        extendedVscodeMock.workspace = savedWorkspace;
+    });
+
+    function makeObjectActions(respond: ReturnType<MockDriver['query']>): { oa: InstanceType<typeof ObjectActions>; capturedSql: string[] } {
+        const capturedSql: string[] = [];
+        const mockCM = new MockConnectionManager({ query: (sql: string) => { capturedSql.push(sql); return respond; } });
+        // ObjectActions never reads queryExecutor or extensionUri; same rationale as above.
+        const mockQE = {} as unknown as QueryExecutor;
+        const mockUri = { fsPath: '/mock' } as unknown as vscode.Uri;
+        return { oa: new ObjectActions(asConnectionManager(mockCM), mockQE, mockUri), capturedSql };
+    }
+
+    test('reads EXA_DBA_CONNECTIONS with the escaped name and opens the full DDL', async () => {
+        const { oa, capturedSql } = makeObjectActions(Promise.resolve(createRawResult(
+            ['CONNECTION_STRING', 'USER_NAME', 'PUBLIC_KEY', 'CLIENT_ID', 'CONNECTION_COMMENT'],
+            [['https://x', 'key_id', null, null, 'db comment']]
+        )));
+
+        await oa.showConnectionDDL(TEST_CONNECTION, "O'C", 'tree comment');
+
+        assert.ok(capturedSql[0].includes('FROM SYS.EXA_DBA_CONNECTIONS'));
+        assert.ok(capturedSql[0].includes("CONNECTION_NAME = 'O''C'"));
+        assert.deepStrictEqual(opened, [buildConnectionDDL("O'C", 'db comment', {
+            CONNECTION_STRING: 'https://x', USER_NAME: 'key_id', PUBLIC_KEY: null, CLIENT_ID: null
+        })]);
+    });
+
+    test('insufficient privileges falls back to the template with the tree comment', async () => {
+        const { oa } = makeObjectActions(Promise.resolve(
+            createRawErrorResult('42500', 'insufficient privileges for accessing view EXA_DBA_CONNECTIONS')));
+
+        await oa.showConnectionDDL(TEST_CONNECTION, 'C', 'tree comment');
+
+        assert.deepStrictEqual(opened, [buildConnectionDDL('C', 'tree comment')]);
+        assert.deepStrictEqual(errors, []);
+    });
+
+    test('other SQL errors are shown, not hidden behind the template', async () => {
+        const { oa } = makeObjectActions(Promise.resolve(createRawErrorResult('42000', 'syntax error')));
+
+        await oa.showConnectionDDL(TEST_CONNECTION, 'C');
+
+        assert.deepStrictEqual(opened, []);
+        assert.strictEqual(errors.length, 1);
+        assert.ok(errors[0].startsWith('Failed to get connection DDL: '));
+    });
+
+    test('a dropped connection gives a warning', async () => {
+        const { oa } = makeObjectActions(Promise.resolve(createEmptyRawResult(
+            ['CONNECTION_STRING', 'USER_NAME', 'PUBLIC_KEY', 'CLIENT_ID', 'CONNECTION_COMMENT'])));
+
+        await oa.showConnectionDDL(TEST_CONNECTION, 'C');
+
+        assert.deepStrictEqual(opened, []);
+        assert.deepStrictEqual(warnings, ['Connection definition not found for C']);
+    });
+});
+
+suite('buildTransferTemplate', () => {
+    test('IMPORT per source type', () => {
+        assert.strictEqual(buildTransferTemplate('IMPORT', 'CSV', 'C'), 'IMPORT INTO <table> FROM CSV AT "C" FILE \'<path>\';');
+        assert.strictEqual(buildTransferTemplate('IMPORT', 'EXA', 'C'), 'IMPORT INTO <table> FROM EXA AT "C" TABLE <schema>.<table>;');
+        assert.strictEqual(buildTransferTemplate('IMPORT', 'JDBC', 'C'), 'IMPORT INTO <table> FROM JDBC AT "C" STATEMENT \'<sql>\';');
+    });
+
+    test('EXPORT per source type', () => {
+        assert.strictEqual(buildTransferTemplate('EXPORT', 'CSV', 'C'), 'EXPORT <table> INTO CSV AT "C" FILE \'<path>\';');
+        assert.strictEqual(buildTransferTemplate('EXPORT', 'EXA', 'C'), 'EXPORT <table> INTO EXA AT "C" TABLE <schema>.<table>;');
+        assert.strictEqual(buildTransferTemplate('EXPORT', 'JDBC', 'C'), 'EXPORT <table> INTO JDBC AT "C" TABLE <schema>.<table>;');
+    });
+
+    test('the connection name is a quoted identifier', () => {
+        assert.strictEqual(buildTransferTemplate('IMPORT', 'EXA', 'VS_LOWER"Q'), 'IMPORT INTO <table> FROM EXA AT "VS_LOWER""Q" TABLE <schema>.<table>;');
+    });
+});
+
+suite('ObjectActions.generateTransfer', () => {
+    let savedWindow: ObjectActionsVscodeMock['window'];
+    let savedWorkspace: ObjectActionsVscodeMock['workspace'];
+    let opened: string[];
+    let pickedLabel: string | undefined;
+    let offered: string[];
+
+    setup(() => {
+        savedWindow = extendedVscodeMock.window;
+        savedWorkspace = extendedVscodeMock.workspace;
+        opened = [];
+        offered = [];
+        extendedVscodeMock.window = {
+            ...buildWindowMock(),
+            showQuickPick: (items: Array<{ label: string }>) => {
+                offered = items.map(item => item.label);
+                return Promise.resolve(items.find(item => item.label === pickedLabel));
+            },
+        } as ObjectActionsVscodeMock['window'];
+        extendedVscodeMock.workspace = {
+            ...buildWorkspaceMock(),
+            openTextDocument: (opts: unknown) => {
+                opened.push((opts as { content: string }).content);
+                return Promise.resolve({ languageId: 'exasol-sql' });
+            },
+        };
+    });
+
+    teardown(() => {
+        extendedVscodeMock.window = savedWindow;
+        extendedVscodeMock.workspace = savedWorkspace;
+    });
+
+    test('offers the three source types and opens the picked template', async () => {
+        pickedLabel = 'JDBC';
+        const { oa, capturedSql } = makeObjectActionsCapturingSql();
+
+        await oa.generateTransfer('IMPORT', 'C');
+
+        assert.deepStrictEqual(offered, ['Cloud file (CSV)', 'Exasol', 'JDBC']);
+        assert.deepStrictEqual(opened, ['IMPORT INTO <table> FROM JDBC AT "C" STATEMENT \'<sql>\';']);
+        assert.deepStrictEqual(capturedSql, []);
+    });
+
+    test('a cancelled pick does nothing', async () => {
+        pickedLabel = undefined;
+        const { oa } = makeObjectActionsCapturingSql();
+
+        await oa.generateTransfer('EXPORT', 'C');
+
+        assert.deepStrictEqual(opened, []);
+    });
 });

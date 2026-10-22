@@ -1,6 +1,7 @@
 import type { SQLQueriesResponse, SQLResponse } from '@exasol/exasol-driver-ts';
 import { ConnectionManager, StoredConnection, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
+import type { DbConnectionInfo } from './objectTreeTypes';
 import { getRowsFromResult, escapeSqlString, escapeSqlIdentifier, rawQuery, safeFetch, throwSqlError } from '../utils';
 
 // ---------------------------------------------------------------------------
@@ -761,6 +762,33 @@ export async function fetchSystemTableColumns(
                 name: row.COLUMN_NAME,
                 type: row.SQL_TYPE ?? 'UNKNOWN',
                 nullable: row.NULLABLE ?? null
+            }));
+        }, connection.id, { role: 'background' }),
+    [], getOutputChannel());
+}
+
+/** Every user sees all connection names here; address and user need EXA_DBA_CONNECTIONS. */
+export async function fetchDbConnections(
+    connectionManager: ConnectionManager,
+    connection: StoredConnection
+): Promise<DbConnectionInfo[]> {
+    return safeFetch('Failed to fetch connections', () =>
+        connectionManager.executeWithRetry(async () => {
+            const driver = await connectionManager.getDriver(connection.id, 'background');
+            const result = await rawQuery(driver, `
+                SELECT CONNECTION_NAME, CREATED, CONNECTION_COMMENT
+                FROM SYS.EXA_ALL_CONNECTIONS
+                ORDER BY CONNECTION_NAME
+            `);
+            const rows = getRowsFromResult<{
+                CONNECTION_NAME: string;
+                CREATED: string | null;
+                CONNECTION_COMMENT: string | null;
+            }>(result);
+            return rows.map(row => ({
+                name: row.CONNECTION_NAME,
+                created: row.CREATED ?? undefined,
+                comment: row.CONNECTION_COMMENT ?? undefined
             }));
         }, connection.id, { role: 'background' }),
     [], getOutputChannel());

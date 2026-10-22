@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { QueryExecutor, captureBaselineStatementIdentity } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
-import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier } from './utils';
+import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier, SqlError } from './utils';
 import { isExecutionPlanEnabled } from './settings';
 
 /** EXPLAIN VIRTUAL columns that are safe to show; PUSHDOWN_JSON is left out on purpose. */
@@ -347,6 +347,123 @@ export class ObjectActions {
             vscode.window.showErrorMessage(`Failed to explain pushdown: ${error}`);
         }
     }
+
+    /**
+     * Opens CREATE OR REPLACE CONNECTION for a connection. Address and user
+     * come from EXA_DBA_CONNECTIONS; without access to it the statement keeps
+     * placeholders and `comment` comes from the tree node.
+     */
+    async showConnectionDDL(connection: StoredConnection, connectionName: string, comment?: string) {
+        try {
+            const definition = await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connection.id);
+                const query = `
+                    SELECT CONNECTION_STRING, USER_NAME, PUBLIC_KEY, CLIENT_ID, CONNECTION_COMMENT
+                    FROM SYS.EXA_DBA_CONNECTIONS
+                    WHERE CONNECTION_NAME = '${escapeSqlString(connectionName)}'
+                `;
+                try {
+                    const rows = getRowsFromResult<ConnectionDefinition>(await rawQuery(driver, query));
+                    return rows.length > 0 ? rows[0] : null;
+                } catch (error) {
+                    if (error instanceof SqlError && error.sqlCode === INSUFFICIENT_PRIVILEGES) {
+                        return undefined;
+                    }
+                    throw error;
+                }
+            }, connection.id);
+
+            if (definition === null) {
+                vscode.window.showWarningMessage(`Connection definition not found for ${connectionName}`);
+                return;
+            }
+            await openSqlDocument(definition
+                ? buildConnectionDDL(connectionName, definition.CONNECTION_COMMENT, definition)
+                : buildConnectionDDL(connectionName, comment ?? null));
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to get connection DDL: ${error}`);
+        }
+    }
+
+    /** Asks for the source type and inserts an IMPORT or EXPORT template; a cancelled pick does nothing. */
+    async generateTransfer(direction: TransferDirection, connectionName: string) {
+        const picked = await vscode.window.showQuickPick(TRANSFER_SOURCES, {
+            placeHolder: direction === 'IMPORT' ? 'Import from' : 'Export to'
+        });
+        if (picked) {
+            await insertIntoSqlEditor(buildTransferTemplate(direction, picked.source, connectionName));
+        }
+    }
+}
+
+/** Exasol error code for a missing privilege, e.g. on EXA_DBA_CONNECTIONS. */
+const INSUFFICIENT_PRIVILEGES = '42500';
+
+/** A row of EXA_DBA_CONNECTIONS; there is no password column. */
+interface ConnectionDefinition {
+    CONNECTION_STRING: string;
+    USER_NAME: string | null;
+    PUBLIC_KEY: string | null;
+    CLIENT_ID: string | null;
+    CONNECTION_COMMENT: string | null;
+}
+
+/**
+ * CREATE OR REPLACE CONNECTION plus COMMENT ON CONNECTION. Without a
+ * definition (EXA_DBA_CONNECTIONS not readable) address and user become
+ * placeholders. The password is never readable, so it is always one.
+ */
+export function buildConnectionDDL(
+    connectionName: string,
+    comment: string | null,
+    definition?: Omit<ConnectionDefinition, 'CONNECTION_COMMENT'>
+): string {
+    const name = `"${escapeSqlIdentifier(connectionName)}"`;
+    const lines: string[] = [];
+    if (!definition) {
+        lines.push(
+            '-- Address and user are readable only with the SELECT ANY DICTIONARY system privilege.',
+            `CREATE OR REPLACE CONNECTION ${name}`,
+            "    TO '<address>'",
+            "    USER '<user>'",
+            "    IDENTIFIED BY '<password>';"
+        );
+    } else {
+        for (const column of ['PUBLIC_KEY', 'CLIENT_ID'] as const) {
+            if (definition[column] !== null) {
+                lines.push(`-- TODO: ${column} is set on this connection and is not part of this statement.`);
+            }
+        }
+        lines.push(`CREATE OR REPLACE CONNECTION ${name}`, `    TO '${escapeSqlString(definition.CONNECTION_STRING)}'`);
+        if (definition.USER_NAME !== null) {
+            lines.push(`    USER '${escapeSqlString(definition.USER_NAME)}'`, "    IDENTIFIED BY '<password>'");
+        }
+        lines[lines.length - 1] += ';';
+    }
+    if (comment !== null) {
+        lines.push(`COMMENT ON CONNECTION ${name} IS '${escapeSqlString(comment)}';`);
+    }
+    return lines.join('\n');
+}
+
+type TransferDirection = 'IMPORT' | 'EXPORT';
+type TransferSource = 'CSV' | 'EXA' | 'JDBC';
+
+const TRANSFER_SOURCES: ReadonlyArray<vscode.QuickPickItem & { source: TransferSource }> = [
+    { label: 'Cloud file (CSV)', source: 'CSV' },
+    { label: 'Exasol', source: 'EXA' },
+    { label: 'JDBC', source: 'JDBC' }
+];
+
+/** IMPORT or EXPORT through a connection, with placeholders for the parts the user fills in. */
+export function buildTransferTemplate(direction: TransferDirection, source: TransferSource, connectionName: string): string {
+    const at = `AT "${escapeSqlIdentifier(connectionName)}"`;
+    const target = {
+        CSV: `CSV ${at} FILE '<path>'`,
+        EXA: `EXA ${at} TABLE <schema>.<table>`,
+        JDBC: direction === 'IMPORT' ? `JDBC ${at} STATEMENT '<sql>'` : `JDBC ${at} TABLE <schema>.<table>`
+    }[source];
+    return direction === 'IMPORT' ? `IMPORT INTO <table> FROM ${target};` : `EXPORT <table> INTO ${target};`;
 }
 
 async function openSqlDocument(content: string): Promise<void> {
