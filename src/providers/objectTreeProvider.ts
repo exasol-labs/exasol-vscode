@@ -142,7 +142,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
 
                 const allNodes: ObjectNode[] = [];
                 if (schemas.length === 0) {
-                    allNodes.push(new ObjectMessageItem('No schemas visible for this user'));
+                    allNodes.push(new ObjectMessageItem('No schemas'));
                 }
 
                 if (!groupingEnabled || !delimiter) {

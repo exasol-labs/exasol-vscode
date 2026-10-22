@@ -234,6 +234,37 @@ suite('ExasolCompletionProvider - lazy column fetch', () => {
         assert.strictEqual(columnQueries, 1, 'expected exactly one column fetch (second hit cache)');
     });
 
+    test('a quoted lowercase table gets its columns, queried with the stored names', async () => {
+        const columnQueries: string[] = [];
+        const driver = makeDriver((sql: string) => {
+            if (sql.includes('exa_sql_keywords')) {
+                return createRawResult(['KEYWORD'], [['SELECT']]);
+            }
+            if (sql.includes('EXA_ALL_TABLES')) {
+                // Stored as created with CREATE TABLE S."lower v" (docker, 2026-10-22).
+                return createRawResult(['TABLE_SCHEMA', 'TABLE_NAME', 'OBJECT_TYPE'], [['S', 'lower v', 'table']]);
+            }
+            if (sql.includes('COLUMN_TABLE =')) {
+                columnQueries.push(sql);
+                return createRawResult(['COLUMN_NAME'], [['c one'], ['C2']]);
+            }
+            return createRawResult(['TABLE_SCHEMA', 'TABLE_NAME'], []);
+        });
+        const { manager } = makeManager(driver);
+        const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
+
+        for (const sql of ['select * from s."lower v" x\nwhere x.', 'select * from s."lower v"\nwhere ']) {
+            const lines = sql.split('\n');
+            const items = await provider.provideCompletionItems(
+                makeDocument(sql), makePosition(1, lines[1].length), {} as vscode.CancellationToken, {} as vscode.CompletionContext
+            );
+            const labels = items.map(i => typeof i.label === 'string' ? i.label : i.label.label);
+            assert.ok(labels.some(l => l.includes('c one')), `no column of "lower v" in ${JSON.stringify(labels)}`);
+        }
+        assert.strictEqual(columnQueries.length, 1, 'the second lookup should hit the cache');
+        assert.match(columnQueries[0], /COLUMN_SCHEMA = 'S' AND COLUMN_TABLE = 'lower v'/);
+    });
+
     test('columns of SYS and EXA_STATISTICS tables come from EXA_SYS_COLUMNS', async () => {
         const seenSql: string[] = [];
         const driver = makeDriver((sql: string) => {
@@ -244,7 +275,7 @@ suite('ExasolCompletionProvider - lazy column fetch', () => {
         const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
         const internals = provider as unknown as CompletionProviderInternals;
 
-        assert.deepStrictEqual(await internals.getColumnsForTable('conn1', 'sys', 'exa_dba_users'), ['USER_NAME']);
+        assert.deepStrictEqual(await internals.getColumnsForTable('conn1', 'SYS', 'EXA_DBA_USERS'), ['USER_NAME']);
         await internals.getColumnsForTable('conn1', 'EXA_STATISTICS', 'EXA_DBA_AUDIT_SQL');
         await internals.getColumnsForTable('conn1', 'MY_SCHEMA', 'T');
 

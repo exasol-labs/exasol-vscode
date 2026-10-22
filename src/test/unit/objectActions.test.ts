@@ -720,6 +720,23 @@ suite('qualifyFunctionText', () => {
         assert.strictEqual(qualifyFunctionText('something else\n/', 'S', 'N'), 'CREATE OR REPLACE something else\n/');
     });
 
+    test('keeps a comment that touches the name', () => {
+        // Stored verbatim this way (docker, 2026-10-22).
+        assert.strictEqual(
+            qualifyFunctionText('FUNCTION VS_SRC.F/*c*/(p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END F;', 'VS_SRC', 'F'),
+            'CREATE OR REPLACE FUNCTION "VS_SRC"."F"/*c*/(p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END F;\n/'
+        );
+        assert.strictEqual(
+            qualifyFunctionText('FUNCTION VS_SRC.F_CMT--x\n(p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END F_CMT;', 'VS_SRC', 'F_CMT'),
+            'CREATE OR REPLACE FUNCTION "VS_SRC"."F_CMT"--x\n(p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END F_CMT;\n/'
+        );
+    });
+
+    test('a trailing line comment does not hide the / line', () => {
+        const ddl = qualifyFunctionText('FUNCTION S.F (p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END F; -- note', 'S', 'F');
+        assert.strictEqual(splitIntoStatements(`${ddl}\nSELECT 2;`).length, 2);
+    });
+
     test('only prefixes text with an unexpected header', () => {
         assert.strictEqual(qualifyFunctionText('something else', 'S', 'N'), 'CREATE OR REPLACE something else\n/');
     });
@@ -1219,29 +1236,41 @@ suite('ObjectActions.generateTransfer', () => {
 });
 
 suite('qualifyViewText', () => {
-    // VIEW_TEXT holds the whole statement as written (docker, 2026-10-22).
+    // VIEW_TEXT holds the whole statement as written, trailing comments included (docker, 2026-10-22).
     const cases: Array<[string, string, string]> = [
         ['CREATE VIEW VS_SRC.PERM_V AS SELECT ID, NAME FROM VS_SRC.PERM_T WHERE ID > 1', 'PERM_V',
-            'CREATE OR REPLACE VIEW "VS_SRC"."PERM_V" AS SELECT ID, NAME FROM VS_SRC.PERM_T WHERE ID > 1;'],
+            'CREATE OR REPLACE VIEW "VS_SRC"."PERM_V" AS SELECT ID, NAME FROM VS_SRC.PERM_T WHERE ID > 1\n;'],
         ['CREATE OR REPLACE VIEW V_PLAIN AS SELECT 1 AS A', 'V_PLAIN',
-            'CREATE OR REPLACE VIEW "VS_SRC"."V_PLAIN" AS SELECT 1 AS A;'],
+            'CREATE OR REPLACE VIEW "VS_SRC"."V_PLAIN" AS SELECT 1 AS A\n;'],
         ['create or replace view v_lower as select 9 as g', 'V_LOWER',
-            'CREATE OR REPLACE view "VS_SRC"."V_LOWER" as select 9 as g;'],
+            'CREATE OR REPLACE view "VS_SRC"."V_LOWER" as select 9 as g\n;'],
         ['CREATE OR REPLACE VIEW "VS_SRC"."v Quoted" AS SELECT 3 AS C', 'v Quoted',
-            'CREATE OR REPLACE VIEW "VS_SRC"."v Quoted" AS SELECT 3 AS C;'],
+            'CREATE OR REPLACE VIEW "VS_SRC"."v Quoted" AS SELECT 3 AS C\n;'],
         ['CREATE OR REPLACE VIEW "VS_SRC" . "V_SPACED" (X, Y) AS SELECT 4, 5', 'V_SPACED',
-            'CREATE OR REPLACE VIEW "VS_SRC"."V_SPACED" (X, Y) AS SELECT 4, 5;'],
+            'CREATE OR REPLACE VIEW "VS_SRC"."V_SPACED" (X, Y) AS SELECT 4, 5\n;'],
         ['CREATE OR REPLACE FORCE VIEW V_FORCE AS SELECT 6 AS D', 'V_FORCE',
-            'CREATE OR REPLACE FORCE VIEW "VS_SRC"."V_FORCE" AS SELECT 6 AS D;'],
+            'CREATE OR REPLACE FORCE VIEW "VS_SRC"."V_FORCE" AS SELECT 6 AS D\n;'],
         ['CREATE OR REPLACE VIEW\n  V_NEWLINE\nAS\nSELECT 10 AS H', 'V_NEWLINE',
-            'CREATE OR REPLACE VIEW\n  "VS_SRC"."V_NEWLINE"\nAS\nSELECT 10 AS H;'],
+            'CREATE OR REPLACE VIEW\n  "VS_SRC"."V_NEWLINE"\nAS\nSELECT 10 AS H\n;'],
         ['/* lead */ CREATE OR REPLACE VIEW VS_SRC.V_LEADCMT AS SELECT 11 AS I', 'V_LEADCMT',
-            '/* lead */ CREATE OR REPLACE VIEW "VS_SRC"."V_LEADCMT" AS SELECT 11 AS I;'],
+            '/* lead */ CREATE OR REPLACE VIEW "VS_SRC"."V_LEADCMT" AS SELECT 11 AS I\n;'],
         ['CREATE OR REPLACE VIEW VS_SRC.V_SEMI AS SELECT 12 AS J;', 'V_SEMI',
             'CREATE OR REPLACE VIEW "VS_SRC"."V_SEMI" AS SELECT 12 AS J;'],
+        ['CREATE OR REPLACE VIEW VS_SRC.V_TRAIL AS SELECT 1 AS A -- trailing note', 'V_TRAIL',
+            'CREATE OR REPLACE VIEW "VS_SRC"."V_TRAIL" AS SELECT 1 AS A -- trailing note\n;'],
+        ['CREATE OR REPLACE VIEW VS_SRC.V_BLK AS SELECT 1 AS A /* blk */', 'V_BLK',
+            'CREATE OR REPLACE VIEW "VS_SRC"."V_BLK" AS SELECT 1 AS A /* blk */\n;'],
+        ['CREATE OR REPLACE VIEW VS_SRC.V_SEMICMT AS SELECT 1 AS A; -- c', 'V_SEMICMT',
+            'CREATE OR REPLACE VIEW "VS_SRC"."V_SEMICMT" AS SELECT 1 AS A; -- c'],
+        ['CREATE VIEW VS_SRC.V/*c*/AS SELECT 1 AS A', 'V',
+            'CREATE OR REPLACE VIEW "VS_SRC"."V"/*c*/AS SELECT 1 AS A\n;'],
+        ['CREATE VIEW VS_SRC.V_CMT--x\nAS SELECT 2 AS B', 'V_CMT',
+            'CREATE OR REPLACE VIEW "VS_SRC"."V_CMT"--x\nAS SELECT 2 AS B\n;'],
+        ["CREATE VIEW VS_SRC.V_STR AS SELECT '--' AS S", 'V_STR',
+            `CREATE OR REPLACE VIEW "VS_SRC"."V_STR" AS SELECT '--' AS S\n;`],
     ];
     for (const [stored, name, expected] of cases) {
-        test(`qualifies ${JSON.stringify(stored.slice(0, 40))}`, () => {
+        test(`qualifies ${JSON.stringify(stored.slice(0, 60))}`, () => {
             assert.strictEqual(qualifyViewText(stored, 'VS_SRC', name), expected);
         });
     }
@@ -1249,7 +1278,7 @@ suite('qualifyViewText', () => {
     test('escapes double quotes in schema and view names', () => {
         assert.strictEqual(
             qualifyViewText('CREATE VIEW "a""b"."v""w" AS SELECT 1 x', 'a"b', 'v"w'),
-            'CREATE OR REPLACE VIEW "a""b"."v""w" AS SELECT 1 x;'
+            'CREATE OR REPLACE VIEW "a""b"."v""w" AS SELECT 1 x\n;'
         );
     });
 
@@ -1258,8 +1287,18 @@ suite('qualifyViewText', () => {
         assert.deepStrictEqual(splitIntoStatements(`${ddl}\nSELECT 1;`), [ddl, 'SELECT 1;']);
     });
 
+    for (const stored of [
+        'CREATE VIEW S.V AS SELECT 1 AS A -- trailing note',
+        'CREATE VIEW S.V AS SELECT 1 AS A /* blk */',
+        'CREATE VIEW S.V AS SELECT 1 AS A; -- c',
+    ]) {
+        test(`the splitter ends ${JSON.stringify(stored.slice(32))} before the next statement`, () => {
+            assert.strictEqual(splitIntoStatements(`${qualifyViewText(stored, 'S', 'V')}\nSELECT 2;`).length, 2);
+        });
+    }
+
     test('text with an unexpected header only gets the semicolon', () => {
-        assert.strictEqual(qualifyViewText('SELECT 1', 'S', 'V'), 'SELECT 1;');
+        assert.strictEqual(qualifyViewText('SELECT 1', 'S', 'V'), 'SELECT 1\n;');
     });
 });
 
@@ -1322,12 +1361,48 @@ suite('ObjectActions with no visible columns', () => {
         assert.deepStrictEqual(warnings, ['No columns visible for "VS_PY"."T"']);
     });
 
+    test('Show Table DDL warns and opens no document', async () => {
+        const oa = makeObjectActions(['COLUMN_NAME', 'COLUMN_TYPE', 'COLUMN_DEFAULT', 'COLUMN_IS_NULLABLE', 'COLUMN_COMMENT']);
+
+        await oa.showTableDDL(TEST_CONNECTION, 'VS_PY', 'T');
+
+        assert.deepStrictEqual(opened, []);
+        assert.deepStrictEqual(warnings, ['No columns visible for "VS_PY"."T"']);
+    });
+
+    test('Show View DDL warns with the quoted name when no view is visible', async () => {
+        const oa = makeObjectActions(['VIEW_TEXT']);
+
+        await oa.showViewDDL(TEST_CONNECTION, 'a"b', 'V');
+
+        assert.deepStrictEqual(opened, []);
+        assert.deepStrictEqual(warnings, ['No view visible for "a""b"."V"']);
+    });
+
+    test('Show Table DDL and Show View DDL show the database error text', async () => {
+        const errors: string[] = [];
+        extendedVscodeMock.window = {
+            ...extendedVscodeMock.window,
+            showErrorMessage: (msg: string) => { errors.push(msg); return Promise.resolve(undefined); },
+        };
+        const mockCM = new MockConnectionManager({ query: async () => { throw { text: 'insufficient privileges', sqlCode: '42500' }; } });
+        const oa = new ObjectActions(asConnectionManager(mockCM), {} as unknown as QueryExecutor, { fsPath: '/mock' } as unknown as vscode.Uri);
+
+        await oa.showTableDDL(TEST_CONNECTION, 'S', 'T');
+        await oa.showViewDDL(TEST_CONNECTION, 'S', 'V');
+
+        assert.deepStrictEqual(errors, [
+            'Failed to get table DDL: insufficient privileges',
+            'Failed to get view DDL: insufficient privileges'
+        ]);
+    });
+
     test('Show View DDL opens VIEW_TEXT once, as CREATE OR REPLACE with the qualified name', async () => {
         const mockCM = new MockConnectionManager({ query: async () => createRawResult(['VIEW_TEXT'], [['CREATE VIEW VS_SRC.PERM_V AS SELECT ID FROM VS_SRC.PERM_T']]) });
         const oa = new ObjectActions(asConnectionManager(mockCM), {} as unknown as QueryExecutor, { fsPath: '/mock' } as unknown as vscode.Uri);
 
         await oa.showViewDDL(TEST_CONNECTION, 'VS_SRC', 'PERM_V');
 
-        assert.deepStrictEqual(opened, ['CREATE OR REPLACE VIEW "VS_SRC"."PERM_V" AS SELECT ID FROM VS_SRC.PERM_T;']);
+        assert.deepStrictEqual(opened, ['CREATE OR REPLACE VIEW "VS_SRC"."PERM_V" AS SELECT ID FROM VS_SRC.PERM_T\n;']);
     });
 });

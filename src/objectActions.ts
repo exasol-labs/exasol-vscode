@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { QueryExecutor, captureBaselineStatementIdentity } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
-import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier, columnsViewFor, SqlError, stripFinalSlashLine } from './utils';
+import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier, columnsViewFor, SqlError, stripFinalSlashLine, stripCommentsPreservingStrings } from './utils';
+import { formatError } from './connectionTypes';
 import { isExecutionPlanEnabled } from './settings';
 
 export class ObjectActions {
@@ -92,7 +93,7 @@ export class ObjectActions {
             }, connection.id);
 
             if (rows.length === 0) {
-                vscode.window.showErrorMessage(`Table definition not found for ${schemaName}.${tableName}`);
+                showNoVisibleColumns(schemaName, tableName);
                 return;
             }
 
@@ -111,7 +112,7 @@ export class ObjectActions {
 
             await openSqlDocument(ddl);
         } catch (error) {
-            vscode.window.showErrorMessage(`Failed to get table DDL: ${error}`);
+            vscode.window.showErrorMessage(`Failed to get table DDL: ${formatError(error)}`);
         }
     }
 
@@ -132,10 +133,12 @@ export class ObjectActions {
             if (rows.length > 0) {
                 await openSqlDocument(qualifyViewText(rows[0].VIEW_TEXT, schemaName, viewName));
             } else {
-                vscode.window.showWarningMessage(`View definition not found for ${schemaName}.${viewName}`);
+                vscode.window.showWarningMessage(
+                    `No view visible for "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(viewName)}"`
+                );
             }
         } catch (error) {
-            vscode.window.showErrorMessage(`Failed to get view DDL: ${error}`);
+            vscode.window.showErrorMessage(`Failed to get view DDL: ${formatError(error)}`);
         }
     }
 
@@ -482,8 +485,12 @@ async function openSqlDocument(content: string): Promise<void> {
 /** A quoted identifier, with "" standing for one double quote inside it. */
 const QUOTED_IDENTIFIER = '"(?:[^"]|"")*"';
 
-/** One part of an object name: quoted, or unquoted up to a space, dot, quote or parenthesis. */
-const NAME_PART = `(?:${QUOTED_IDENTIFIER}|[^\\s."(]+)`;
+/**
+ * One part of an object name: quoted, or unquoted up to a space, dot, quote,
+ * parenthesis, semicolon or comment start (unquoted identifiers contain none
+ * of these, and a comment may touch the name).
+ */
+const NAME_PART = `(?:${QUOTED_IDENTIFIER}|[^\\s."(/;-]+)`;
 
 /** `CREATE <language> [SCALAR|SET|ADAPTER] SCRIPT "NAME"`, as stored in SCRIPT_TEXT. */
 const SCRIPT_HEADER = new RegExp(`^CREATE\\s+([^"]*?\\bSCRIPT\\s+)${QUOTED_IDENTIFIER}`, 'i');
@@ -535,11 +542,12 @@ const VIEW_HEADER = new RegExp(
  * The database stores the whole statement as written, so OR REPLACE may be
  * missing and the name may lack the schema. The header becomes
  * `CREATE OR REPLACE [FORCE] VIEW "SCHEMA"."NAME"`; leading comments and the
- * rest are kept, and a `;` ends the statement. Text with an unexpected header
+ * rest are kept. The text may end with a comment, so an unterminated
+ * statement gets the `;` on a line of its own. Text with an unexpected header
  * is only given the `;`.
  */
 export function qualifyViewText(viewText: string, schemaName: string, viewName: string): string {
-    const terminated = /;\s*$/.test(viewText) ? viewText : `${viewText};`;
+    const terminated = /;\s*$/.test(stripCommentsPreservingStrings(viewText)) ? viewText : `${viewText}\n;`;
     const header = VIEW_HEADER.exec(terminated);
     if (!header) {
         return terminated;

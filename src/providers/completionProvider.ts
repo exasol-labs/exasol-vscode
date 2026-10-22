@@ -42,6 +42,15 @@ export type PrefixResolution =
     | { kind: 'none' }
     | { kind: 'empty' };
 
+/**
+ * Whether a name from the database matches a name written in SQL. Parsed
+ * names come without their quotes: an unquoted name is stored uppercase, a
+ * quoted one as written, so either form matches.
+ */
+function nameMatches(dbName: string, written: string): boolean {
+    return dbName === written.toUpperCase() || dbName === written;
+}
+
 export function resolvePrefixCompletions(
     objects: DatabaseObject[],
     aliases: Map<string, AliasTarget>,
@@ -51,10 +60,8 @@ export function resolvePrefixCompletions(
 
     if (aliases.has(prefixUpper)) {
         const target = aliases.get(prefixUpper)!;
-        const tableUpper = target.table.toUpperCase();
-        const schemaUpper = target.schema?.toUpperCase();
         const obj = objects.find(o =>
-            o.name === tableUpper && (!schemaUpper || o.schema === schemaUpper)
+            nameMatches(o.name, target.table) && (!target.schema || nameMatches(o.schema, target.schema))
         );
         if (obj) {
             return { kind: 'columns', schema: obj.schema, table: obj.name };
@@ -472,10 +479,8 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         const out: string[] = [];
         const seen = new Set<string>();
         for (const ref of ctx.fromTables) {
-            const tableUp = ref.table.toUpperCase();
-            const schemaUp = ref.schema?.toUpperCase();
             const obj = objects.find(o =>
-                o.name === tableUp && (!schemaUp || o.schema === schemaUp)
+                nameMatches(o.name, ref.table) && (!ref.schema || nameMatches(o.schema, ref.schema))
             );
             if (!obj) { continue; }
             const cols = await this.getColumnsForTable(connectionId, obj.schema, obj.name);
@@ -784,8 +789,9 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     /**
-     * Lazily fetch and cache the columns of a single table. Returns undefined
-     * (without caching) when the underlying query fails, so the next lookup retries.
+     * Lazily fetch and cache the columns of a single table, with schema and
+     * table names as stored in the database. Returns undefined (without
+     * caching) when the underlying query fails, so the next lookup retries.
      */
     private async getColumnsForTable(
         connectionId: string,
@@ -793,7 +799,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         table: string
     ): Promise<string[] | undefined> {
         if (!schema || !table) { return undefined; }
-        const cacheKey = `${connectionId}|${schema.toUpperCase()}.${table.toUpperCase()}`;
+        const cacheKey = `${connectionId}|${JSON.stringify([schema, table])}`;
         const cached = this.columnsCache.get(cacheKey);
         const expiry = this.columnsExpiry.get(cacheKey);
         if (cached && expiry && Date.now() < expiry) {
@@ -804,12 +810,11 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connectionId, 'background');
-                // Identifiers are stored uppercase; escape as string literals.
-                const upperSchema = schema.toUpperCase();
+                // Names as stored in the database; escape as string literals.
                 const sql =
-                    `SELECT COLUMN_NAME FROM ${columnsViewFor(upperSchema)} ` +
-                    `WHERE COLUMN_SCHEMA = '${escapeSqlString(upperSchema)}' ` +
-                    `AND COLUMN_TABLE = '${escapeSqlString(table.toUpperCase())}' ` +
+                    `SELECT COLUMN_NAME FROM ${columnsViewFor(schema)} ` +
+                    `WHERE COLUMN_SCHEMA = '${escapeSqlString(schema)}' ` +
+                    `AND COLUMN_TABLE = '${escapeSqlString(table)}' ` +
                     `ORDER BY COLUMN_ORDINAL_POSITION`;
                 const result = await rawQuery(driver, sql);
                 const rows = getRowsFromResult(result);

@@ -84,7 +84,7 @@ suite('Object tree labels', () => {
         const root = await provider.getChildren();
 
         assert.deepStrictEqual(root.map(labelOf), [
-            'No schemas visible for this user', 'Virtual Schemas', 'Connections', 'System Schemas'
+            'No schemas', 'Virtual Schemas', 'Connections', 'System Schemas'
         ]);
         assert.strictEqual(root[0].contextValue, 'info');
     });

@@ -28,10 +28,12 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - The Indices folder of a table was always empty. It now lists each index with its description from `EXA_ALL_INDICES`, for example `LOCAL INDEX (NAME)`
 - Expanding a system table in the Objects view listed no columns for users without read access to the table. The columns now come from `EXA_SYS_COLUMNS`, as in Describe Table
 - SQL completion now suggests the columns of `SYS` and `EXA_STATISTICS` tables
-- Describe Table and Generate SELECT Statement on an object without visible columns opened an empty panel or an invalid `SELECT`. They now show the message `No columns visible for "SCHEMA"."NAME"`
-- Show View DDL repeated the `CREATE VIEW` header. It now opens the stored statement as `CREATE OR REPLACE VIEW` with the name qualified by its schema
+- SQL completion now suggests the columns of tables with quoted lowercase names, such as `"lower v"`. Before, it looked up the uppercase name and found no columns
+- Describe Table, Generate SELECT Statement and Show Table DDL on an object without visible columns opened an empty panel, an invalid `SELECT` or the error `Table definition not found`. They now show the message `No columns visible for "SCHEMA"."NAME"`
+- Show View DDL repeated the `CREATE VIEW` header. It now opens the stored statement as `CREATE OR REPLACE VIEW` with the name qualified by its schema. When the stored statement has no final `;`, it is added on a new line, so a comment at the end does not hide it. When no view is found, it shows `No view visible for "SCHEMA"."NAME"`
+- Show Table DDL and Show View DDL now show the text of a database error, instead of `[object Object]`
 - A schema without visible tables or views was labeled `empty`. The label is gone, because the counts include only the objects the user can see
-- The Objects view shows `No schemas visible for this user` when the user sees no schema
+- The Objects view shows `No schemas` when the list of schemas is empty
 - The first query for the views of a schema read `TABLE_NAME`, a column that `EXA_ALL_VIEWS` does not have, so it always failed and the views came from `EXA_ALL_OBJECTS`. It now reads `VIEW_NAME`
 - Object search now writes the database error to the Exasol output channel when a part of the search fails
 
