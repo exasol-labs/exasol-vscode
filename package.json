@@ -144,6 +144,14 @@
         "title": "Explain Pushdown"
       },
       {
+        "command": "exasol.openScriptSource",
+        "title": "Open Source"
+      },
+      {
+        "command": "exasol.openFunctionSource",
+        "title": "Open Source"
+      },
+      {
         "command": "exasol.setSchema",
         "title": "Set as Active Schema"
       },
@@ -440,6 +448,14 @@
         },
         {
           "command": "exasol.explainPushdown",
+          "when": "false"
+        },
+        {
+          "command": "exasol.openScriptSource",
+          "when": "false"
+        },
+        {
+          "command": "exasol.openFunctionSource",
           "when": "false"
         },
         {

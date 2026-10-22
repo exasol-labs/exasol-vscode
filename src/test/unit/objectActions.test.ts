@@ -82,7 +82,7 @@ registerExtensionMock();
 // original textual position, and the module under test must see the mock above
 // rather than the real 'vscode' module (which does not exist outside the
 // extension host).
-const { ObjectActions, refreshVirtualSchemaAndReload } = require('../../objectActions') as typeof import('../../objectActions');
+const { ObjectActions, refreshVirtualSchemaAndReload, qualifyScriptText, qualifyFunctionText } = require('../../objectActions') as typeof import('../../objectActions');
 const { ResultsPanel } = require('../../panels/resultsPanel') as typeof import('../../panels/resultsPanel');
 
 import { createRawResult, createEmptyRawResult, createRawErrorResult, MockConnectionManager, TEST_CONNECTION, asConnectionManager, type MockDriver } from '../helpers/mockConnectionManager';
@@ -615,5 +615,155 @@ suite('escapeSqlIdentifier', () => {
 
     test('handles empty string', () => {
         assert.strictEqual(escapeSqlIdentifier(''), '');
+    });
+});
+
+suite('qualifyScriptText', () => {
+    // SCRIPT_TEXT values as the database stores them (docker, 2026-10-22).
+    const shapes: Array<[string, string, string]> = [
+        ['PYVER', 'CREATE PYTHON3 SCALAR SCRIPT "PYVER" () RETURNS VARCHAR(200) UTF8 AS\nimport sys\ndef run(ctx):\n    return sys.version\n',
+            'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "VS_SRC"."PYVER" () RETURNS VARCHAR(200) UTF8 AS\nimport sys\ndef run(ctx):\n    return sys.version\n'],
+        ['PYSET', 'CREATE PYTHON3 SET SCRIPT "PYSET" ("a" DECIMAL(18,0), "b" VARCHAR(10) UTF8) EMITS ("X" DECIMAL(18,0), "Y" VARCHAR(10) UTF8) AS\ndef run(ctx):\n    pass\n',
+            'CREATE OR REPLACE PYTHON3 SET SCRIPT "VS_SRC"."PYSET" ("a" DECIMAL(18,0), "b" VARCHAR(10) UTF8) EMITS ("X" DECIMAL(18,0), "Y" VARCHAR(10) UTF8) AS\ndef run(ctx):\n    pass\n'],
+        ['PYDYN', 'CREATE PYTHON3 SCALAR SCRIPT "PYDYN" (...) RETURNS VARCHAR(100) UTF8 AS\ndef run(ctx):\n    return \'x\'\n',
+            'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "VS_SRC"."PYDYN" (...) RETURNS VARCHAR(100) UTF8 AS\ndef run(ctx):\n    return \'x\'\n'],
+        ['PYEMITDYN', 'CREATE PYTHON3 SCALAR SCRIPT "PYEMITDYN" ("v" VARCHAR(10) UTF8) EMITS (...) AS\ndef run(ctx):\n    ctx.emit(\'x\')\n',
+            'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "VS_SRC"."PYEMITDYN" ("v" VARCHAR(10) UTF8) EMITS (...) AS\ndef run(ctx):\n    ctx.emit(\'x\')\n'],
+        ['ADAPTER', 'CREATE LUA  ADAPTER SCRIPT "ADAPTER" AS\nfunction adapter_call(request)\nend\n',
+            'CREATE OR REPLACE LUA  ADAPTER SCRIPT "VS_SRC"."ADAPTER" AS\nfunction adapter_call(request)\nend\n'],
+        ['LUASCR', 'CREATE LUA SCRIPT "LUASCR" (a,b) RETURNS TABLE AS\nlocal x = 1;\n  exit({{a}}, "v int")',
+            'CREATE OR REPLACE LUA SCRIPT "VS_SRC"."LUASCR" (a,b) RETURNS TABLE AS\nlocal x = 1;\n  exit({{a}}, "v int")'],
+    ];
+
+    for (const [name, text, expected] of shapes) {
+        test(`qualifies the ${name} header and keeps the body`, () => {
+            const result = qualifyScriptText(text, 'VS_SRC', name);
+            assert.strictEqual(result, expected);
+            assert.ok(result.endsWith(text.slice(text.indexOf(' AS\n'))), 'body must be unchanged');
+        });
+    }
+
+    test('escapes double quotes in schema and script names', () => {
+        const text = 'CREATE PYTHON3 SCALAR SCRIPT "my ""odd"" udf" ("lo" VARCHAR(10) UTF8) RETURNS VARCHAR(30) UTF8 AS\nSCRIPT "x"\n';
+        assert.strictEqual(
+            qualifyScriptText(text, 's"x', 'my "odd" udf'),
+            'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "s""x"."my ""odd"" udf" ("lo" VARCHAR(10) UTF8) RETURNS VARCHAR(30) UTF8 AS\nSCRIPT "x"\n'
+        );
+    });
+
+    test('returns text with an unexpected header unchanged', () => {
+        assert.strictEqual(qualifyScriptText('something else', 'S', 'N'), 'something else');
+    });
+});
+
+suite('qualifyFunctionText', () => {
+    test('replaces an unquoted qualified name', () => {
+        assert.strictEqual(
+            qualifyFunctionText('FUNCTION VS_SRC.F1(p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END;', 'VS_SRC', 'F1'),
+            'CREATE OR REPLACE FUNCTION "VS_SRC"."F1"(p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END;'
+        );
+    });
+
+    test('adds the schema to a name written without it', () => {
+        assert.strictEqual(
+            qualifyFunctionText('function "fn lower" (p decimal) return decimal is\nbegin\n  return p;\nend "fn lower";', 'VS_SRC', 'fn lower'),
+            'CREATE OR REPLACE function "VS_SRC"."fn lower" (p decimal) return decimal is\nbegin\n  return p;\nend "fn lower";'
+        );
+    });
+
+    test('replaces a quoted qualified name and escapes double quotes', () => {
+        assert.strictEqual(
+            qualifyFunctionText('FUNCTION "a""b"."f" (p decimal) return decimal is begin return p; end;', 'a"b', 'f'),
+            'CREATE OR REPLACE FUNCTION "a""b"."f" (p decimal) return decimal is begin return p; end;'
+        );
+    });
+
+    test('only prefixes text with an unexpected header', () => {
+        assert.strictEqual(qualifyFunctionText('something else', 'S', 'N'), 'CREATE OR REPLACE something else');
+    });
+});
+
+suite('ObjectActions script and function source', () => {
+    let savedWindow: ObjectActionsVscodeMock['window'];
+    let savedWorkspace: ObjectActionsVscodeMock['workspace'];
+    let opened: string[];
+    let warnings: string[];
+    let errors: string[];
+
+    setup(() => {
+        savedWindow = extendedVscodeMock.window;
+        savedWorkspace = extendedVscodeMock.workspace;
+        opened = [];
+        warnings = [];
+        errors = [];
+        extendedVscodeMock.window = {
+            ...buildWindowMock(),
+            showWarningMessage: (msg: string) => { warnings.push(msg); return Promise.resolve(undefined); },
+            showErrorMessage: (msg: string) => { errors.push(msg); return Promise.resolve(undefined); },
+        };
+        extendedVscodeMock.workspace = {
+            ...buildWorkspaceMock(),
+            openTextDocument: (opts: unknown) => {
+                opened.push((opts as { content: string }).content);
+                return Promise.resolve({ languageId: 'exasol-sql' });
+            },
+        };
+    });
+
+    teardown(() => {
+        extendedVscodeMock.window = savedWindow;
+        extendedVscodeMock.workspace = savedWorkspace;
+    });
+
+    function makeObjectActions(respond: (sql: string) => ReturnType<MockDriver['query']>): {
+        oa: InstanceType<typeof ObjectActions>;
+        capturedSql: string[];
+    } {
+        const capturedSql: string[] = [];
+        const mockCM = new MockConnectionManager({ query: (sql: string) => { capturedSql.push(sql); return respond(sql); } });
+        // ObjectActions never reads queryExecutor or extensionUri; same rationale as above.
+        const mockQE = {} as unknown as QueryExecutor;
+        const mockUri = { fsPath: '/mock' } as unknown as vscode.Uri;
+        return { oa: new ObjectActions(asConnectionManager(mockCM), mockQE, mockUri), capturedSql };
+    }
+
+    test('openScriptSource reads SCRIPT_TEXT with escaped names and opens the qualified text', async () => {
+        const { oa, capturedSql } = makeObjectActions(async () =>
+            createRawResult(['SCRIPT_TEXT'], [['CREATE PYTHON3 SCALAR SCRIPT "O\'B" () RETURNS INT AS\nx']]));
+
+        await oa.openScriptSource(TEST_CONNECTION, "S'X", "O'B");
+
+        assert.ok(capturedSql[0].includes("SCRIPT_SCHEMA = 'S''X'"));
+        assert.ok(capturedSql[0].includes("SCRIPT_NAME = 'O''B'"));
+        assert.deepStrictEqual(opened, ['CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "S\'X"."O\'B" () RETURNS INT AS\nx']);
+    });
+
+    test('openScriptSource warns when the script is gone', async () => {
+        const { oa } = makeObjectActions(async () => createEmptyRawResult(['SCRIPT_TEXT']));
+
+        await oa.openScriptSource(TEST_CONNECTION, 'S', 'N');
+
+        assert.deepStrictEqual(opened, []);
+        assert.deepStrictEqual(warnings, ['Script definition not found for S.N']);
+    });
+
+    test('openFunctionSource reads FUNCTION_TEXT and opens the qualified text', async () => {
+        const { oa, capturedSql } = makeObjectActions(async () =>
+            createRawResult(['FUNCTION_TEXT'], [['FUNCTION F1(p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END;']]));
+
+        await oa.openFunctionSource(TEST_CONNECTION, 'S', 'F1');
+
+        assert.ok(capturedSql[0].includes('FROM SYS.EXA_ALL_FUNCTIONS'));
+        assert.deepStrictEqual(opened, ['CREATE OR REPLACE FUNCTION "S"."F1"(p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END;']);
+    });
+
+    test('openFunctionSource shows the database error text', async () => {
+        const { oa } = makeObjectActions(async () => createRawErrorResult('42000', 'insufficient privileges'));
+
+        await oa.openFunctionSource(TEST_CONNECTION, 'S', 'F1');
+
+        assert.strictEqual(errors.length, 1);
+        assert.ok(errors[0].startsWith('Failed to get function source: '));
+        assert.ok(errors[0].includes('insufficient privileges'));
     });
 });

@@ -24,7 +24,7 @@ import { TabResultCollector } from './execution/tabResultCollector';
  * ObjectTreeItem and ConnectionTreeItem satisfy it structurally, and some
  * commands are also invoked programmatically with a bare `{ connection }`.
  */
-type TreeCommandItem = Partial<Pick<ObjectTreeItem, 'type' | 'connection' | 'schemaName' | 'tableInfo' | 'columnInfo'>> & {
+type TreeCommandItem = Partial<Pick<ObjectTreeItem, 'type' | 'connection' | 'schemaName' | 'tableInfo' | 'columnInfo' | 'scriptInfo' | 'functionInfo'>> & {
     id?: string;
 };
 
@@ -187,6 +187,10 @@ export function activate(context: vscode.ExtensionContext) {
             )),
         itemCommand('exasol.explainPushdown', ['connection', 'schemaName', 'tableInfo'], (i) =>
             objectActions.explainPushdown(i.connection, i.schemaName, i.tableInfo.name)),
+        itemCommand('exasol.openScriptSource', ['connection', 'schemaName', 'scriptInfo'], (i) =>
+            objectActions.openScriptSource(i.connection, i.schemaName, i.scriptInfo.name)),
+        itemCommand('exasol.openFunctionSource', ['connection', 'schemaName', 'functionInfo'], (i) =>
+            objectActions.openFunctionSource(i.connection, i.schemaName, i.functionInfo.name)),
         itemCommand('exasol.setSchema', ['schemaName'], (i) =>
             sessionManager.setSchema(i.schemaName)),
         itemCommand('exasol.editConnection', ['connection'], (i) =>

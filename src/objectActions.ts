@@ -112,12 +112,7 @@ export class ObjectActions {
             ddl += columns.join(',\n');
             ddl += '\n);';
 
-            // Show in new editor
-            const doc = await vscode.workspace.openTextDocument({
-                content: ddl,
-                language: 'exasol-sql'
-            });
-            await vscode.window.showTextDocument(doc);
+            await openSqlDocument(ddl);
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to get table DDL: ${error}`);
         }
@@ -141,12 +136,7 @@ export class ObjectActions {
                 const viewText = rows[0].VIEW_TEXT;
                 const ddl = `CREATE VIEW "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(viewName)}" AS\n${viewText}`;
 
-                // Show in new editor
-                const doc = await vscode.workspace.openTextDocument({
-                    content: ddl,
-                    language: 'exasol-sql'
-                });
-                await vscode.window.showTextDocument(doc);
+                await openSqlDocument(ddl);
             } else {
                 vscode.window.showWarningMessage(`View definition not found for ${schemaName}.${viewName}`);
             }
@@ -190,6 +180,54 @@ export class ObjectActions {
             }
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to generate SELECT statement: ${error}`);
+        }
+    }
+
+    async openScriptSource(connection: StoredConnection, schemaName: string, scriptName: string) {
+        try {
+            const rows = await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connection.id);
+                const query = `
+                    SELECT SCRIPT_TEXT
+                    FROM SYS.EXA_ALL_SCRIPTS
+                    WHERE SCRIPT_SCHEMA = '${escapeSqlString(schemaName)}'
+                    AND SCRIPT_NAME = '${escapeSqlString(scriptName)}'
+                `;
+                const result = await rawQuery(driver, query);
+                return getRowsFromResult<{ SCRIPT_TEXT: string }>(result);
+            }, connection.id);
+
+            if (rows.length > 0) {
+                await openSqlDocument(qualifyScriptText(rows[0].SCRIPT_TEXT, schemaName, scriptName));
+            } else {
+                vscode.window.showWarningMessage(`Script definition not found for ${schemaName}.${scriptName}`);
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to get script source: ${error}`);
+        }
+    }
+
+    async openFunctionSource(connection: StoredConnection, schemaName: string, functionName: string) {
+        try {
+            const rows = await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connection.id);
+                const query = `
+                    SELECT FUNCTION_TEXT
+                    FROM SYS.EXA_ALL_FUNCTIONS
+                    WHERE FUNCTION_SCHEMA = '${escapeSqlString(schemaName)}'
+                    AND FUNCTION_NAME = '${escapeSqlString(functionName)}'
+                `;
+                const result = await rawQuery(driver, query);
+                return getRowsFromResult<{ FUNCTION_TEXT: string }>(result);
+            }, connection.id);
+
+            if (rows.length > 0) {
+                await openSqlDocument(qualifyFunctionText(rows[0].FUNCTION_TEXT, schemaName, functionName));
+            } else {
+                vscode.window.showWarningMessage(`Function definition not found for ${schemaName}.${functionName}`);
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to get function source: ${error}`);
         }
     }
 
@@ -301,6 +339,45 @@ export class ObjectActions {
             vscode.window.showErrorMessage(`Failed to explain pushdown: ${error}`);
         }
     }
+}
+
+async function openSqlDocument(content: string): Promise<void> {
+    const doc = await vscode.workspace.openTextDocument({ content, language: 'exasol-sql' });
+    await vscode.window.showTextDocument(doc);
+}
+
+/** A quoted identifier, with "" standing for one double quote inside it. */
+const QUOTED_IDENTIFIER = '"(?:[^"]|"")*"';
+
+/**
+ * Turns SCRIPT_TEXT into a statement that recreates the script in its own
+ * schema. The database stores the header as `CREATE <...> SCRIPT "NAME"`,
+ * without schema and without OR REPLACE, so running it unchanged would create
+ * the script in the current schema. Only the header changes; the body is kept
+ * byte for byte. Text with an unexpected header is returned unchanged.
+ */
+export function qualifyScriptText(scriptText: string, schemaName: string, scriptName: string): string {
+    const header = new RegExp(`^CREATE\\s+([^"]*?\\bSCRIPT\\s+)${QUOTED_IDENTIFIER}`, 'i').exec(scriptText);
+    if (!header) {
+        return scriptText;
+    }
+    const name = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(scriptName)}"`;
+    return `CREATE OR REPLACE ${header[1]}${name}${scriptText.slice(header[0].length)}`;
+}
+
+/**
+ * Turns FUNCTION_TEXT into a statement that recreates the function in its own
+ * schema. The database stores the text as written after `CREATE [OR REPLACE]`,
+ * so the name may lack the schema; it is replaced by the quoted qualified name.
+ */
+export function qualifyFunctionText(functionText: string, schemaName: string, functionName: string): string {
+    const part = `(?:${QUOTED_IDENTIFIER}|[^\\s."(]+)`;
+    const header = new RegExp(`^(FUNCTION\\s+)${part}(?:\\.${part})?`, 'i').exec(functionText);
+    if (!header) {
+        return `CREATE OR REPLACE ${functionText}`;
+    }
+    const name = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(functionName)}"`;
+    return `CREATE OR REPLACE ${header[1]}${name}${functionText.slice(header[0].length)}`;
 }
 
 /** What refreshVirtualSchemaAndReload needs from the extension's providers. */
