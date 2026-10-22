@@ -304,7 +304,7 @@ export class ObjectActions {
 }
 
 /** What refreshVirtualSchemaAndReload needs from the extension's providers. */
-export interface VirtualSchemaRefreshTargets {
+interface VirtualSchemaRefreshTargets {
     objectActions: Pick<ObjectActions, 'refreshVirtualSchema'>;
     completionProvider: { clearCache(connectionId: string): void };
     objectTreeProvider: { refresh(): void };
