@@ -200,7 +200,8 @@ export function activate(context: vscode.ExtensionContext) {
         itemCommand('exasol.generateExport', ['dbConnectionInfo'], (i) =>
             objectActions.generateTransfer('EXPORT', i.dbConnectionInfo.name)),
         itemCommand('exasol.setSchema', ['schemaName'], (i) =>
-            sessionManager.setSchema(i.schemaName)),
+            sessionManager.setSchema(i.schemaName).catch(error =>
+                vscode.window.showErrorMessage(formatError(error)))),
         itemCommand('exasol.editConnection', ['connection'], (i) =>
             editConnection(connectionManager, connectionTreeProvider, objectTreeProvider, context, i.connection)),
         itemCommand('exasol.deleteConnection', ['connection'], (i) =>

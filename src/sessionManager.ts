@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, BACKGROUND_QUERY_TIMEOUT_MS } from './connectionManager';
-import { executeWithoutResult, getRowsFromResult, rawQuery } from './utils';
+import { escapeSqlIdentifier, executeWithoutResult, getRowsFromResult, rawQuery } from './utils';
 import { getOutputChannel } from './extension';
+import { formatError } from './connectionTypes';
 
 export class SessionManager {
     private currentSchema: string | undefined;
@@ -38,17 +39,18 @@ export class SessionManager {
             throw new Error('No active connection');
         }
 
+        const openSchema = `OPEN SCHEMA "${escapeSqlIdentifier(schemaName)}"`;
         try {
             // Open schema on both connections so user queries and background operations
             // (tree, completions) both see the correct schema context
             await Promise.all([
                 this.connectionManager.executeWithRetry(async () => {
                     const driver = await this.connectionManager.getDriver();
-                    await executeWithoutResult(driver, `OPEN SCHEMA ${schemaName}`);
+                    await executeWithoutResult(driver, openSchema);
                 }, undefined, { retryOnConnectionError: false }),
                 this.connectionManager.executeWithRetry(async () => {
                     const driver = await this.connectionManager.getDriver(undefined, 'background');
-                    await executeWithoutResult(driver, `OPEN SCHEMA ${schemaName}`);
+                    await executeWithoutResult(driver, openSchema);
                 }, undefined, {
                     timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS,
                     role: 'background',
@@ -60,7 +62,7 @@ export class SessionManager {
             this._onDidChangeSession.fire();
             vscode.window.showInformationMessage(`Schema set to: ${schemaName}`);
         } catch (error) {
-            throw new Error(`Failed to set schema: ${error}`);
+            throw new Error(`Failed to set schema: ${formatError(error)}`);
         }
     }
 

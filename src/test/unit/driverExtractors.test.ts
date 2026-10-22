@@ -1,6 +1,7 @@
 import * as assert from 'assert';
-import type { SQLQueriesResponse, SQLResponse } from '@exasol/exasol-driver-ts';
-import { getColumnsFromResult, getRowsFromResult, SqlError } from '../../utils';
+import type { ExasolDriver, SQLQueriesResponse, SQLResponse } from '@exasol/exasol-driver-ts';
+import { executeWithoutResult, getColumnsFromResult, getRowsFromResult, SqlError } from '../../utils';
+import { createRawErrorResult, createEmptyRawResult } from '../helpers/mockConnectionManager';
 import type { RawSqlResponse } from '../../utils';
 
 suite('getRowsFromResult', () => {
@@ -264,5 +265,26 @@ suite('getColumnsFromResult', () => {
 
         const columns = getColumnsFromResult(mockResult);
         assert.strictEqual(columns.length, 0);
+    });
+});
+
+suite('executeWithoutResult', () => {
+    function driverReturning(response: SQLResponse<SQLQueriesResponse>): ExasolDriver {
+        // Raw mode hands an SQL error back as status 'error', without a throw.
+        return { query: async () => response } as unknown as ExasolDriver;
+    }
+
+    test('throws the database error of a failed statement', async () => {
+        await assert.rejects(
+            executeWithoutResult(driverReturning(createRawErrorResult('42000', 'schema NO_SUCH not found')), 'OPEN SCHEMA "NO_SUCH"'),
+            (error: unknown) => error instanceof SqlError
+                && error.sqlCode === '42000'
+                && error.message === 'SQL Error [42000]: schema NO_SUCH not found'
+        );
+    });
+
+    test('returns the response of a successful statement', async () => {
+        const ok = createEmptyRawResult([]);
+        assert.strictEqual(await executeWithoutResult(driverReturning(ok), 'OPEN SCHEMA "S"'), ok);
     });
 });
