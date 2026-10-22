@@ -2,13 +2,8 @@ import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { QueryExecutor, captureBaselineStatementIdentity } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
-import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier, SqlError, stripFinalSlashLine } from './utils';
+import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier, columnsViewFor, SqlError, stripFinalSlashLine } from './utils';
 import { isExecutionPlanEnabled } from './settings';
-
-/** Columns of SYS and EXA_STATISTICS tables are listed in EXA_SYS_COLUMNS, not in EXA_ALL_COLUMNS. */
-function columnsViewFor(schemaName: string): string {
-    return schemaName === 'SYS' || schemaName === 'EXA_STATISTICS' ? 'SYS.EXA_SYS_COLUMNS' : 'SYS.EXA_ALL_COLUMNS';
-}
 
 export class ObjectActions {
     constructor(
@@ -131,14 +126,11 @@ export class ObjectActions {
                     AND VIEW_NAME = '${escapeSqlString(viewName)}'
                 `;
                 const result = await rawQuery(driver, query);
-                return getRowsFromResult(result);
+                return getRowsFromResult<{ VIEW_TEXT: string }>(result);
             }, connection.id);
 
             if (rows.length > 0) {
-                const viewText = rows[0].VIEW_TEXT;
-                const ddl = `CREATE VIEW "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(viewName)}" AS\n${viewText}`;
-
-                await openSqlDocument(ddl);
+                await openSqlDocument(qualifyViewText(rows[0].VIEW_TEXT, schemaName, viewName));
             } else {
                 vscode.window.showWarningMessage(`View definition not found for ${schemaName}.${viewName}`);
             }
@@ -161,6 +153,11 @@ export class ObjectActions {
                 const result = await rawQuery(driver, query);
                 return getRowsFromResult<{ COLUMN_NAME: string }>(result);
             }, connection.id);
+
+            if (rows.length === 0) {
+                showNoVisibleColumns(schemaName, tableName);
+                return;
+            }
 
             const columns = rows.map(row => `    "${escapeSqlIdentifier(row.COLUMN_NAME)}"`).join(',\n');
 
@@ -270,6 +267,11 @@ export class ObjectActions {
                     executionTime
                 };
             }, connection.id);
+
+            if (queryResult.rowCount === 0) {
+                showNoVisibleColumns(schemaName, tableName);
+                return;
+            }
 
             ResultsPanel.show(queryResult, query);
             vscode.window.showInformationMessage(`Table structure: ${schemaName}.${tableName}`);
@@ -466,6 +468,12 @@ export function buildTransferTemplate(direction: TransferDirection, connectionNa
     ].join('\n');
 }
 
+function showNoVisibleColumns(schemaName: string, tableName: string): void {
+    vscode.window.showWarningMessage(
+        `No columns visible for "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(tableName)}"`
+    );
+}
+
 async function openSqlDocument(content: string): Promise<void> {
     const doc = await vscode.workspace.openTextDocument({ content, language: 'exasol-sql' });
     await vscode.window.showTextDocument(doc);
@@ -473,6 +481,9 @@ async function openSqlDocument(content: string): Promise<void> {
 
 /** A quoted identifier, with "" standing for one double quote inside it. */
 const QUOTED_IDENTIFIER = '"(?:[^"]|"")*"';
+
+/** One part of an object name: quoted, or unquoted up to a space, dot, quote or parenthesis. */
+const NAME_PART = `(?:${QUOTED_IDENTIFIER}|[^\\s."(]+)`;
 
 /** `CREATE <language> [SCALAR|SET|ADAPTER] SCRIPT "NAME"`, as stored in SCRIPT_TEXT. */
 const SCRIPT_HEADER = new RegExp(`^CREATE\\s+([^"]*?\\bSCRIPT\\s+)${QUOTED_IDENTIFIER}`, 'i');
@@ -505,13 +516,36 @@ export function qualifyScriptText(scriptText: string, schemaName: string, script
 export function qualifyFunctionText(functionText: string, schemaName: string, functionName: string): string {
     // A client that sent the `/` line along with the statement leaves it in FUNCTION_TEXT.
     const text = stripFinalSlashLine(functionText);
-    const part = `(?:${QUOTED_IDENTIFIER}|[^\\s."(]+)`;
-    const header = new RegExp(`^(FUNCTION\\s+)${part}(?:\\s*\\.\\s*${part})?`, 'i').exec(text);
+    const header = new RegExp(`^(FUNCTION\\s+)${NAME_PART}(?:\\s*\\.\\s*${NAME_PART})?`, 'i').exec(text);
     if (!header) {
         return `CREATE OR REPLACE ${text}\n/`;
     }
     const name = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(functionName)}"`;
     return `CREATE OR REPLACE ${header[1]}${name}${text.slice(header[0].length)}\n/`;
+}
+
+/** Leading comments, `CREATE [OR REPLACE] [FORCE] VIEW` and the name, which may lack the schema. */
+const VIEW_HEADER = new RegExp(
+    `^((?:\\s+|/\\*[\\s\\S]*?\\*/|--[^\\n]*\\n)*)CREATE\\s+(?:OR\\s+REPLACE\\s+)?((?:FORCE\\s+)?VIEW\\s+)${NAME_PART}(?:\\s*\\.\\s*${NAME_PART})?`,
+    'i'
+);
+
+/**
+ * Turns VIEW_TEXT into a statement that recreates the view in its own schema.
+ * The database stores the whole statement as written, so OR REPLACE may be
+ * missing and the name may lack the schema. The header becomes
+ * `CREATE OR REPLACE [FORCE] VIEW "SCHEMA"."NAME"`; leading comments and the
+ * rest are kept, and a `;` ends the statement. Text with an unexpected header
+ * is only given the `;`.
+ */
+export function qualifyViewText(viewText: string, schemaName: string, viewName: string): string {
+    const terminated = /;\s*$/.test(viewText) ? viewText : `${viewText};`;
+    const header = VIEW_HEADER.exec(terminated);
+    if (!header) {
+        return terminated;
+    }
+    const name = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(viewName)}"`;
+    return `${header[1]}CREATE OR REPLACE ${header[2]}${name}${terminated.slice(header[0].length)}`;
 }
 
 /**

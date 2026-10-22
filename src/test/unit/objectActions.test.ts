@@ -82,7 +82,7 @@ registerExtensionMock();
 // original textual position, and the module under test must see the mock above
 // rather than the real 'vscode' module (which does not exist outside the
 // extension host).
-const { ObjectActions, refreshVirtualSchemaAndReload, qualifyScriptText, qualifyFunctionText, buildScriptCall, buildConnectionDDL, buildTransferTemplate } = require('../../objectActions') as typeof import('../../objectActions');
+const { ObjectActions, refreshVirtualSchemaAndReload, qualifyScriptText, qualifyFunctionText, qualifyViewText, buildScriptCall, buildConnectionDDL, buildTransferTemplate } = require('../../objectActions') as typeof import('../../objectActions');
 const { ResultsPanel } = require('../../panels/resultsPanel') as typeof import('../../panels/resultsPanel');
 
 import { splitIntoStatements } from '../../utils';
@@ -1215,5 +1215,119 @@ suite('ObjectActions.generateTransfer', () => {
 
         assert.deepStrictEqual(opened, [buildTransferTemplate('IMPORT', 'C'), buildTransferTemplate('EXPORT', 'C')]);
         assert.deepStrictEqual(capturedSql, []);
+    });
+});
+
+suite('qualifyViewText', () => {
+    // VIEW_TEXT holds the whole statement as written (docker, 2026-10-22).
+    const cases: Array<[string, string, string]> = [
+        ['CREATE VIEW VS_SRC.PERM_V AS SELECT ID, NAME FROM VS_SRC.PERM_T WHERE ID > 1', 'PERM_V',
+            'CREATE OR REPLACE VIEW "VS_SRC"."PERM_V" AS SELECT ID, NAME FROM VS_SRC.PERM_T WHERE ID > 1;'],
+        ['CREATE OR REPLACE VIEW V_PLAIN AS SELECT 1 AS A', 'V_PLAIN',
+            'CREATE OR REPLACE VIEW "VS_SRC"."V_PLAIN" AS SELECT 1 AS A;'],
+        ['create or replace view v_lower as select 9 as g', 'V_LOWER',
+            'CREATE OR REPLACE view "VS_SRC"."V_LOWER" as select 9 as g;'],
+        ['CREATE OR REPLACE VIEW "VS_SRC"."v Quoted" AS SELECT 3 AS C', 'v Quoted',
+            'CREATE OR REPLACE VIEW "VS_SRC"."v Quoted" AS SELECT 3 AS C;'],
+        ['CREATE OR REPLACE VIEW "VS_SRC" . "V_SPACED" (X, Y) AS SELECT 4, 5', 'V_SPACED',
+            'CREATE OR REPLACE VIEW "VS_SRC"."V_SPACED" (X, Y) AS SELECT 4, 5;'],
+        ['CREATE OR REPLACE FORCE VIEW V_FORCE AS SELECT 6 AS D', 'V_FORCE',
+            'CREATE OR REPLACE FORCE VIEW "VS_SRC"."V_FORCE" AS SELECT 6 AS D;'],
+        ['CREATE OR REPLACE VIEW\n  V_NEWLINE\nAS\nSELECT 10 AS H', 'V_NEWLINE',
+            'CREATE OR REPLACE VIEW\n  "VS_SRC"."V_NEWLINE"\nAS\nSELECT 10 AS H;'],
+        ['/* lead */ CREATE OR REPLACE VIEW VS_SRC.V_LEADCMT AS SELECT 11 AS I', 'V_LEADCMT',
+            '/* lead */ CREATE OR REPLACE VIEW "VS_SRC"."V_LEADCMT" AS SELECT 11 AS I;'],
+        ['CREATE OR REPLACE VIEW VS_SRC.V_SEMI AS SELECT 12 AS J;', 'V_SEMI',
+            'CREATE OR REPLACE VIEW "VS_SRC"."V_SEMI" AS SELECT 12 AS J;'],
+    ];
+    for (const [stored, name, expected] of cases) {
+        test(`qualifies ${JSON.stringify(stored.slice(0, 40))}`, () => {
+            assert.strictEqual(qualifyViewText(stored, 'VS_SRC', name), expected);
+        });
+    }
+
+    test('escapes double quotes in schema and view names', () => {
+        assert.strictEqual(
+            qualifyViewText('CREATE VIEW "a""b"."v""w" AS SELECT 1 x', 'a"b', 'v"w'),
+            'CREATE OR REPLACE VIEW "a""b"."v""w" AS SELECT 1 x;'
+        );
+    });
+
+    test('the splitter reads the result as one statement', () => {
+        const ddl = qualifyViewText("CREATE VIEW S.V AS SELECT 'a;b' AS X", 'S', 'V');
+        assert.deepStrictEqual(splitIntoStatements(`${ddl}\nSELECT 1;`), [ddl, 'SELECT 1;']);
+    });
+
+    test('text with an unexpected header only gets the semicolon', () => {
+        assert.strictEqual(qualifyViewText('SELECT 1', 'S', 'V'), 'SELECT 1;');
+    });
+});
+
+suite('ObjectActions with no visible columns', () => {
+    let savedWindow: ObjectActionsVscodeMock['window'];
+    let savedWorkspace: ObjectActionsVscodeMock['workspace'];
+    let opened: string[];
+    let warnings: string[];
+    let shown: number;
+    let originalShow: typeof ResultsPanel.show;
+
+    setup(() => {
+        savedWindow = extendedVscodeMock.window;
+        savedWorkspace = extendedVscodeMock.workspace;
+        opened = [];
+        warnings = [];
+        shown = 0;
+        originalShow = ResultsPanel.show;
+        ResultsPanel.show = async () => { shown++; };
+        extendedVscodeMock.window = {
+            ...buildWindowMock(),
+            showWarningMessage: (msg: string) => { warnings.push(msg); return Promise.resolve(undefined); },
+        };
+        extendedVscodeMock.workspace = {
+            ...buildWorkspaceMock(),
+            openTextDocument: (opts: unknown) => {
+                opened.push((opts as { content: string }).content);
+                return Promise.resolve({ languageId: 'exasol-sql' });
+            },
+        };
+    });
+
+    teardown(() => {
+        ResultsPanel.show = originalShow;
+        extendedVscodeMock.window = savedWindow;
+        extendedVscodeMock.workspace = savedWorkspace;
+    });
+
+    function makeObjectActions(columns: string[]): InstanceType<typeof ObjectActions> {
+        const mockCM = new MockConnectionManager({ query: async () => createEmptyRawResult(columns) });
+        // ObjectActions never reads queryExecutor or extensionUri; same rationale as above.
+        return new ObjectActions(asConnectionManager(mockCM), {} as unknown as QueryExecutor, { fsPath: '/mock' } as unknown as vscode.Uri);
+    }
+
+    test('Describe Table warns and opens no panel', async () => {
+        const oa = makeObjectActions(['COLUMN_NAME', 'COLUMN_TYPE', 'COLUMN_IS_NULLABLE', 'COLUMN_DEFAULT', 'COLUMN_COMMENT']);
+
+        await oa.describeTable(TEST_CONNECTION, 'VS_PY', 'T');
+
+        assert.strictEqual(shown, 0);
+        assert.deepStrictEqual(warnings, ['No columns visible for "VS_PY"."T"']);
+    });
+
+    test('Generate SELECT warns and opens no document', async () => {
+        const oa = makeObjectActions(['COLUMN_NAME']);
+
+        await oa.generateSelectStatement(TEST_CONNECTION, 'VS_PY', 'T');
+
+        assert.deepStrictEqual(opened, []);
+        assert.deepStrictEqual(warnings, ['No columns visible for "VS_PY"."T"']);
+    });
+
+    test('Show View DDL opens VIEW_TEXT once, as CREATE OR REPLACE with the qualified name', async () => {
+        const mockCM = new MockConnectionManager({ query: async () => createRawResult(['VIEW_TEXT'], [['CREATE VIEW VS_SRC.PERM_V AS SELECT ID FROM VS_SRC.PERM_T']]) });
+        const oa = new ObjectActions(asConnectionManager(mockCM), {} as unknown as QueryExecutor, { fsPath: '/mock' } as unknown as vscode.Uri);
+
+        await oa.showViewDDL(TEST_CONNECTION, 'VS_SRC', 'PERM_V');
+
+        assert.deepStrictEqual(opened, ['CREATE OR REPLACE VIEW "VS_SRC"."PERM_V" AS SELECT ID FROM VS_SRC.PERM_T;']);
     });
 });
