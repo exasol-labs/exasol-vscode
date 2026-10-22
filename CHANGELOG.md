@@ -16,6 +16,7 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - Expanding a virtual table now lists its columns with their data types; before, the list was empty ([#81](https://github.com/exasol-labs/exasol-vscode/issues/81))
 - Virtual schemas and virtual tables are no longer listed twice in the Objects view
 - Clicking a script or a function in the Objects view did nothing, because the commands behind the click were never registered. It now opens the source as a `CREATE OR REPLACE` statement in a new editor, with the name qualified by its schema
+- Running a file or the statement at the cursor no longer splits `CREATE SCRIPT` and `CREATE FUNCTION` at the semicolons inside their body. A script runs until a line that holds only `/`, or to the end of the file. A function ends at a `/` line, or at the `;` after its final `END`. The `/` line is not sent to the database. Open Source ends the statement with a `/` line.
 - Object search and SQL completion no longer list virtual schemas and virtual tables as regular schemas and tables
 - The `EXA_ALL_OBJECTS` fallback for listing tables and views filtered on `OBJECT_SCHEMA`, a column that does not exist; it now uses `ROOT_NAME`
 
