@@ -16,8 +16,10 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - The `EXA_ALL_OBJECTS` fallback for listing tables and views filtered on `OBJECT_SCHEMA`, a column that does not exist; it now uses `ROOT_NAME`
 
 ### Security
-- Updated `brace-expansion`, `fast-uri`, `follow-redirects`, `markdown-it`, and `source-map-js` to patched versions
-- Updated the development tools `@vscode/vsce` to 4.0.0, `@vscode/test-cli` to 0.0.15, and `ovsx` to 1.3.0, which removes the vulnerable `braces` and `micromatch` packages
+- Updated `brace-expansion` to 2.1.7 and 5.0.12, and `source-map-js` to 1.2.2
+- Updated the development tools `@vscode/vsce` to 4.0.0 and `ovsx` to 1.3.0. After this update, the vulnerable packages `braces`, `fast-uri`, `follow-redirects`, `markdown-it`, and `micromatch` are no longer installed
+- Removed the development tool `@vscode/test-cli`, because the tests do not use it
+- None of these packages is part of the extension package. Most of them are used only by development tools. One copy of `brace-expansion` belongs to `@linaria`, which `@glideapps/glide-data-grid` uses. The bundled results grid contains only the `@linaria` styling code, not `brace-expansion`
 - `node-forge` 1.4.0, used by `@exasol/exasol-driver-ts`, has an advisory for RSA PKCS#1 v1.5 signature verification (GHSA-86w9-cpqp-85rv). No patched version exists. The extension is not affected: the driver uses `node-forge` only for RSA encryption of the login password, self-signed certificates for local file transfer, and SHA-256, and never verifies signatures
 
 ## [1.8.0] - 2026-09-15
