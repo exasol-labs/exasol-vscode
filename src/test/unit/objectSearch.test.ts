@@ -98,6 +98,9 @@ registerVscodeMock();
 registerExtensionMock();
 
 const { ObjectSearchProvider } = require('../../providers/objectSearchProvider') as typeof import('../../providers/objectSearchProvider');
+// The extension mock objectSearchProvider bound to at load time; a later
+// registerExtensionMock() in another file replaces the cached module.
+const extensionMock = require('../../extension') as { getOutputChannel: () => unknown };
 const { ObjectTreeProvider, ObjectTreeItem } = require('../../providers/objectTreeProvider') as typeof import('../../providers/objectTreeProvider');
 
 import { createRawResult, createEmptyRawResult, MockConnectionManager } from '../helpers/mockConnectionManager';
@@ -312,6 +315,38 @@ suite('ObjectSearchProvider', () => {
 
         const hideCall = windowCalls.find(c => c.method === 'quickPick.hide');
         assert.ok(hideCall, 'Should hide QuickPick on error');
+    });
+
+    test('a failed optional query logs the database error text', async () => {
+        const lines: string[] = [];
+        const originalChannel = extensionMock.getOutputChannel;
+        extensionMock.getOutputChannel = () => ({ appendLine: (line: string) => lines.push(line) });
+        const partialDriver: MockDriver = {
+            query: async (sql: string) => {
+                if (sql.includes('EXA_ALL_TABLES')) {
+                    return createEmptyRawResult(['TABLE_SCHEMA', 'TABLE_NAME', 'OBJECT_TYPE']);
+                }
+                throw new Error('insufficient privileges for ' + sql.match(/SYS\.(\w+)/)?.[1]);
+            }
+        };
+        const partialSearch = new ObjectSearchProvider(
+            new MockConnectionManager(partialDriver) as unknown as ConnectionManager,
+            objectTreeProvider,
+            mockTreeView as unknown as ObjectTreeView
+        );
+        try {
+            await partialSearch.showSearch();
+        } finally {
+            extensionMock.getOutputChannel = originalChannel;
+        }
+
+        assert.deepStrictEqual(lines, [
+            'Object search: Failed to fetch scripts: insufficient privileges for EXA_ALL_SCRIPTS',
+            'Object search: Failed to fetch functions: insufficient privileges for EXA_ALL_FUNCTIONS',
+            'Object search: Failed to fetch virtual tables: insufficient privileges for EXA_ALL_VIRTUAL_TABLES',
+            'Object search: Failed to fetch system tables: insufficient privileges for EXA_SYSCAT',
+            'Object search: Failed to fetch columns: insufficient privileges for EXA_ALL_COLUMNS'
+        ]);
     });
 
     test('onDidAccept calls treeView.reveal with the selected item', async () => {

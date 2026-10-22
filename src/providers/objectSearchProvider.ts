@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
+import { formatError } from '../connectionTypes';
 import { getRowsFromResult, rawQuery } from '../utils';
 import { ObjectTreeProvider, ObjectTreeItem, ObjectNode } from './objectTreeProvider';
 import { getNodeTypeConfig, ObjectTreeItemType } from './objectTreeTypes';
@@ -106,8 +107,8 @@ export class ObjectSearchProvider {
                         type: 'script'
                     });
                 }
-            } catch {
-                getOutputChannel()?.appendLine('Object search: Failed to fetch scripts');
+            } catch (error) {
+                getOutputChannel()?.appendLine(`Object search: Failed to fetch scripts: ${formatError(error)}`);
             }
 
             try {
@@ -124,8 +125,8 @@ export class ObjectSearchProvider {
                         type: 'function'
                     });
                 }
-            } catch {
-                getOutputChannel()?.appendLine('Object search: Failed to fetch functions');
+            } catch (error) {
+                getOutputChannel()?.appendLine(`Object search: Failed to fetch functions: ${formatError(error)}`);
             }
 
             try {
@@ -141,8 +142,8 @@ export class ObjectSearchProvider {
                         type: 'virtual-table'
                     });
                 }
-            } catch {
-                getOutputChannel()?.appendLine('Object search: Failed to fetch virtual tables');
+            } catch (error) {
+                getOutputChannel()?.appendLine(`Object search: Failed to fetch virtual tables: ${formatError(error)}`);
             }
 
             try {
@@ -159,8 +160,8 @@ export class ObjectSearchProvider {
                         type: 'system-table'
                     });
                 }
-            } catch {
-                getOutputChannel()?.appendLine('Object search: Failed to fetch system tables');
+            } catch (error) {
+                getOutputChannel()?.appendLine(`Object search: Failed to fetch system tables: ${formatError(error)}`);
             }
 
             const searchIncludesColumns = vscode.workspace
@@ -182,8 +183,8 @@ export class ObjectSearchProvider {
                             type: 'column'
                         });
                     }
-                } catch {
-                    getOutputChannel()?.appendLine('Object search: Failed to fetch columns');
+                } catch (error) {
+                    getOutputChannel()?.appendLine(`Object search: Failed to fetch columns: ${formatError(error)}`);
                 }
             }
 
