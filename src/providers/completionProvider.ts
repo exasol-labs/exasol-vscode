@@ -112,16 +112,16 @@ export function parseAliases(queryText: string): Map<string, AliasTarget> {
  * quoted identifier opened on the same line, so a line without `"` before
  * the cursor returns early, without scanning the document. Only the current
  * statement is scanned, so a quote in an earlier statement, such as an
- * apostrophe in a script body, does not count. The word pattern of the language excludes `"`
- * and spaces, so the default range of a completion would leave the opening
- * quote and earlier words in place.
+ * apostrophe in a script body, does not count. The word pattern of the
+ * language excludes `"` and spaces, so the default range of a completion
+ * would leave the opening quote and earlier words in place.
  */
 function openingQuoteRange(document: vscode.TextDocument, position: vscode.Position): vscode.Range | undefined {
     const line = document.lineAt(position).text;
     if (!line.slice(0, position.character).includes('"')) { return undefined; }
     const text = document.getText();
     const cursor = offsetAtLineCharacter(text, position.line, position.character);
-    const statementStart = (findStatementEnds(text).filter(end => end < cursor).pop() ?? -1) + 1;
+    const statementStart = (findStatementEnds(text.slice(0, cursor)).pop() ?? -1) + 1;
     const statement = text.slice(statementStart, cursor);
     const quoteInStatement = quotedIdentifierStart(statement);
     const quoteIdx = quoteInStatement === undefined ? undefined : statementStart + quoteInStatement;

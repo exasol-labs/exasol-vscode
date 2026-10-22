@@ -117,7 +117,8 @@ export function makePosition(line: number, character: number): vscode.Position {
  * lineAt(position) (the only overload completionProvider.ts calls), and
  * getWordRangeAtPosition(position) with the word pattern of the language. */
 export function makeDocument(text: string): vscode.TextDocument {
-    const lines = text.split('\n');
+    // Like VS Code, line text excludes the line break, `\r\n` or `\n`.
+    const lines = text.split(/\r?\n/);
     const doc = {
         getText: () => text,
         lineAt: (position: vscode.Position) => ({ text: lines[position.line] ?? '' }),
