@@ -194,7 +194,8 @@ export async function fetchTables(
                     sql: `
                         SELECT OBJECT_NAME AS TABLE_NAME
                         FROM SYS.EXA_ALL_OBJECTS
-                        WHERE OBJECT_SCHEMA = '${escapeSqlString(schemaName)}'
+                        WHERE ROOT_NAME = '${escapeSqlString(schemaName)}'
+                        AND ROOT_TYPE = 'SCHEMA'
                         AND OBJECT_TYPE = 'TABLE'
                         AND OBJECT_IS_VIRTUAL = FALSE
                         ORDER BY OBJECT_NAME
@@ -202,6 +203,8 @@ export async function fetchTables(
                     map: mapTableNames,
                     isRecoverable: error =>
                         isColumnMissingError(error, 'EXA_ALL_OBJECTS') ||
+                        isColumnMissingError(error, 'ROOT_NAME') ||
+                        isColumnMissingError(error, 'ROOT_TYPE') ||
                         isColumnMissingError(error, 'OBJECT_TYPE')
                 },
                 {
@@ -287,14 +290,16 @@ export async function fetchViews(
                         SELECT
                             OBJECT_NAME AS VIEW_NAME
                         FROM SYS.EXA_ALL_OBJECTS
-                        WHERE OBJECT_SCHEMA = '${escapeSqlString(schemaName)}'
+                        WHERE ROOT_NAME = '${escapeSqlString(schemaName)}'
+                        AND ROOT_TYPE = 'SCHEMA'
                         AND OBJECT_TYPE = 'VIEW'
                         ORDER BY OBJECT_NAME
                     `,
                     map: mapViewNames,
                     recoverable: error =>
                         isColumnMissingError(error, 'OBJECT_NAME') ||
-                        isColumnMissingError(error, 'OBJECT_SCHEMA') ||
+                        isColumnMissingError(error, 'ROOT_NAME') ||
+                        isColumnMissingError(error, 'ROOT_TYPE') ||
                         isColumnMissingError(error, 'OBJECT_TYPE') ||
                         isRawDataError(error)
                 },

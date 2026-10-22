@@ -45,5 +45,7 @@ suite('ObjectTreeProvider Metadata Fallback', () => {
         assert.ok(tableQueries.every(sql => sql.includes('TABLE_IS_VIRTUAL = FALSE')), 'EXA_ALL_TABLES queries must exclude virtual tables');
         const objectQuery = queries.find(sql => sql.includes('EXA_ALL_OBJECTS'));
         assert.ok(objectQuery?.includes('OBJECT_IS_VIRTUAL = FALSE'), 'EXA_ALL_OBJECTS fallback must exclude virtual tables');
+        assert.ok(objectQuery?.includes('ROOT_NAME ='), 'EXA_ALL_OBJECTS fallback must filter on ROOT_NAME');
+        assert.ok(!objectQuery?.includes('OBJECT_SCHEMA'), 'EXA_ALL_OBJECTS has no OBJECT_SCHEMA column');
     });
 });
