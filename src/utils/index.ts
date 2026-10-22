@@ -12,7 +12,8 @@ export {
     offsetAtLineCharacter,
     findStatementRanges,
     findStatementAtCursor,
-    splitIntoStatements
+    splitIntoStatements,
+    stripFinalSlashLine
 } from './sql';
 
 export {

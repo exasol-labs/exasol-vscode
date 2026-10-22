@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { splitIntoStatements, findStatementEnds, findStatementRanges, findStatementAtCursor, stripCommentsPreservingStrings, buildLineOffsets, offsetToLine } from '../../utils';
+import { splitIntoStatements, findStatementEnds, findStatementRanges, findStatementAtCursor, stripCommentsPreservingStrings, buildLineOffsets, offsetToLine, stripFinalSlashLine } from '../../utils';
 
 suite('splitIntoStatements: string literal awareness', () => {
     test('semicolon inside string literal is not a statement boundary', () => {
@@ -251,6 +251,13 @@ suite('splitIntoStatements: script and function definitions', () => {
         );
     });
 
+    test('a script after a statement on the same line is its own statement', () => {
+        assert.deepStrictEqual(
+            splitIntoStatements('SELECT 1; CREATE LUA SCRIPT x AS\nlocal a = 1;\n/\nSELECT 2;'),
+            ['SELECT 1;', 'CREATE LUA SCRIPT x AS\nlocal a = 1;', 'SELECT 2;']
+        );
+    });
+
     test('a / line between statements is not sent', () => {
         assert.deepStrictEqual(splitIntoStatements('SELECT 1;\n/\nSELECT 2;'), ['SELECT 1;', 'SELECT 2;']);
     });
@@ -278,6 +285,18 @@ suite('findStatementRanges and findStatementAtCursor: script definitions', () =>
         }
     });
 
+    test('cursor on the / line selects the script it closes, without the / line', () => {
+        const result = findStatementAtCursor(text, 4);
+        assert.ok(result);
+        assert.strictEqual(result.text, 'CREATE LUA SCRIPT x AS\nlocal a = 1;\nexit()');
+        assert.deepStrictEqual(result.range, { start: 1, end: 3 });
+    });
+
+    test('cursor on the / line after a function selects the function', () => {
+        const fnText = 'CREATE FUNCTION f (p DECIMAL) RETURN DECIMAL IS\nBEGIN\n  RETURN p;\nEND f';
+        assert.strictEqual(findStatementAtCursor(`${fnText}\n/\nSELECT 1;`, 4)?.text, fnText);
+    });
+
     test('cursor after the / line selects the next statement', () => {
         assert.strictEqual(findStatementAtCursor(text, 5)?.text, 'SELECT 1;');
     });
@@ -285,5 +304,22 @@ suite('findStatementRanges and findStatementAtCursor: script definitions', () =>
     test('cursor inside an unterminated script at the end of the text', () => {
         const result = findStatementAtCursor('SELECT 0;\ncreate python3 scalar script p() returns int as\ndef run(ctx): return 1; # x', 2);
         assert.strictEqual(result?.text, 'create python3 scalar script p() returns int as\ndef run(ctx): return 1; # x');
+    });
+});
+
+suite('stripFinalSlashLine', () => {
+    test('removes one final / line', () => {
+        assert.strictEqual(stripFinalSlashLine('CREATE LUA SCRIPT x AS\nexit()\n/'), 'CREATE LUA SCRIPT x AS\nexit()');
+        assert.strictEqual(stripFinalSlashLine('SELECT 1\r\n  / \n'), 'SELECT 1');
+    });
+
+    test('keeps a division and a / line that is not the last line', () => {
+        assert.strictEqual(stripFinalSlashLine('SELECT 4\n/ 2'), 'SELECT 4\n/ 2');
+        assert.strictEqual(stripFinalSlashLine('SELECT 1;\n/\nSELECT 2'), 'SELECT 1;\n/\nSELECT 2');
+        assert.strictEqual(stripFinalSlashLine('/'), '/');
+    });
+
+    test('removes only one / line', () => {
+        assert.strictEqual(stripFinalSlashLine('SELECT 1\n/\n/'), 'SELECT 1\n/');
     });
 });

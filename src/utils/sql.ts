@@ -140,6 +140,14 @@ function slashLineAt(text: string, lineStart: number): number {
     return /^\s*\/\s*$/.test(line) ? lineStart + line.indexOf('/') : -1;
 }
 
+/**
+ * Remove one final line that holds only `/`, for text that is sent as one
+ * statement without going through splitIntoStatements.
+ */
+export function stripFinalSlashLine(text: string): string {
+    return text.replace(/\r?\n[ \t]*\/\s*$/, '');
+}
+
 /** Up to `max` upper-cased words from `from`, skipping whitespace and comments. */
 function readWords(text: string, from: number, max: number): string[] {
     const words: string[] = [];
@@ -591,7 +599,8 @@ export function findStatementAtCursor(
     const lineStartOffsets = buildLineStartOffsets(lines);
     const ends = findStatementEnds(documentText);
 
-    const statements: Array<{ start: number; end: number; text: string }> = [];
+    // `last` is the terminator line, so a cursor on a `/` line selects the statement it closes.
+    const statements: Array<{ start: number; end: number; last: number; text: string }> = [];
     let consumedThroughLine = -1;
 
     for (const endIdx of ends) {
@@ -608,7 +617,7 @@ export function findStatementAtCursor(
             const chunk = lines.slice(startLine, endLine + 1).join('\n');
             const trimmed = chunk.trim();
             if (trimmed && trimmed !== ';') {
-                statements.push({ start: startLine, end: endLine, text: chunk });
+                statements.push({ start: startLine, end: endLine, last: terminatorLine, text: chunk });
             }
         }
 
@@ -625,12 +634,12 @@ export function findStatementAtCursor(
         const chunk = lines.slice(tailStart, endLine + 1).join('\n');
         const trimmed = chunk.trim();
         if (trimmed) {
-            statements.push({ start: tailStart, end: endLine, text: chunk });
+            statements.push({ start: tailStart, end: endLine, last: endLine, text: chunk });
         }
     }
 
     for (const statement of statements) {
-        if (cursorLine >= statement.start && cursorLine <= statement.end) {
+        if (cursorLine >= statement.start && cursorLine <= statement.last) {
             return {
                 text: statement.text,
                 range: { start: statement.start, end: statement.end },
@@ -674,8 +683,7 @@ export function splitIntoStatements(text: string): string[] {
     const statements: string[] = [];
     let pos = 0;
 
-    for (let ei = 0; ei < ends.length; ei++) {
-        const semiIdx = ends[ei];
+    for (const semiIdx of ends) {
 
         if (text[semiIdx] === '/') {
             // Closed by a `/` line: send the text before it, the body unchanged.
@@ -687,27 +695,11 @@ export function splitIntoStatements(text: string): string[] {
             continue;
         }
 
-        // Determine the end of the chunk for this statement.
-        // If there's another semicolon on the same line, end the chunk right after
-        // the current semicolon; there's more SQL following on the same line.
-        // Otherwise, include to end of line so trailing inline comments ("; -- note")
-        // are kept as part of the statement text.
-        const nextSemiIdx = ei + 1 < ends.length ? ends[ei + 1] : -1;
-
-        // Find the end of the current line (first '\n' or end of text)
-        let lineEnd = semiIdx + 1;
-        while (lineEnd < text.length && text[lineEnd] !== '\n') {
-            lineEnd++;
-        }
-
-        let chunkEnd: number;
-        if (nextSemiIdx !== -1 && nextSemiIdx < lineEnd) {
-            // Another statement starts before the end of this line; don't include trailing content
-            chunkEnd = semiIdx + 1;
-        } else {
-            // Include to end of line (captures trailing inline comments)
-            chunkEnd = lineEnd;
-        }
+        // Keep a trailing "; -- note" with its statement. Any other text after
+        // the semicolon starts the next statement, which may end on a later line.
+        const lineEnd = lineEndAt(text, semiIdx);
+        const rest = text.slice(semiIdx + 1, lineEnd).trim();
+        const chunkEnd = rest === '' || rest.startsWith('--') ? lineEnd : semiIdx + 1;
 
         const raw = text.slice(pos, chunkEnd);
         pos = chunkEnd;

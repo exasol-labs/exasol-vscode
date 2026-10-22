@@ -307,6 +307,17 @@ SELECT * FROM table12;`;
         assert.ok(statements[1].includes('table12'));
     });
 
+    test('a statement after a semicolon on the same line keeps its own continuation lines', () => {
+        assert.deepStrictEqual(splitIntoStatements('SELECT 1; SELECT 2\n, 3;'), ['SELECT 1;', 'SELECT 2\n, 3;']);
+    });
+
+    test('a trailing line comment stays with its statement', () => {
+        assert.deepStrictEqual(
+            splitIntoStatements('SELECT 1; -- one; note\nSELECT 2;   \nSELECT 3;'),
+            ['SELECT 1; -- one; note', 'SELECT 2;', 'SELECT 3;']
+        );
+    });
+
     test('two statements on one line produce two separate statements', () => {
         const text = `SELECT * FROM table12; SELECT * FROM table13;`;
 

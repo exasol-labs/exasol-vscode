@@ -43,7 +43,7 @@ async function getConnectionsFolder(provider: InstanceType<typeof ObjectTreeProv
 }
 
 suite('ObjectTreeProvider, Connections', () => {
-    test('root shows Connections right before System Schemas, with the count', async () => {
+    test('root shows Connections right before System Schemas and lists them only on expand', async () => {
         const { provider, queries } = makeProvider([
             ['BI_DATALAKE_S3', '2026-10-01 10:00:00.000', null],
             ['VS_TEST_CONN', '2026-10-22 09:00:00.000', 'test comment']
@@ -54,18 +54,21 @@ suite('ObjectTreeProvider, Connections', () => {
 
         assert.deepStrictEqual(labels.slice(-2), ['Connections', 'System Schemas']);
         const folder = root[root.length - 2] as ObjectTreeItem;
-        assert.strictEqual(folder.description, '2');
+        assert.strictEqual(folder.description, undefined);
         assert.strictEqual(folder.contextValue, 'db-connections-folder');
-        const listing = queries.find(q => q.includes('EXA_ALL_CONNECTIONS'));
-        assert.ok(listing?.includes('CONNECTION_NAME, CREATED, CONNECTION_COMMENT'));
+        assert.ok(!queries.some(q => q.includes('EXA_ALL_CONNECTIONS')), 'root refresh must not list connections');
+
+        assert.strictEqual((await provider.getChildren(folder)).length, 2);
+        const listing = queries.filter(q => q.includes('EXA_ALL_CONNECTIONS'));
+        assert.strictEqual(listing.length, 1);
+        assert.ok(listing[0].includes('CONNECTION_NAME, CREATED, CONNECTION_COMMENT'));
     });
 
-    test('a failed listing still shows the folder with 0', async () => {
+    test('a failed listing gives an empty folder', async () => {
         const { provider } = makeProvider([], true);
 
         const folder = await getConnectionsFolder(provider);
 
-        assert.strictEqual(folder.description, '0');
         assert.deepStrictEqual(await provider.getChildren(folder), []);
     });
 

@@ -658,6 +658,13 @@ suite('qualifyScriptText', () => {
         }
     });
 
+    test('a / line stored at the end of the text is not doubled', () => {
+        assert.strictEqual(
+            qualifyScriptText('CREATE LUA SCRIPT "L" AS\nexit()\n/\n', 'S', 'L'),
+            'CREATE OR REPLACE LUA SCRIPT "S"."L" AS\nexit()\n/'
+        );
+    });
+
     test('returns text with an unexpected header unchanged', () => {
         assert.strictEqual(qualifyScriptText('something else', 'S', 'N'), 'something else');
     });
@@ -691,6 +698,24 @@ suite('qualifyFunctionText', () => {
             splitIntoStatements(`${qualifyFunctionText(text, 'VS_SRC', 'F3')}\nSELECT 1;`),
             [`CREATE OR REPLACE FUNCTION "VS_SRC"."F3"${text.slice('FUNCTION VS_SRC.F3'.length)}`, 'SELECT 1;']
         );
+    });
+
+    test('replaces a qualified name with spaces around the dot', () => {
+        // Stored verbatim this way (docker, 2026-10-22).
+        assert.strictEqual(
+            qualifyFunctionText('FUNCTION VS_GK . CF3 () RETURN DECIMAL IS BEGIN RETURN 1; END CF3;', 'VS_GK', 'CF3'),
+            'CREATE OR REPLACE FUNCTION "VS_GK"."CF3" () RETURN DECIMAL IS BEGIN RETURN 1; END CF3;\n/'
+        );
+    });
+
+    test('a / line stored at the end of the text is not doubled', () => {
+        for (const stored of ['\n/', '\n/\n', '\r\n  /  ']) {
+            assert.strictEqual(
+                qualifyFunctionText(`FUNCTION F (p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END f;${stored}`, 'S', 'F'),
+                'CREATE OR REPLACE FUNCTION "S"."F" (p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END f;\n/'
+            );
+        }
+        assert.strictEqual(qualifyFunctionText('something else\n/', 'S', 'N'), 'CREATE OR REPLACE something else\n/');
     });
 
     test('only prefixes text with an unexpected header', () => {
@@ -973,11 +998,11 @@ suite('buildConnectionDDL', () => {
         );
     });
 
-    test('PUBLIC_KEY and CLIENT_ID get a TODO line each', () => {
+    test('PUBLIC_KEY and CLIENT_ID get a note line each', () => {
         const ddl = buildConnectionDDL('C', null, { ...full, PUBLIC_KEY: 'k', CLIENT_ID: 'id' });
         const lines = ddl.split('\n');
-        assert.ok(lines[0].startsWith('-- TODO: PUBLIC_KEY '), lines[0]);
-        assert.ok(lines[1].startsWith('-- TODO: CLIENT_ID '), lines[1]);
+        assert.ok(lines[0].startsWith('-- Note: PUBLIC_KEY '), lines[0]);
+        assert.ok(lines[1].startsWith('-- Note: CLIENT_ID '), lines[1]);
         assert.strictEqual(lines[2], 'CREATE OR REPLACE CONNECTION "C"');
         assert.ok(!ddl.includes("'k'") && !ddl.includes("'id'"));
     });
@@ -1044,11 +1069,28 @@ suite('ObjectActions.showConnectionDDL', () => {
 
         await oa.showConnectionDDL(TEST_CONNECTION, "O'C", 'tree comment');
 
-        assert.ok(capturedSql[0].includes('FROM SYS.EXA_DBA_CONNECTIONS'));
+        assert.match(capturedSql[0], /SELECT \*\s+FROM SYS\.EXA_DBA_CONNECTIONS/);
         assert.ok(capturedSql[0].includes("CONNECTION_NAME = 'O''C'"));
         assert.deepStrictEqual(opened, [buildConnectionDDL("O'C", 'db comment', {
             CONNECTION_STRING: 'https://x', USER_NAME: 'key_id', PUBLIC_KEY: null, CLIENT_ID: null
         })]);
+    });
+
+    test('a version without PUBLIC_KEY and CLIENT_ID columns still gives the full DDL', async () => {
+        const { oa } = makeObjectActions(Promise.resolve(createRawResult(
+            ['CONNECTION_NAME', 'CONNECTION_STRING', 'USER_NAME', 'CREATED', 'CONNECTION_COMMENT'],
+            [['C', 'https://x', 'key_id', '2026-10-22 09:00:00.000', null]]
+        )));
+
+        await oa.showConnectionDDL(TEST_CONNECTION, 'C', 'tree comment');
+
+        assert.deepStrictEqual(errors, []);
+        assert.deepStrictEqual(opened, [
+            'CREATE OR REPLACE CONNECTION "C"\n'
+            + "    TO 'https://x'\n"
+            + "    USER 'key_id'\n"
+            + "    IDENTIFIED BY '<password>';"
+        ]);
     });
 
     test('insufficient privileges falls back to the template with the tree comment', async () => {

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { QueryExecutor, captureBaselineStatementIdentity } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
-import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier, SqlError } from './utils';
+import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier, SqlError, stripFinalSlashLine } from './utils';
 import { isExecutionPlanEnabled } from './settings';
 
 /** EXPLAIN VIRTUAL columns that are safe to show; PUSHDOWN_JSON is left out on purpose. */
@@ -357,8 +357,9 @@ export class ObjectActions {
         try {
             const definition = await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connection.id);
+                // SELECT *: PUBLIC_KEY and CLIENT_ID do not exist in older versions.
                 const query = `
-                    SELECT CONNECTION_STRING, USER_NAME, PUBLIC_KEY, CLIENT_ID, CONNECTION_COMMENT
+                    SELECT *
                     FROM SYS.EXA_DBA_CONNECTIONS
                     WHERE CONNECTION_NAME = '${escapeSqlString(connectionName)}'
                 `;
@@ -399,12 +400,15 @@ export class ObjectActions {
 /** Exasol error code for a missing privilege, e.g. on EXA_DBA_CONNECTIONS. */
 const INSUFFICIENT_PRIVILEGES = '42500';
 
-/** A row of EXA_DBA_CONNECTIONS; there is no password column. */
+/**
+ * A row of EXA_DBA_CONNECTIONS; there is no password column. PUBLIC_KEY and
+ * CLIENT_ID are missing in older versions.
+ */
 interface ConnectionDefinition {
     CONNECTION_STRING: string;
     USER_NAME: string | null;
-    PUBLIC_KEY: string | null;
-    CLIENT_ID: string | null;
+    PUBLIC_KEY?: string | null;
+    CLIENT_ID?: string | null;
     CONNECTION_COMMENT: string | null;
 }
 
@@ -430,8 +434,9 @@ export function buildConnectionDDL(
         );
     } else {
         for (const column of ['PUBLIC_KEY', 'CLIENT_ID'] as const) {
-            if (definition[column] !== null) {
-                lines.push(`-- TODO: ${column} is set on this connection and is not part of this statement.`);
+            // Exasol stores an empty string as NULL, so a value is never ''.
+            if (definition[column]) {
+                lines.push(`-- Note: ${column} is set on this connection and is not part of this statement.`);
             }
         }
         lines.push(`CREATE OR REPLACE CONNECTION ${name}`, `    TO '${escapeSqlString(definition.CONNECTION_STRING)}'`);
@@ -505,23 +510,26 @@ export function qualifyScriptText(scriptText: string, schemaName: string, script
         return scriptText;
     }
     const name = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(scriptName)}"`;
-    return `CREATE OR REPLACE ${header[1]}${name}${scriptText.slice(header[0].length)}\n/`;
+    return `CREATE OR REPLACE ${header[1]}${name}${stripFinalSlashLine(scriptText.slice(header[0].length))}\n/`;
 }
 
 /**
  * Turns FUNCTION_TEXT into a statement that recreates the function in its own
  * schema. The database stores the text as written after `CREATE [OR REPLACE]`,
- * so the name may lack the schema; it is replaced by the quoted qualified name.
- * A `/` line closes the statement, as for scripts.
+ * so the name may lack the schema, and `SCHEMA . NAME` keeps its spaces; it is
+ * replaced by the quoted qualified name. A `/` line closes the statement, as
+ * for scripts.
  */
 export function qualifyFunctionText(functionText: string, schemaName: string, functionName: string): string {
+    // A client that sent the `/` line along with the statement leaves it in FUNCTION_TEXT.
+    const text = stripFinalSlashLine(functionText);
     const part = `(?:${QUOTED_IDENTIFIER}|[^\\s."(]+)`;
-    const header = new RegExp(`^(FUNCTION\\s+)${part}(?:\\.${part})?`, 'i').exec(functionText);
+    const header = new RegExp(`^(FUNCTION\\s+)${part}(?:\\s*\\.\\s*${part})?`, 'i').exec(text);
     if (!header) {
-        return `CREATE OR REPLACE ${functionText}\n/`;
+        return `CREATE OR REPLACE ${text}\n/`;
     }
     const name = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(functionName)}"`;
-    return `CREATE OR REPLACE ${header[1]}${name}${functionText.slice(header[0].length)}\n/`;
+    return `CREATE OR REPLACE ${header[1]}${name}${text.slice(header[0].length)}\n/`;
 }
 
 /**

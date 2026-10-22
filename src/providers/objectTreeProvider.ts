@@ -133,10 +133,9 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             // Directly show schemas without the connection node
             try {
                 outputChannel?.appendLine(`📂 Objects view: Fetching schemas for active connection '${activeConnection.name}'`);
-                const [schemas, virtualSchemas, dbConnections] = await Promise.all([
+                const [schemas, virtualSchemas] = await Promise.all([
                     fetchSchemas(this.connectionManager, activeConnection),
-                    fetchVirtualSchemas(this.connectionManager, activeConnection),
-                    fetchDbConnections(this.connectionManager, activeConnection)
+                    fetchVirtualSchemas(this.connectionManager, activeConnection)
                 ]);
                 outputChannel?.appendLine(`📂 Objects view: Found ${schemas.length} schemas, ${virtualSchemas.length} virtual schemas`);
 
@@ -256,8 +255,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     id: `${activeConnection.id}:db-connections-folder`,
                     collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
                     type: 'db-connections-folder',
-                    connection: activeConnection,
-                    dbConnections
+                    connection: activeConnection
                 }));
 
                 allNodes.push(new ObjectTreeItem({
@@ -658,7 +656,8 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         }
 
         if (element.type === 'db-connections-folder') {
-            return (element.dbConnections ?? []).map(info => new ObjectTreeItem({
+            const dbConnections = await fetchDbConnections(this.connectionManager, element.connection!);
+            return dbConnections.map(info => new ObjectTreeItem({
                 label: info.name,
                 id: `${element.connection!.id}:${info.name}:db-connection`,
                 collapsibleState: vscode.TreeItemCollapsibleState.None,
@@ -752,7 +751,6 @@ interface ObjectTreeItemOptions {
     functionInfo?: { name: string };
     parent?: ObjectTreeItem | null;
     groupedSchemas?: SchemaInfo[];
-    dbConnections?: DbConnectionInfo[];
     dbConnectionInfo?: DbConnectionInfo;
 }
 
@@ -772,7 +770,6 @@ export class ObjectTreeItem extends vscode.TreeItem {
     public readonly functionInfo?: { name: string };
     public readonly parent: ObjectTreeItem | null;
     public readonly groupedSchemas?: SchemaInfo[];
-    public readonly dbConnections?: DbConnectionInfo[];
     public readonly dbConnectionInfo?: DbConnectionInfo;
 
     constructor(options: ObjectTreeItemOptions) {
@@ -793,7 +790,6 @@ export class ObjectTreeItem extends vscode.TreeItem {
         this.functionInfo = options.functionInfo;
         this.parent = options.parent ?? null;
         this.groupedSchemas = options.groupedSchemas;
-        this.dbConnections = options.dbConnections;
         this.dbConnectionInfo = options.dbConnectionInfo;
 
         const config = getNodeTypeConfig(options.type, {
@@ -907,9 +903,6 @@ export class ObjectTreeItem extends vscode.TreeItem {
                 if (this.constraintType) {
                     this.description = this.constraintType;
                 }
-                break;
-            case 'db-connections-folder':
-                this.description = `${this.dbConnections?.length ?? 0}`;
                 break;
             case 'db-connection':
                 // Never the address or user: those are readable only with dictionary privileges.
