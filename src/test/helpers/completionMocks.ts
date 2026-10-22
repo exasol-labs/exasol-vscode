@@ -18,6 +18,8 @@
  * entry exists. Do not reorder: apply mocks -> registerVscodeMock() ->
  * registerExtensionMock() -> require(moduleUnderTest).
  */
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import type * as vscode from 'vscode';
 import type { ConnectionManager, StoredConnection } from '../../connectionManager';
 import type { SQLQueriesResponse, SQLResponse } from '@exasol/exasol-driver-ts';
@@ -51,8 +53,11 @@ export class MockRange {
     }
 }
 
-/** Word characters of the wordPattern in language-configuration.json. */
-const WORD = /[^`~!@#%^&*()\-=+[{\]}\\|;:'",.<>/?\s]+/g;
+/** The wordPattern of language-configuration.json. */
+const WORD = new RegExp(
+    (JSON.parse(readFileSync(join(__dirname, '../../../language-configuration.json'), 'utf8')) as { wordPattern: string }).wordPattern,
+    'g'
+);
 
 /**
  * vscodeMock is a plain object built from the shared subset used by other

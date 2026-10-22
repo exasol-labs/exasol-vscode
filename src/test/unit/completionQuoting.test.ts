@@ -64,12 +64,13 @@ function makeProvider(): InstanceType<typeof ExasolCompletionProvider> {
     }));
 }
 
-/** Complete at the `|` marker in a single-line statement. */
+/** Complete at the `|` marker. */
 async function complete(sqlWithCursor: string): Promise<vscode.CompletionItem[]> {
-    const at = sqlWithCursor.indexOf('|');
+    const linesBefore = sqlWithCursor.slice(0, sqlWithCursor.indexOf('|')).split('\n');
     const sql = sqlWithCursor.replace('|', '');
+    const position = makePosition(linesBefore.length - 1, linesBefore[linesBefore.length - 1].length);
     return makeProvider().provideCompletionItems(
-        makeDocument(sql), makePosition(0, at), {} as vscode.CancellationToken, {} as vscode.CompletionContext
+        makeDocument(sql), position, {} as vscode.CancellationToken, {} as vscode.CompletionContext
     );
 }
 
@@ -223,8 +224,24 @@ suite('ExasolCompletionProvider - completion after an opening quote', () => {
         assert.ok(items.some(i => i.kind === CompletionItemKind.Keyword));
     });
 
+    test('an escaped quote does not open a new identifier', async () => {
+        assertOnlyQuotedNames(await complete('SELECT "a""|'), [7, 11]);
+        assertOnlyQuotedNames(await complete('SELECT "a""b|'), [7, 12]);
+    });
+
+    test('a space inside the quoted identifier', async () => {
+        assertOnlyQuotedNames(await complete('SELECT "lower v|'), [7, 15]);
+    });
+
+    test('a string from an earlier line is closed before the quote', async () => {
+        assertOnlyQuotedNames(await complete(`SELECT 'a\nb', "|`), [4, 5]);
+    });
+
     test('a closing quote or a quote in a string does not start a quoted identifier', async () => {
-        for (const sql of ['SELECT "id"| FROM s.t', `SELECT x FROM s.t WHERE x = 'a"|`, 'SELECT 1 -- "|']) {
+        for (const sql of [
+            'SELECT "id"| FROM s.t', `SELECT x FROM s.t WHERE x = 'a"|`, 'SELECT 1 -- "|',
+            'SELECT /* "| */ 1', `SELECT 'a\nb "|'`, 'SELECT "a\nb|',
+        ]) {
             const items = await complete(sql);
             assert.ok(items.every(i => rangeOf(i) === undefined), sql);
         }
