@@ -6,6 +6,7 @@ import {
     escapeSqlIdentifier,
     escapeSqlString,
     findStatementAtCursor,
+    findStatementEnds,
     getRowsFromResult,
     normalizeIdentifier,
     offsetAtLineCharacter,
@@ -108,14 +109,19 @@ export function parseAliases(queryText: string): Map<string, AliasTarget> {
  * Range of a quoted identifier the user is typing: from its opening `"` to
  * the end of the word at the cursor, plus a closing `"` right after it, such
  * as the one added by auto-closing. Undefined when the cursor is not inside a
- * quoted identifier opened on the same line. The word pattern of the language
- * excludes `"` and spaces, so the default range of a completion would leave
- * the opening quote and earlier words in place.
+ * quoted identifier opened on the same line. Only the current statement is
+ * scanned, so a quote in an earlier statement, such as an apostrophe in a
+ * script body, does not count. The word pattern of the language excludes `"`
+ * and spaces, so the default range of a completion would leave the opening
+ * quote and earlier words in place.
  */
 function openingQuoteRange(document: vscode.TextDocument, position: vscode.Position): vscode.Range | undefined {
     const text = document.getText();
     const cursor = offsetAtLineCharacter(text, position.line, position.character);
-    const quoteIdx = quotedIdentifierStart(text, cursor);
+    const statementStart = (findStatementEnds(text).filter(end => end < cursor).pop() ?? -1) + 1;
+    const statement = text.slice(statementStart, cursor);
+    const quoteInStatement = quotedIdentifierStart(statement);
+    const quoteIdx = quoteInStatement === undefined ? undefined : statementStart + quoteInStatement;
     const lineStart = cursor - position.character;
     if (quoteIdx === undefined || quoteIdx < lineStart) { return undefined; }
     const line = document.lineAt(position).text;
@@ -127,33 +133,34 @@ function openingQuoteRange(document: vscode.TextDocument, position: vscode.Posit
 /** True when the quoted identifier in `range` ends with its closing quote. */
 function isClosedQuote(line: string, range: vscode.Range): boolean {
     const quoted = line.slice(range.start.character, range.end.character);
-    return quotedIdentifierStart(quoted, quoted.length) === undefined;
+    return quotedIdentifierStart(quoted) === undefined;
 }
 
 /**
- * Index of the `"` that opens the quoted identifier still open at `cursor`,
- * or undefined when `cursor` is outside one. Scans `text` before `cursor`,
- * skipping strings, `--` and block comments; a doubled quote inside a string
- * or quoted identifier is an escaped quote, not its end.
+ * Index of the `"` that opens the quoted identifier still open at the end of
+ * `text`, or undefined when the end is outside one. Skips strings, `--` and
+ * block comments; a doubled quote inside a string or quoted identifier is an
+ * escaped quote, not its end.
  */
-function quotedIdentifierStart(text: string, cursor: number): number | undefined {
+function quotedIdentifierStart(text: string): number | undefined {
+    const len = text.length;
     let i = 0;
-    while (i < cursor) {
+    while (i < len) {
         const ch = text[i];
         if (ch === '"' || ch === "'") {
             const start = i++;
             for (;;) {
-                if (i >= cursor) { return ch === '"' ? start : undefined; }
+                if (i >= len) { return ch === '"' ? start : undefined; }
                 if (text[i++] !== ch) { continue; }
-                if (i < cursor && text[i] === ch) { i++; } else { break; }
+                if (i < len && text[i] === ch) { i++; } else { break; }
             }
         } else if (ch === '-' && text[i + 1] === '-') {
             const eol = text.indexOf('\n', i);
-            if (eol < 0 || eol >= cursor) { return undefined; }
+            if (eol < 0) { return undefined; }
             i = eol + 1;
         } else if (ch === '/' && text[i + 1] === '*') {
             const close = text.indexOf('*/', i + 2);
-            if (close < 0 || close + 2 > cursor) { return undefined; }
+            if (close < 0) { return undefined; }
             i = close + 2;
         } else {
             i++;

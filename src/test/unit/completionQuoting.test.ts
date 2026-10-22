@@ -237,6 +237,18 @@ suite('ExasolCompletionProvider - completion after an opening quote', () => {
         assertOnlyQuotedNames(await complete(`SELECT 'a\nb', "|`), [4, 5]);
     });
 
+    const SCRIPT = 'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT s.f(x VARCHAR(10)) RETURNS VARCHAR(10) AS\n'
+        + "# don't do this\ndef run(ctx):\n    return ctx.x\n/\n";
+
+    test('an apostrophe in an earlier script body does not hide the quote', async () => {
+        assertOnlyQuotedNames(await complete(`${SCRIPT}SELECT "|`), [7, 8]);
+    });
+
+    test('an apostrophe in an earlier script body does not end a string', async () => {
+        const items = await complete(`${SCRIPT}SELECT x FROM t WHERE x = 'a"|`);
+        assert.ok(items.every(i => rangeOf(i) === undefined));
+    });
+
     test('a closing quote or a quote in a string does not start a quoted identifier', async () => {
         for (const sql of [
             'SELECT "id"| FROM s.t', `SELECT x FROM s.t WHERE x = 'a"|`, 'SELECT 1 -- "|',
