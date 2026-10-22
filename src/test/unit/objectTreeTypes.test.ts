@@ -94,7 +94,7 @@ suite('ObjectTreeItemType and getNodeTypeConfig', () => {
             const config = getNodeTypeConfig('script', { scriptType: 'UDF' });
             assert.ok(config, 'script (UDF) should return a config');
             assert.strictEqual(config.icon, 'symbol-method');
-            assert.strictEqual(config.contextValue, 'script');
+            assert.strictEqual(config.contextValue, 'script-udf');
         });
 
         test('script with SCRIPTING type returns symbol-event icon', () => {
@@ -108,7 +108,7 @@ suite('ObjectTreeItemType and getNodeTypeConfig', () => {
             const config = getNodeTypeConfig('script', { scriptType: 'ADAPTER' });
             assert.ok(config, 'script (ADAPTER) should return a config');
             assert.strictEqual(config.icon, 'extensions');
-            assert.strictEqual(config.contextValue, 'script');
+            assert.strictEqual(config.contextValue, 'script-adapter');
         });
 
         test('script with no type defaults to symbol-method icon', () => {

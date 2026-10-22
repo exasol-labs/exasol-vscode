@@ -82,7 +82,7 @@ registerExtensionMock();
 // original textual position, and the module under test must see the mock above
 // rather than the real 'vscode' module (which does not exist outside the
 // extension host).
-const { ObjectActions, refreshVirtualSchemaAndReload, qualifyScriptText, qualifyFunctionText } = require('../../objectActions') as typeof import('../../objectActions');
+const { ObjectActions, refreshVirtualSchemaAndReload, qualifyScriptText, qualifyFunctionText, buildScriptCall } = require('../../objectActions') as typeof import('../../objectActions');
 const { ResultsPanel } = require('../../panels/resultsPanel') as typeof import('../../panels/resultsPanel');
 
 import { createRawResult, createEmptyRawResult, createRawErrorResult, MockConnectionManager, TEST_CONNECTION, asConnectionManager, type MockDriver } from '../helpers/mockConnectionManager';
@@ -765,5 +765,115 @@ suite('ObjectActions script and function source', () => {
         assert.strictEqual(errors.length, 1);
         assert.ok(errors[0].startsWith('Failed to get function source: '));
         assert.ok(errors[0].includes('insufficient privileges'));
+    });
+});
+
+suite('buildScriptCall', () => {
+    const call = (header: string, inputType: string | null = 'SCALAR', name = 'F') =>
+        buildScriptCall(`${header} AS\ndef run(ctx):\n    return 1\n`, 'VS_SRC', name, inputType);
+
+    test('no parameters', () => {
+        assert.strictEqual(call('CREATE PYTHON3 SCALAR SCRIPT "F" () RETURNS VARCHAR(200) UTF8'), 'SELECT "VS_SRC"."F"();');
+    });
+
+    test('parameters become column placeholders; types with commas stay out', () => {
+        assert.strictEqual(
+            call('CREATE PYTHON3 SET SCRIPT "F" ("a" DECIMAL(18,0), "b" VARCHAR(10) UTF8) EMITS ("X" DECIMAL(18,0), "Y" VARCHAR(10) UTF8)', 'SET'),
+            'SELECT "VS_SRC"."F"("a", "b")\nFROM <table>;'
+        );
+    });
+
+    test('scalar script with parameters also gets the FROM placeholder', () => {
+        assert.strictEqual(
+            call('CREATE PYTHON3 SCALAR SCRIPT "F" ("v" VARCHAR(10) UTF8) EMITS (...)'),
+            'SELECT "VS_SRC"."F"("v")\nFROM <table>;'
+        );
+    });
+
+    test('dynamic parameters get a comment placeholder', () => {
+        assert.strictEqual(
+            call('CREATE PYTHON3 SCALAR SCRIPT "F" (...) RETURNS VARCHAR(100) UTF8'),
+            'SELECT "VS_SRC"."F"(/* arguments */)\nFROM <table>;'
+        );
+    });
+
+    test('quoted names with double quotes, commas and parentheses are kept as written', () => {
+        assert.strictEqual(
+            call('CREATE PYTHON3 SCALAR SCRIPT "my ""odd"" udf" ("lo" VARCHAR(10) UTF8, "Q""t" DECIMAL(5,2), "a,(b" INT) RETURNS INT', 'SCALAR', 'my "odd" udf'),
+            'SELECT "VS_SRC"."my ""odd"" udf"("lo", "Q""t", "a,(b")\nFROM <table>;'
+        );
+    });
+
+    test('falls back to a comment placeholder when the parameters cannot be read', () => {
+        for (const header of [
+            'something else',
+            'CREATE PYTHON3 SCALAR SCRIPT "F" RETURNS INT',
+            'CREATE PYTHON3 SCALAR SCRIPT "F" (a INT) RETURNS INT',
+            'CREATE PYTHON3 SCALAR SCRIPT "F" ("a" INT',
+        ]) {
+            assert.strictEqual(call(header), 'SELECT "VS_SRC"."F"(/* arguments */);', header);
+        }
+    });
+});
+
+suite('ObjectActions.generateScriptCall', () => {
+    let savedWindow: ObjectActionsVscodeMock['window'];
+    let savedWorkspace: ObjectActionsVscodeMock['workspace'];
+    let opened: string[];
+
+    setup(() => {
+        savedWindow = extendedVscodeMock.window;
+        savedWorkspace = extendedVscodeMock.workspace;
+        opened = [];
+        extendedVscodeMock.window = buildWindowMock();
+        extendedVscodeMock.workspace = {
+            ...buildWorkspaceMock(),
+            openTextDocument: (opts: unknown) => {
+                opened.push((opts as { content: string }).content);
+                return Promise.resolve({ languageId: 'exasol-sql' });
+            },
+        };
+    });
+
+    teardown(() => {
+        extendedVscodeMock.window = savedWindow;
+        extendedVscodeMock.workspace = savedWorkspace;
+    });
+
+    function makeObjectActions(rows: RawRows): InstanceType<typeof ObjectActions> {
+        const mockCM = new MockConnectionManager({ query: async () => createRawResult(['SCRIPT_TEXT', 'SCRIPT_INPUT_TYPE'], rows) });
+        // ObjectActions never reads queryExecutor or extensionUri; same rationale as above.
+        const mockQE = {} as unknown as QueryExecutor;
+        const mockUri = { fsPath: '/mock' } as unknown as vscode.Uri;
+        return new ObjectActions(asConnectionManager(mockCM), mockQE, mockUri);
+    }
+
+    test('opens the call in a new document when no SQL editor is active', async () => {
+        const oa = makeObjectActions([['CREATE PYTHON3 SET SCRIPT "PYSETR" ("v" DECIMAL(18,0)) RETURNS DECIMAL(18,0) AS\nx', 'SET']]);
+
+        await oa.generateScriptCall(TEST_CONNECTION, 'VS_SRC', 'PYSETR');
+
+        assert.deepStrictEqual(opened, ['SELECT "VS_SRC"."PYSETR"("v")\nFROM <table>;']);
+    });
+
+    test('inserts the call at the cursor of the active SQL editor', async () => {
+        const inserted: string[] = [];
+        extendedVscodeMock.window = {
+            ...buildWindowMock(),
+            activeTextEditor: {
+                document: { languageId: 'exasol-sql' },
+                selection: { active: 'cursor' },
+                edit: async (cb: (builder: { insert: (pos: unknown, text: string) => void }) => void) => {
+                    cb({ insert: (_pos, text) => inserted.push(text) });
+                    return true;
+                },
+            } as ObjectActionsVscodeMock['window']['activeTextEditor'],
+        };
+        const oa = makeObjectActions([['CREATE PYTHON3 SCALAR SCRIPT "PYVER" () RETURNS VARCHAR(200) UTF8 AS\nx', 'SCALAR']]);
+
+        await oa.generateScriptCall(TEST_CONNECTION, 'VS_SRC', 'PYVER');
+
+        assert.deepStrictEqual(inserted, ['SELECT "VS_SRC"."PYVER"();']);
+        assert.deepStrictEqual(opened, []);
     });
 });

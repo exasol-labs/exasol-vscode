@@ -138,6 +138,8 @@ suite('getQualifiedName', () => {
         assert.strictEqual(getQualifiedName({ type: 'view', schemaName: 's"x', tableInfo }), '"s""x"."a""b"');
         assert.strictEqual(getQualifiedName({ type: 'virtual-table', schemaName: 's"x', tableInfo }), '"s""x"."a""b"');
         assert.strictEqual(getQualifiedName({ type: 'column', schemaName: 's"x', columnInfo }), '"c""d"');
+        const scriptInfo = { name: 'u"f', language: 'PYTHON3', inputType: 'SCALAR', scriptType: 'UDF' };
+        assert.strictEqual(getQualifiedName({ type: 'script', schemaName: 's"x', scriptInfo }), '"s""x"."u""f"');
     });
 
     test('returns undefined for other node types and for missing names', () => {
@@ -145,5 +147,6 @@ suite('getQualifiedName', () => {
         assert.strictEqual(getQualifiedName({ type: 'schema' }), undefined);
         assert.strictEqual(getQualifiedName({ type: 'table', schemaName: 'S' }), undefined);
         assert.strictEqual(getQualifiedName({ type: 'column' }), undefined);
+        assert.strictEqual(getQualifiedName({ type: 'script', schemaName: 'S' }), undefined);
     });
 });

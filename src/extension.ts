@@ -189,6 +189,8 @@ export function activate(context: vscode.ExtensionContext) {
             objectActions.explainPushdown(i.connection, i.schemaName, i.tableInfo.name)),
         itemCommand('exasol.openScriptSource', ['connection', 'schemaName', 'scriptInfo'], (i) =>
             objectActions.openScriptSource(i.connection, i.schemaName, i.scriptInfo.name)),
+        itemCommand('exasol.generateScriptCall', ['connection', 'schemaName', 'scriptInfo'], (i) =>
+            objectActions.generateScriptCall(i.connection, i.schemaName, i.scriptInfo.name)),
         itemCommand('exasol.openFunctionSource', ['connection', 'schemaName', 'functionInfo'], (i) =>
             objectActions.openFunctionSource(i.connection, i.schemaName, i.functionInfo.name)),
         itemCommand('exasol.setSchema', ['schemaName'], (i) =>

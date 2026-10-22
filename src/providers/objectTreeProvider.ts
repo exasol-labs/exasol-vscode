@@ -27,11 +27,11 @@ import { escapeSqlIdentifier } from '../utils';
 export type ObjectNode = ObjectTreeItem | ObjectMessageItem;
 
 /**
- * The quoted SQL name of a schema, table, view or column node, as used by
- * drag and drop and Copy Name; undefined for other node types.
+ * The quoted SQL name of a schema, table, view, column or script node, as
+ * used by drag and drop and Copy Name; undefined for other node types.
  */
 export function getQualifiedName(
-    item: Partial<Pick<ObjectTreeItem, 'type' | 'schemaName' | 'tableInfo' | 'columnInfo'>>
+    item: Partial<Pick<ObjectTreeItem, 'type' | 'schemaName' | 'tableInfo' | 'columnInfo' | 'scriptInfo'>>
 ): string | undefined {
     switch (item.type) {
         case 'schema':
@@ -45,6 +45,10 @@ export function getQualifiedName(
                 : undefined;
         case 'column':
             return item.columnInfo ? `"${escapeSqlIdentifier(item.columnInfo.name)}"` : undefined;
+        case 'script':
+            return item.schemaName && item.scriptInfo
+                ? `"${escapeSqlIdentifier(item.schemaName)}"."${escapeSqlIdentifier(item.scriptInfo.name)}"`
+                : undefined;
         default:
             return undefined;
     }

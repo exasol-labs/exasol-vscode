@@ -164,46 +164,49 @@ export class ObjectActions {
 
             const selectStatement = `SELECT\n${columns}\nFROM "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(tableName)}"\nLIMIT 100;`;
 
-            // Insert into active editor or create new one
-            const editor = vscode.window.activeTextEditor;
-            if (editor && (editor.document.languageId === 'sql' || editor.document.languageId === 'exasol-sql')) {
-                const position = editor.selection.active;
-                await editor.edit(editBuilder => {
-                    editBuilder.insert(position, selectStatement);
-                });
-            } else {
-                const doc = await vscode.workspace.openTextDocument({
-                    content: selectStatement,
-                    language: 'exasol-sql'
-                });
-                await vscode.window.showTextDocument(doc);
-            }
+            await insertIntoSqlEditor(selectStatement);
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to generate SELECT statement: ${error}`);
         }
     }
 
+    private async fetchScript(connection: StoredConnection, schemaName: string, scriptName: string) {
+        const rows = await this.connectionManager.executeWithRetry(async () => {
+            const driver = await this.connectionManager.getDriver(connection.id);
+            const query = `
+                SELECT SCRIPT_TEXT, SCRIPT_INPUT_TYPE
+                FROM SYS.EXA_ALL_SCRIPTS
+                WHERE SCRIPT_SCHEMA = '${escapeSqlString(schemaName)}'
+                AND SCRIPT_NAME = '${escapeSqlString(scriptName)}'
+            `;
+            const result = await rawQuery(driver, query);
+            return getRowsFromResult<{ SCRIPT_TEXT: string; SCRIPT_INPUT_TYPE: string | null }>(result);
+        }, connection.id);
+        if (rows.length === 0) {
+            vscode.window.showWarningMessage(`Script definition not found for ${schemaName}.${scriptName}`);
+        }
+        return rows[0];
+    }
+
     async openScriptSource(connection: StoredConnection, schemaName: string, scriptName: string) {
         try {
-            const rows = await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
-                const query = `
-                    SELECT SCRIPT_TEXT
-                    FROM SYS.EXA_ALL_SCRIPTS
-                    WHERE SCRIPT_SCHEMA = '${escapeSqlString(schemaName)}'
-                    AND SCRIPT_NAME = '${escapeSqlString(scriptName)}'
-                `;
-                const result = await rawQuery(driver, query);
-                return getRowsFromResult<{ SCRIPT_TEXT: string }>(result);
-            }, connection.id);
-
-            if (rows.length > 0) {
-                await openSqlDocument(qualifyScriptText(rows[0].SCRIPT_TEXT, schemaName, scriptName));
-            } else {
-                vscode.window.showWarningMessage(`Script definition not found for ${schemaName}.${scriptName}`);
+            const script = await this.fetchScript(connection, schemaName, scriptName);
+            if (script) {
+                await openSqlDocument(qualifyScriptText(script.SCRIPT_TEXT, schemaName, scriptName));
             }
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to get script source: ${error}`);
+        }
+    }
+
+    async generateScriptCall(connection: StoredConnection, schemaName: string, scriptName: string) {
+        try {
+            const script = await this.fetchScript(connection, schemaName, scriptName);
+            if (script) {
+                await insertIntoSqlEditor(buildScriptCall(script.SCRIPT_TEXT, schemaName, scriptName, script.SCRIPT_INPUT_TYPE));
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to generate script call: ${error}`);
         }
     }
 
@@ -346,8 +349,25 @@ async function openSqlDocument(content: string): Promise<void> {
     await vscode.window.showTextDocument(doc);
 }
 
+/** Inserts at the cursor of the active SQL editor, or opens a new Exasol SQL document. */
+async function insertIntoSqlEditor(text: string): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (editor && (editor.document.languageId === 'sql' || editor.document.languageId === 'exasol-sql')) {
+        const position = editor.selection.active;
+        await editor.edit(editBuilder => {
+            editBuilder.insert(position, text);
+        });
+    } else {
+        await openSqlDocument(text);
+    }
+}
+
 /** A quoted identifier, with "" standing for one double quote inside it. */
 const QUOTED_IDENTIFIER = '"(?:[^"]|"")*"';
+
+/** `CREATE <language> [SCALAR|SET|ADAPTER] SCRIPT "NAME"`, as stored in SCRIPT_TEXT. */
+const SCRIPT_HEADER = new RegExp(`^CREATE\\s+([^"]*?\\bSCRIPT\\s+)${QUOTED_IDENTIFIER}`, 'i');
+const QUOTED_NAME_START = new RegExp(`^${QUOTED_IDENTIFIER}`);
 
 /**
  * Turns SCRIPT_TEXT into a statement that recreates the script in its own
@@ -357,7 +377,7 @@ const QUOTED_IDENTIFIER = '"(?:[^"]|"")*"';
  * byte for byte. Text with an unexpected header is returned unchanged.
  */
 export function qualifyScriptText(scriptText: string, schemaName: string, scriptName: string): string {
-    const header = new RegExp(`^CREATE\\s+([^"]*?\\bSCRIPT\\s+)${QUOTED_IDENTIFIER}`, 'i').exec(scriptText);
+    const header = SCRIPT_HEADER.exec(scriptText);
     if (!header) {
         return scriptText;
     }
@@ -378,6 +398,66 @@ export function qualifyFunctionText(functionText: string, schemaName: string, fu
     }
     const name = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(functionName)}"`;
     return `CREATE OR REPLACE ${header[1]}${name}${functionText.slice(header[0].length)}`;
+}
+
+/**
+ * The quoted parameter names of a UDF, read from the parameter list after
+ * the name in SCRIPT_TEXT: 'dynamic' for `(...)`, undefined when the list
+ * cannot be read. Types such as DECIMAL(18,0) contain commas, so the list is
+ * split on commas outside parentheses and quoted names only.
+ */
+function parseScriptParameters(scriptText: string): string[] | 'dynamic' | undefined {
+    const header = SCRIPT_HEADER.exec(scriptText);
+    const open = header ? /^\s*\(/.exec(scriptText.slice(header[0].length)) : null;
+    if (!header || !open) {
+        return undefined;
+    }
+    const parts: string[] = [];
+    let depth = 0;
+    let quoted = false;
+    let start = header[0].length + open[0].length;
+    for (let i = start; i < scriptText.length; i++) {
+        const ch = scriptText[i];
+        if (ch === '"') {
+            quoted = !quoted;
+        } else if (quoted) {
+            continue;
+        } else if (ch === '(') {
+            depth++;
+        } else if (ch === ',' && depth === 0) {
+            parts.push(scriptText.slice(start, i).trim());
+            start = i + 1;
+        } else if (ch === ')' && depth > 0) {
+            depth--;
+        } else if (ch === ')') {
+            parts.push(scriptText.slice(start, i).trim());
+            if (parts.length === 1 && parts[0] === '') {
+                return [];
+            }
+            if (parts.length === 1 && parts[0] === '...') {
+                return 'dynamic';
+            }
+            const names = parts.map(part => QUOTED_NAME_START.exec(part)?.[0]);
+            return names.every((name): name is string => name !== undefined) ? names : undefined;
+        }
+    }
+    return undefined;
+}
+
+/**
+ * A SELECT that calls the UDF, with its parameter names as column
+ * placeholders and a FROM placeholder when the call takes input rows.
+ * Dynamic or unreadable parameter lists get a comment placeholder.
+ */
+export function buildScriptCall(scriptText: string, schemaName: string, scriptName: string, inputType: string | null): string {
+    const name = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(scriptName)}"`;
+    const parameters = parseScriptParameters(scriptText);
+    if (parameters === undefined) {
+        return `SELECT ${name}(/* arguments */);`;
+    }
+    const args = parameters === 'dynamic' ? '/* arguments */' : parameters.join(', ');
+    const from = args || inputType === 'SET' ? '\nFROM <table>' : '';
+    return `SELECT ${name}(${args})${from};`;
 }
 
 /** What refreshVirtualSchemaAndReload needs from the extension's providers. */

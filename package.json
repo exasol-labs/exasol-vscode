@@ -148,6 +148,10 @@
         "title": "Open Source"
       },
       {
+        "command": "exasol.generateScriptCall",
+        "title": "Generate Call"
+      },
+      {
         "command": "exasol.openFunctionSource",
         "title": "Open Source"
       },
@@ -352,8 +356,18 @@
           "group": "exasol@3"
         },
         {
+          "command": "exasol.openScriptSource",
+          "when": "view == exasol.objects && (viewItem == script-udf || viewItem == script-adapter)",
+          "group": "exasol@1"
+        },
+        {
+          "command": "exasol.generateScriptCall",
+          "when": "view == exasol.objects && viewItem == script-udf",
+          "group": "exasol@2"
+        },
+        {
           "command": "exasol.copyQualifiedName",
-          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == schema || viewItem == virtual-table || viewItem == virtual-schema)",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == schema || viewItem == virtual-table || viewItem == virtual-schema || viewItem == script-udf || viewItem == script-adapter)",
           "group": "inline@1"
         },
         {
@@ -452,6 +466,10 @@
         },
         {
           "command": "exasol.openScriptSource",
+          "when": "false"
+        },
+        {
+          "command": "exasol.generateScriptCall",
           "when": "false"
         },
         {

@@ -57,7 +57,7 @@ export function getNodeTypeConfig(
         case 'functions-folder':
             return { icon: 'folder', contextValue: 'functions-folder' };
         case 'script':
-            return { icon: getScriptIcon(metadata?.scriptType), contextValue: 'script' };
+            return { icon: getScriptIcon(metadata?.scriptType), contextValue: getScriptContextValue(metadata?.scriptType) };
         case 'function':
             return { icon: 'symbol-function', contextValue: 'function' };
         case 'constraints-folder':
@@ -89,6 +89,18 @@ function getScriptIcon(scriptType?: string): string {
             return 'extensions';
         default:
             return 'symbol-method';
+    }
+}
+
+/** UDF and adapter scripts get their own context menus; other scripts keep 'script'. */
+function getScriptContextValue(scriptType?: string): string {
+    switch (scriptType) {
+        case 'UDF':
+            return 'script-udf';
+        case 'ADAPTER':
+            return 'script-adapter';
+        default:
+            return 'script';
     }
 }
 
