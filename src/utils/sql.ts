@@ -43,15 +43,23 @@ export function columnsViewFor(schemaName: string): string {
  */
 const enum SqlTokenState {
     DEFAULT = 0,
-    IN_STRING = 1,
+    /** Inside a string literal or a quoted identifier; `quote` holds its delimiter. */
+    IN_QUOTED = 1,
     IN_LINE_COMMENT = 2,
     IN_BLOCK_COMMENT = 3
+}
+
+/** True for the delimiter of a string literal or a quoted identifier. */
+function isQuote(ch: string): boolean {
+    return ch === "'" || ch === '"';
 }
 
 /**
  * Strip SQL comments while preserving string literal contents.
  * Uses an O(n) single-pass state-machine that tracks:
  *   - Single-quoted string literals (Exasol uses '' to escape a quote inside)
+ *   - Double-quoted identifiers (with "" as the escape), which may contain
+ *     `;`, `--` and slash-star as ordinary characters
  *   - Single-line comments (-- to end of line)
  *   - Block comments (slash-star to star-slash, non-nesting)
  *
@@ -60,6 +68,7 @@ const enum SqlTokenState {
  */
 export function stripCommentsPreservingStrings(text: string): string {
     let state: SqlTokenState = SqlTokenState.DEFAULT;
+    let quote = '';
     let result = '';
     let i = 0;
     const len = text.length;
@@ -70,8 +79,9 @@ export function stripCommentsPreservingStrings(text: string): string {
 
         switch (state) {
             case SqlTokenState.DEFAULT:
-                if (ch === "'") {
-                    state = SqlTokenState.IN_STRING;
+                if (isQuote(ch)) {
+                    state = SqlTokenState.IN_QUOTED;
+                    quote = ch;
                     result += ch;
                     i++;
                 } else if (ch === '-' && next === '-') {
@@ -88,11 +98,11 @@ export function stripCommentsPreservingStrings(text: string): string {
                 }
                 break;
 
-            case SqlTokenState.IN_STRING:
-                if (ch === "'" && next === "'") {
-                    result += "''";
+            case SqlTokenState.IN_QUOTED:
+                if (ch === quote && next === quote) {
+                    result += ch + next;
                     i += 2;
-                } else if (ch === "'") {
+                } else if (ch === quote) {
                     state = SqlTokenState.DEFAULT;
                     result += ch;
                     i++;
@@ -233,8 +243,9 @@ export function isScriptOrFunctionDefinition(sql: string): boolean {
  * holds only `/` (not part of the statement; the statement ends before the
  * line break that precedes it). O(n) single pass.
  *
- * Semicolons inside string literals and comments are ignored. Exasol script
- * and function definitions follow the convention of the Exasol SQL clients:
+ * Semicolons inside string literals, quoted identifiers and comments are
+ * ignored. Exasol script and function definitions follow the convention of
+ * the Exasol SQL clients:
  *   - `CREATE ... SCRIPT` runs until a `/` line, or to the end of the text.
  *     The body is code in another language, so it is not tokenized as SQL.
  *   - `CREATE ... FUNCTION` ends at a `/` line, or at the first `;` after the
@@ -248,6 +259,7 @@ export function isScriptOrFunctionDefinition(sql: string): boolean {
  */
 export function findStatementEnds(text: string): number[] {
     let state: SqlTokenState = SqlTokenState.DEFAULT;
+    let quote = '';
     const ends: number[] = [];
     let i = 0;
     const len = text.length;
@@ -269,8 +281,10 @@ export function findStatementEnds(text: string): number[] {
                     i = lineEndAt(text, i);
                     statementEmpty = true;
                     functionBody = FunctionBody.NONE;
-                } else if (ch === "'") {
-                    state = SqlTokenState.IN_STRING;
+                } else if (isQuote(ch)) {
+                    // The content of a string or quoted identifier is never a keyword, so it cannot close a function body.
+                    state = SqlTokenState.IN_QUOTED;
+                    quote = ch;
                     statementEmpty = false;
                     i++;
                 } else if (ch === '-' && next === '-') {
@@ -286,10 +300,6 @@ export function findStatementEnds(text: string): number[] {
                         functionBody = FunctionBody.NONE;
                     }
                     i++;
-                } else if (ch === '"' && functionBody === FunctionBody.OPEN) {
-                    // Quoted identifier: its content is never a keyword.
-                    const close = text.indexOf('"', i + 1);
-                    i = close === -1 ? len : close + 1;
                 } else if (isWordChar(ch)) {
                     const start = i;
                     while (i < len && isWordChar(text[i])) {
@@ -335,10 +345,10 @@ export function findStatementEnds(text: string): number[] {
                 break;
             }
 
-            case SqlTokenState.IN_STRING:
-                if (ch === "'" && next === "'") {
+            case SqlTokenState.IN_QUOTED:
+                if (ch === quote && next === quote) {
                     i += 2;
-                } else if (ch === "'") {
+                } else if (ch === quote) {
                     state = SqlTokenState.DEFAULT;
                     i++;
                 } else {
@@ -443,7 +453,7 @@ function isBlankOrCommentLine(trimmed: string): boolean {
 /**
  * Return the character-index ranges of every SQL statement in text.
  * Uses the same state-machine tokenizer as findStatementEnds, so semicolons
- * inside string literals or comments are never treated as boundaries.
+ * inside string literals, quoted identifiers or comments are never treated as boundaries.
  *
  * Each returned range spans from the first non-whitespace character of the
  * statement to its last character (inclusive): the semicolon, or for a
@@ -528,13 +538,14 @@ export function findStatementRanges(text: string): Array<{ start: number; end: n
  * that lineOffsets computed from the original text remain valid indices into
  * the stripped view.
  *
- * String literal contents are preserved as-is; only --line and slash-star
+ * String literal and quoted identifier contents are preserved as-is; only --line and slash-star
  * comments are blanked out. This is intentionally not exported: callers should
  * use stripCommentsPreservingStrings for general comment removal, since that
  * variant is shorter and easier to reason about when offsets do not matter.
  */
 function stripCommentsPreservingPositions(text: string): string {
     let state: SqlTokenState = SqlTokenState.DEFAULT;
+    let quote = '';
     const out: string[] = [];
     let i = 0;
     const len = text.length;
@@ -545,8 +556,9 @@ function stripCommentsPreservingPositions(text: string): string {
 
         switch (state) {
             case SqlTokenState.DEFAULT:
-                if (ch === "'") {
-                    state = SqlTokenState.IN_STRING;
+                if (isQuote(ch)) {
+                    state = SqlTokenState.IN_QUOTED;
+                    quote = ch;
                     out.push(ch);
                     i++;
                 } else if (ch === '-' && next === '-') {
@@ -563,11 +575,11 @@ function stripCommentsPreservingPositions(text: string): string {
                 }
                 break;
 
-            case SqlTokenState.IN_STRING:
-                if (ch === "'" && next === "'") {
-                    out.push("'", "'");
+            case SqlTokenState.IN_QUOTED:
+                if (ch === quote && next === quote) {
+                    out.push(ch, next);
                     i += 2;
-                } else if (ch === "'") {
+                } else if (ch === quote) {
                     state = SqlTokenState.DEFAULT;
                     out.push(ch);
                     i++;
@@ -606,7 +618,7 @@ function stripCommentsPreservingPositions(text: string): string {
 /**
  * Find the SQL statement at the given cursor position in a document.
  * Uses the state-machine tokenizer to detect statement boundaries so that
- * semicolons inside string literals or comments are never treated as terminators,
+ * semicolons inside string literals, quoted identifiers or comments are never treated as terminators,
  * and a script or function definition is one statement (see findStatementEnds).
  *
  * Leading comment-only lines are excluded from each statement's range, so a cursor
@@ -690,8 +702,8 @@ function stripLeadingCommentLines(chunk: string): string {
 /**
  * Split text into individual SQL statements at the ends found by findStatementEnds.
  * Returns an array of statement strings, trimmed and filtered for non-empty statements.
- * Uses the state-machine tokenizer so semicolons inside string literals or comments
- * are never treated as statement boundaries.
+ * Uses the state-machine tokenizer so semicolons inside string literals, quoted
+ * identifiers or comments are never treated as statement boundaries.
  *
  * Each returned statement includes everything up to and including its terminating
  * semicolon. A statement closed by a `/` line ends before that line and keeps its

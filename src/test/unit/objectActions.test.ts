@@ -1268,6 +1268,10 @@ suite('qualifyViewText', () => {
             'CREATE OR REPLACE VIEW "VS_SRC"."V_CMT"--x\nAS SELECT 2 AS B\n;'],
         ["CREATE VIEW VS_SRC.V_STR AS SELECT '--' AS S", 'V_STR',
             `CREATE OR REPLACE VIEW "VS_SRC"."V_STR" AS SELECT '--' AS S\n;`],
+        ['CREATE VIEW VS_SRC.V_QID AS SELECT 1 AS "a--b";', 'V_QID',
+            'CREATE OR REPLACE VIEW "VS_SRC"."V_QID" AS SELECT 1 AS "a--b";'],
+        ['CREATE VIEW VS_SRC.V_QID AS SELECT 1 AS "a/*b"', 'V_QID',
+            'CREATE OR REPLACE VIEW "VS_SRC"."V_QID" AS SELECT 1 AS "a/*b"\n;'],
     ];
     for (const [stored, name, expected] of cases) {
         test(`qualifies ${JSON.stringify(stored.slice(0, 60))}`, () => {

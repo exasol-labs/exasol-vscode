@@ -137,6 +137,12 @@ suite('ExasolCodeLensProvider: CodeLens count', () => {
         assert.strictEqual(lensCount('/* a; b */ SELECT 1;'), 1);
     });
 
+    test('quoted identifiers holding ;, -- or /*: one CodeLens per statement', () => {
+        assert.strictEqual(lensCount('SELECT 1 AS "a;b"; SELECT 2;'), 2);
+        assert.strictEqual(lensCount('SELECT 1 AS "a--b";\nSELECT 2;'), 2);
+        assert.strictEqual(lensCount('SELECT 1 AS "a/*b";\nSELECT 2;'), 2);
+    });
+
     test('empty input: 0 CodeLenses', () => {
         assert.strictEqual(lensCount(''), 0);
     });

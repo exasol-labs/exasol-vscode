@@ -343,3 +343,74 @@ suite('isScriptOrFunctionDefinition', () => {
         assert.strictEqual(isScriptOrFunctionDefinition(''), false);
     });
 });
+
+// Exasol accepts ;, --, /* and "" inside quoted identifiers (docker, 2026-10-22):
+// SELECT 1 AS "a;b" returns the column a;b, CREATE VIEW S."v;--/*" works.
+suite('quoted identifiers holding ;, -- or /*', () => {
+    test('a ; inside a quoted identifier does not end the statement', () => {
+        assert.deepStrictEqual(splitIntoStatements('SELECT 1 AS "a;b"; SELECT 2;'), ['SELECT 1 AS "a;b";', 'SELECT 2;']);
+        assert.deepStrictEqual(splitIntoStatements('SELECT 1 AS "x""y;z";\nSELECT 2;'), ['SELECT 1 AS "x""y;z";', 'SELECT 2;']);
+    });
+
+    test('-- and /* inside a quoted identifier do not start a comment', () => {
+        assert.deepStrictEqual(splitIntoStatements('SELECT 1 AS "a--b";\nSELECT 2;'), ['SELECT 1 AS "a--b";', 'SELECT 2;']);
+        assert.deepStrictEqual(splitIntoStatements('SELECT 1 AS "a/*b";\nSELECT 2;'), ['SELECT 1 AS "a/*b";', 'SELECT 2;']);
+        assert.deepStrictEqual(findStatementEnds('SELECT 1 AS "a--b"; SELECT 2;'), [18, 28]);
+    });
+
+    test('a quoted identifier next to a string literal', () => {
+        assert.deepStrictEqual(
+            splitIntoStatements(`SELECT 'it"s' AS "a';b"; SELECT 2;`),
+            [`SELECT 'it"s' AS "a';b";`, 'SELECT 2;']
+        );
+    });
+
+    test('statement at cursor', () => {
+        const doc = 'SELECT 1 AS "a;b"\nFROM DUAL;\nSELECT 1 AS "c--d";\nSELECT 1 AS "e/*f";\nSELECT 2;';
+        assert.strictEqual(findStatementAtCursor(doc, 1)?.text, 'SELECT 1 AS "a;b"\nFROM DUAL;');
+        assert.strictEqual(findStatementAtCursor(doc, 2)?.text, 'SELECT 1 AS "c--d";');
+        assert.strictEqual(findStatementAtCursor(doc, 3)?.text, 'SELECT 1 AS "e/*f";');
+        assert.strictEqual(findStatementAtCursor(doc, 4)?.text, 'SELECT 2;');
+    });
+
+    test('statement ranges for CodeLens', () => {
+        const doc = 'SELECT 1 AS "a;b"; SELECT 2;\nSELECT 1 AS "c--d";\nSELECT 1 AS "e/*f";\nSELECT 3;';
+        assert.deepStrictEqual(
+            findStatementRanges(doc).map(r => doc.slice(r.start, r.end + 1)),
+            ['SELECT 1 AS "a;b";', 'SELECT 2;', 'SELECT 1 AS "c--d";', 'SELECT 1 AS "e/*f";', 'SELECT 3;']
+        );
+    });
+
+    test('comment stripping keeps quoted identifiers', () => {
+        assert.strictEqual(stripCommentsPreservingStrings('SELECT 1 AS "a--b" -- note\nFROM t'), 'SELECT 1 AS "a--b"  \nFROM t');
+        assert.strictEqual(stripCommentsPreservingStrings('SELECT 1 AS "a/*b" /* c */'), 'SELECT 1 AS "a/*b"  ');
+        assert.strictEqual(stripCommentsPreservingStrings('SELECT 1 AS "x""--y"'), 'SELECT 1 AS "x""--y"');
+    });
+
+    test('a comment after the ; stays with a statement that ends in a quoted identifier', () => {
+        assert.deepStrictEqual(
+            splitIntoStatements('SELECT 1 AS "a--b"; -- note\nSELECT 2;'),
+            ['SELECT 1 AS "a--b"; -- note', 'SELECT 2;']
+        );
+    });
+
+    test('script and function definitions with quoted names', () => {
+        const script = 'CREATE OR REPLACE LUA SCRIPT S."s;--/*" AS\n  return 1;\n/\nSELECT 2;';
+        assert.deepStrictEqual(splitIntoStatements(script), ['CREATE OR REPLACE LUA SCRIPT S."s;--/*" AS\n  return 1;', 'SELECT 2;']);
+        assert.strictEqual(isScriptOrFunctionDefinition('CREATE SCRIPT "a;b" AS return 1;'), true);
+
+        const fn = [
+            'CREATE OR REPLACE FUNCTION S."f;--/*" (x IN NUMBER) RETURN NUMBER IS',
+            '  "END;" NUMBER;',
+            'BEGIN',
+            '  "END;" := x;',
+            '  RETURN "END;";',
+            'END "f;--/*";',
+            'SELECT 2;',
+        ].join('\n');
+        const statements = splitIntoStatements(fn);
+        assert.strictEqual(statements.length, 2, JSON.stringify(statements));
+        assert.ok(statements[0].endsWith('END "f;--/*";'));
+        assert.strictEqual(isScriptOrFunctionDefinition(statements[0]), true);
+    });
+});
