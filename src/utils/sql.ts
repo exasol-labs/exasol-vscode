@@ -207,7 +207,7 @@ function definitionKind(words: string[]): 'script' | 'function' | undefined {
 /**
  * True for a `CREATE [OR REPLACE] ... SCRIPT` or `CREATE [OR REPLACE] FUNCTION`
  * statement. Exasol stores the text of these definitions as sent, including a
- * final `;` and trailing whitespace of the body.
+ * final `;` and a comment after it; only trailing whitespace is dropped.
  */
 export function isScriptOrFunctionDefinition(sql: string): boolean {
     return definitionKind(readWords(sql, 0, 6)) !== undefined;
@@ -687,6 +687,15 @@ function stripLeadingCommentLines(chunk: string): string {
  * @param text The SQL text to split
  * @returns Array of individual SQL statements
  */
+/**
+ * True when `line` holds only whitespace and comments, and every block comment
+ * in it closes on the same line. The `x` after a line break survives a line
+ * comment but not an unclosed block comment.
+ */
+function holdsOnlyClosedComments(line: string): boolean {
+    return stripCommentsPreservingStrings(`${line}\nx`).trim() === 'x';
+}
+
 export function splitIntoStatements(text: string): string[] {
     const ends = findStatementEnds(text);
     const statements: string[] = [];
@@ -704,11 +713,11 @@ export function splitIntoStatements(text: string): string[] {
             continue;
         }
 
-        // Keep a trailing "; -- note" with its statement. Any other text after
-        // the semicolon starts the next statement, which may end on a later line.
+        // Keep trailing comments on the line of the semicolon ("; -- note",
+        // "; /* note */") with its statement. Any other text after the
+        // semicolon starts the next statement, which may end on a later line.
         const lineEnd = lineEndAt(text, semiIdx);
-        const rest = text.slice(semiIdx + 1, lineEnd).trim();
-        const chunkEnd = rest === '' || rest.startsWith('--') ? lineEnd : semiIdx + 1;
+        const chunkEnd = holdsOnlyClosedComments(text.slice(semiIdx + 1, lineEnd)) ? lineEnd : semiIdx + 1;
 
         const raw = text.slice(pos, chunkEnd);
         pos = chunkEnd;

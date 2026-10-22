@@ -318,6 +318,22 @@ SELECT * FROM table12;`;
         );
     });
 
+    test('a trailing block comment stays with its statement', () => {
+        assert.deepStrictEqual(splitIntoStatements('SELECT 1; /* c */'), ['SELECT 1; /* c */']);
+        assert.deepStrictEqual(splitIntoStatements('SELECT 1; /* c */ -- d'), ['SELECT 1; /* c */ -- d']);
+    });
+
+    test('a statement after a block comment on the same line is separate', () => {
+        assert.deepStrictEqual(splitIntoStatements('SELECT 1; /* c */ SELECT 2;'), ['SELECT 1;', '/* c */ SELECT 2;']);
+    });
+
+    test('a block comment that continues on the next line is not trailing', () => {
+        assert.deepStrictEqual(
+            splitIntoStatements('SELECT 1; /* c\nd */ SELECT 2;'),
+            ['SELECT 1;', '/* c\nd */ SELECT 2;']
+        );
+    });
+
     test('two statements on one line produce two separate statements', () => {
         const text = `SELECT * FROM table12; SELECT * FROM table13;`;
 
