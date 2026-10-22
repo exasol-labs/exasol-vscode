@@ -104,6 +104,48 @@ export function parseAliases(queryText: string): Map<string, AliasTarget> {
     return aliases;
 }
 
+/**
+ * Range of a quoted identifier the user is typing: from the opening `"`
+ * before the word at the cursor to the end of that word, plus a closing `"`
+ * right after it, such as the one added by auto-closing. Undefined when no
+ * opening quote is there. The word pattern of the language excludes `"`, so
+ * the default range of a completion would leave the opening quote in place.
+ */
+function openingQuoteRange(document: vscode.TextDocument, position: vscode.Position): vscode.Range | undefined {
+    const line = document.lineAt(position).text;
+    const wordRange = document.getWordRangeAtPosition(position);
+    const quoteIdx = (wordRange?.start.character ?? position.character) - 1;
+    if (quoteIdx < 0 || line[quoteIdx] !== '"' || !opensQuotedIdentifier(line, quoteIdx)) { return undefined; }
+    const wordEnd = wordRange?.end.character ?? position.character;
+    const end = line[wordEnd] === '"' ? wordEnd + 1 : wordEnd;
+    return new vscode.Range(position.line, quoteIdx, position.line, end);
+}
+
+/** True when the quoted identifier in `range` ends with its closing quote. */
+function isClosedQuote(line: string, range: vscode.Range): boolean {
+    const end = range.end.character;
+    return end - range.start.character > 1 && line[end - 1] === '"';
+}
+
+/**
+ * True when the `"` at `quoteIdx` opens a quoted identifier: it is not inside
+ * a string, a `--` comment or another quoted identifier, and does not close one.
+ */
+function opensQuotedIdentifier(line: string, quoteIdx: number): boolean {
+    let open: string | undefined;
+    for (let i = 0; i < quoteIdx; i++) {
+        const ch = line[i];
+        if (open) {
+            if (ch === open) { open = undefined; }
+        } else if (ch === "'" || ch === '"') {
+            open = ch;
+        } else if (ch === '-' && line[i + 1] === '-') {
+            return false;
+        }
+    }
+    return open === undefined;
+}
+
 export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
     private cache: Map<string, DatabaseObject[]> = new Map();
     private cacheExpiry: Map<string, number> = new Map();
@@ -117,6 +159,8 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
     private reservedKeywords: Set<string> = new Set();
     private reservedKeywordsLoaded = false;
     private readonly CACHE_TTL = 300000; // 5 minutes
+    /** Stored name of each item built by nameItem. */
+    private readonly storedNames = new WeakMap<vscode.CompletionItem, string>();
 
     constructor(private connectionManager: ConnectionManager) {}
 
@@ -125,6 +169,16 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         position: vscode.Position,
         _token: vscode.CancellationToken,
         _context: vscode.CompletionContext
+    ): Promise<vscode.CompletionItem[]> {
+        const quoteRange = openingQuoteRange(document, position);
+        const items = await this.collectItems(document, position, quoteRange);
+        return quoteRange ? this.quotedNameItems(items, quoteRange) : items;
+    }
+
+    private async collectItems(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        quoteRange: vscode.Range | undefined
     ): Promise<vscode.CompletionItem[]> {
         const config = vscode.workspace.getConfiguration('exasol');
         if (!config.get<boolean>('autoComplete', true)) {
@@ -138,13 +192,18 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
         const items: vscode.CompletionItem[] = [];
 
-        // Get the text before cursor
-        const linePrefix = document.lineAt(position).text.substring(0, position.character);
-        const wordRange = document.getWordRangeAtPosition(position);
-        const _word = wordRange ? document.getText(wordRange) : '';
+        // Text before the cursor, up to a quoted identifier being typed there,
+        // so that `x."i` completes the columns of `x` like `x.`.
+        const linePrefix = document.lineAt(position).text.substring(0, quoteRange?.start.character ?? position.character);
 
-        // Get the entire query text for alias detection
-        const queryText = document.getText();
+        // Get the entire query text for alias detection. A quoted identifier
+        // opened at the cursor without its closing quote would run to the end
+        // of the statement, so it is parsed as closed after the typed word.
+        let queryText = document.getText();
+        if (quoteRange && !isClosedQuote(document.lineAt(position).text, quoteRange)) {
+            const closeAt = offsetAtLineCharacter(queryText, position.line, quoteRange.end.character);
+            queryText = `${queryText.slice(0, closeAt)}"${queryText.slice(closeAt)}`;
+        }
 
         try {
             // Load reserved keywords if not already loaded
@@ -322,7 +381,31 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         const item = new vscode.CompletionItem(insert, kind);
         item.insertText = insert;
         item.filterText = this.bareName(stored);
+        this.storedNames.set(item, stored);
         return item;
+    }
+
+    /**
+     * Items after an opening `"`. Only names can go inside a quoted
+     * identifier, so keywords and functions are dropped. Every name, also a
+     * regular one such as `ID`, is listed and inserted quoted with its exact
+     * case (`"ID"`), because the user started a quoted identifier. The range
+     * starts at the opening quote, so typing `"i` matches `"id"` and accepting
+     * it replaces the quote instead of adding a second one.
+     */
+    private quotedNameItems(items: vscode.CompletionItem[], range: vscode.Range): vscode.CompletionItem[] {
+        const out: vscode.CompletionItem[] = [];
+        for (const item of items) {
+            const stored = this.storedNames.get(item);
+            if (stored === undefined) { continue; }
+            const quoted = `"${escapeSqlIdentifier(stored)}"`;
+            item.label = quoted;
+            item.insertText = quoted;
+            item.filterText = quoted;
+            item.range = range;
+            out.push(item);
+        }
+        return out;
     }
 
     /** Name without quotes: regular names in lowercase, any other name exactly as stored. */

@@ -99,6 +99,16 @@ where local.`;
         );
     });
 
+    test('REGEXP_LIKE pattern is not an alias without AS', () => {
+        assert.deepStrictEqual(names(`SELECT x REGEXP_LIKE pat, y NOT REGEXP_LIKE pat, z FROM t`), ['z']);
+    });
+
+    test('DISTINCT or ALL before the first item is not part of it', () => {
+        assert.deepStrictEqual(names('SELECT DISTINCT x, y b FROM t'), ['x', 'b']);
+        assert.deepStrictEqual(names('select all t.x a FROM t'), ['a']);
+        assert.deepStrictEqual(names('SELECT all_x, distinct_y FROM t'), ['all_x', 'distinct_y']);
+    });
+
     test('unclosed quoted alias without AS is skipped', () => {
         assert.deepStrictEqual(names('SELECT 1 "open FROM t'), []);
     });

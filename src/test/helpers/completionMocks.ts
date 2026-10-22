@@ -42,7 +42,17 @@ export class MockSnippetString {
 export class MockPosition {
     constructor(public line: number, public character: number) {}
 }
-export class MockRange {}
+export class MockRange {
+    readonly start: MockPosition;
+    readonly end: MockPosition;
+    constructor(startLine: number, startCharacter: number, endLine: number, endCharacter: number) {
+        this.start = new MockPosition(startLine, startCharacter);
+        this.end = new MockPosition(endLine, endCharacter);
+    }
+}
+
+/** Word characters of the wordPattern in language-configuration.json. */
+const WORD = /[^`~!@#%^&*()\-=+[{\]}\\|;:'",.<>/?\s]+/g;
 
 /**
  * vscodeMock is a plain object built from the shared subset used by other
@@ -100,14 +110,22 @@ export function makePosition(line: number, character: number): vscode.Position {
 
 /** A single-cast factory for a minimal vscode.TextDocument double: getText(),
  * lineAt(position) (the only overload completionProvider.ts calls), and
- * getWordRangeAtPosition() (always undefined, none of these tests rely on
- * word-range-based prefix detection). */
+ * getWordRangeAtPosition(position) with the word pattern of the language. */
 export function makeDocument(text: string): vscode.TextDocument {
     const lines = text.split('\n');
     const doc = {
         getText: () => text,
         lineAt: (position: vscode.Position) => ({ text: lines[position.line] ?? '' }),
-        getWordRangeAtPosition: () => undefined,
+        getWordRangeAtPosition: (position: vscode.Position) => {
+            const line = lines[position.line] ?? '';
+            for (const m of line.matchAll(WORD)) {
+                const end = m.index + m[0].length;
+                if (m.index <= position.character && position.character <= end) {
+                    return new MockRange(position.line, m.index, position.line, end);
+                }
+            }
+            return undefined;
+        },
     };
     return doc as unknown as vscode.TextDocument;
 }

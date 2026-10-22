@@ -151,3 +151,82 @@ suite('ExasolCompletionProvider - quoting of stored names', () => {
         ]);
     });
 });
+
+/** Start and end character of the item's range, or undefined without a range. */
+function rangeOf(item: vscode.CompletionItem): [number, number] | undefined {
+    const range = item.range as vscode.Range | undefined;
+    return range ? [range.start.character, range.end.character] : undefined;
+}
+
+/**
+ * After an opening `"` only names are listed, each quoted with its exact
+ * case, also a regular name: `ID` becomes `"ID"`, because the user started
+ * a quoted identifier. Keywords and functions are dropped. The range starts
+ * at the opening quote and covers a closing quote right after the cursor, and
+ * the filter text includes the quotes, so `"i` matches `"id"`.
+ */
+suite('ExasolCompletionProvider - completion after an opening quote', () => {
+    const QUOTED_COLUMNS: [string, string, string][] = [
+        ['"ID"', '"ID"', '"ID"'],
+        ['"id"', '"id"', '"id"'],
+        ['"SELECT"', '"SELECT"', '"SELECT"'],
+        ['"lower v"', '"lower v"', '"lower v"'],
+        ['"MixedCase"', '"MixedCase"', '"MixedCase"'],
+        ['"a""b"', '"a""b"', '"a""b"'],
+        ['"1X"', '"1X"', '"1X"'],
+        ['"PLAIN_COL"', '"PLAIN_COL"', '"PLAIN_COL"'],
+    ];
+
+    function assertOnlyQuotedNames(items: vscode.CompletionItem[], range: [number, number]): void {
+        assert.ok(items.length > 0);
+        for (const item of items) {
+            assert.ok(String(item.insertText).startsWith('"'), String(item.insertText));
+            assert.deepStrictEqual(rangeOf(item), range, String(item.label));
+            assert.ok(item.kind !== CompletionItemKind.Keyword && item.kind !== CompletionItemKind.Function, String(item.label));
+        }
+    }
+
+    test('typed word after the quote', async () => {
+        const items = await complete('SELECT "i| FROM s.t');
+        assert.deepStrictEqual(texts(items.filter(i => i.detail === 'Column')), QUOTED_COLUMNS);
+        assertOnlyQuotedNames(items, [7, 9]);
+    });
+
+    test('only the quote, with an auto-closed quote after the cursor', async () => {
+        const items = await complete('SELECT "|" FROM s.t');
+        assert.deepStrictEqual(texts(items.filter(i => i.detail === 'Column')), QUOTED_COLUMNS);
+        assertOnlyQuotedNames(items, [7, 9]);
+    });
+
+    test('word and auto-closed quote after the cursor are replaced', async () => {
+        const items = await complete('SELECT "i|d" FROM s.t');
+        assertOnlyQuotedNames(items, [7, 11]);
+    });
+
+    test('only the quote at the end of the line', async () => {
+        const items = await complete('SELECT "|');
+        const objects = items.filter(i => i.kind === CompletionItemKind.Class && i.detail === 'table in "lower s"');
+        assert.deepStrictEqual(texts(objects), QUOTED_COLUMNS);
+        assertOnlyQuotedNames(items, [7, 8]);
+    });
+
+    test('after an alias and a dot', async () => {
+        const items = await complete('SELECT x."i|" FROM s.t x');
+        assert.deepStrictEqual(texts(items), QUOTED_COLUMNS);
+        assertOnlyQuotedNames(items, [9, 12]);
+    });
+
+    test('unquoted typing is unchanged', async () => {
+        const items = await complete('SELECT i| FROM s.t');
+        assert.deepStrictEqual(texts(items.filter(i => i.detail === 'Column')), EXPECTED);
+        assert.ok(items.every(i => rangeOf(i) === undefined));
+        assert.ok(items.some(i => i.kind === CompletionItemKind.Keyword));
+    });
+
+    test('a closing quote or a quote in a string does not start a quoted identifier', async () => {
+        for (const sql of ['SELECT "id"| FROM s.t', `SELECT x FROM s.t WHERE x = 'a"|`, 'SELECT 1 -- "|']) {
+            const items = await complete(sql);
+            assert.ok(items.every(i => rangeOf(i) === undefined), sql);
+        }
+    });
+});

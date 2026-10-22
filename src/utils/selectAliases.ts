@@ -165,7 +165,8 @@ export function findEnclosingSelectRange(
 
 function aliasesFromListText(list: string | undefined): SelectAlias[] {
     if (list === undefined) { return []; }
-    const items = splitTopLevelCommas(list);
+    // `SELECT DISTINCT x` and `SELECT ALL x`: the set quantifier is not part of the first item.
+    const items = splitTopLevelCommas(list.replace(/^\s*(DISTINCT|ALL)\b/i, ''));
     const out: SelectAlias[] = [];
     const seen = new Set<string>();
     for (const raw of items) {
@@ -452,7 +453,7 @@ function extractAliasFromItem(item: string): SelectAlias | undefined {
  * cannot be one of them.
  */
 const NON_ALIAS_KEYWORDS = new Set([
-    'AND', 'OR', 'NOT', 'IS', 'IN', 'LIKE', 'BETWEEN', 'ESCAPE', 'DISTINCT', 'ALL',
+    'AND', 'OR', 'NOT', 'IS', 'IN', 'LIKE', 'REGEXP_LIKE', 'BETWEEN', 'ESCAPE', 'DISTINCT', 'ALL',
     'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'NULL', 'TRUE', 'FALSE', 'UNKNOWN',
     'PRIOR', 'CONNECT_BY_ROOT', 'OVER', 'AS', 'TO',
     'YEAR', 'MONTH', 'DAY', 'HOUR', 'MINUTE', 'SECOND',
