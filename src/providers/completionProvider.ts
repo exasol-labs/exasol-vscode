@@ -311,8 +311,22 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         return this.isRegularName(stored) ? stored.toLowerCase() : `"${escapeSqlIdentifier(stored)}"`;
     }
 
-    /** Label: regular names in lowercase, any other name exactly as stored. */
-    private displayName(stored: string): string {
+    /**
+     * Completion item for a stored name. The label is the insert text, so a
+     * quoted name such as `"id"` and the regular name `ID` (label `id`) look
+     * different. The filter text is the name without quotes, so typing `id`
+     * matches both.
+     */
+    private nameItem(stored: string, kind: vscode.CompletionItemKind): vscode.CompletionItem {
+        const insert = this.quoteIdentifier(stored);
+        const item = new vscode.CompletionItem(insert, kind);
+        item.insertText = insert;
+        item.filterText = this.bareName(stored);
+        return item;
+    }
+
+    /** Name without quotes: regular names in lowercase, any other name exactly as stored. */
+    private bareName(stored: string): string {
         return this.isRegularName(stored) ? stored.toLowerCase() : stored;
     }
 
@@ -406,11 +420,9 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
     private getSchemaCompletions(schemas: string[]): vscode.CompletionItem[] {
         return schemas.filter((s): s is string => typeof s === 'string' && s.length > 0).map(schema => {
-            const displayName = this.displayName(schema);
-            const item = new vscode.CompletionItem(displayName, vscode.CompletionItemKind.Module);
+            const item = this.nameItem(schema, vscode.CompletionItemKind.Module);
             item.detail = 'Schema';
-            item.insertText = this.quoteIdentifier(schema);
-            item.sortText = `0_${displayName}`;
+            item.sortText = `0_${this.bareName(schema)}`;
             return item;
         });
     }
@@ -425,14 +437,12 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         return objects.filter(o => o && o.name && o.schema).map(obj => {
             const kind = ExasolCompletionProvider.OBJECT_KIND[obj.type] ?? vscode.CompletionItemKind.Class;
 
-            const displayName = this.displayName(obj.name);
-            const item = new vscode.CompletionItem(displayName, kind);
+            const item = this.nameItem(obj.name, kind);
             const typeLabel = obj.type === 'virtual-table' ? 'virtual table'
                 : obj.type === 'system-table' ? 'system table'
                 : obj.type;
-            item.detail = `${typeLabel} in ${this.displayName(obj.schema)}`;
-            item.insertText = this.quoteIdentifier(obj.name);
-            item.sortText = `1_${displayName}`;
+            item.detail = `${typeLabel} in ${this.quoteIdentifier(obj.schema)}`;
+            item.sortText = `1_${this.bareName(obj.name)}`;
             return item;
         });
     }
@@ -440,11 +450,9 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
     private getLocalAliasCompletions(aliases: SelectAlias[]): vscode.CompletionItem[] {
         return aliases.map((a, idx) => {
             const stored = a.quoted ? a.name : a.name.toUpperCase();
-            const displayName = this.displayName(stored);
-            const item = new vscode.CompletionItem(displayName, vscode.CompletionItemKind.Field);
+            const item = this.nameItem(stored, vscode.CompletionItemKind.Field);
             item.detail = 'SELECT alias';
-            item.insertText = this.quoteIdentifier(stored);
-            item.sortText = ExasolCompletionProvider.sourceOrderSortText(idx, displayName);
+            item.sortText = ExasolCompletionProvider.sourceOrderSortText(idx, this.bareName(stored));
             return item;
         });
     }
@@ -452,17 +460,15 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
     private getColumnCompletions(columns: string[]): vscode.CompletionItem[] {
         const valid = columns.filter((c): c is string => typeof c === 'string' && c.length > 0);
         return valid.map((col, idx) => {
-            const displayName = this.displayName(col);
-            const item = new vscode.CompletionItem(displayName, vscode.CompletionItemKind.Field);
-            item.insertText = this.quoteIdentifier(col);
-            item.sortText = ExasolCompletionProvider.sourceOrderSortText(idx, displayName);
+            const item = this.nameItem(col, vscode.CompletionItemKind.Field);
+            item.sortText = ExasolCompletionProvider.sourceOrderSortText(idx, this.bareName(col));
             return item;
         });
     }
 
     /** Build a sortText that preserves source order under VS Code's lexical sort. */
-    private static sourceOrderSortText(idx: number, lower: string): string {
-        return `0_${String(idx).padStart(5, '0')}_${lower}`;
+    private static sourceOrderSortText(idx: number, name: string): string {
+        return `0_${String(idx).padStart(5, '0')}_${name}`;
     }
 
     /**
@@ -548,11 +554,9 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         if (order.includes('columns') && fromColumns.length > 0) {
             for (let i = 0; i < fromColumns.length; i++) {
                 const col = fromColumns[i];
-                const displayName = this.displayName(col);
-                const item = new vscode.CompletionItem(displayName, vscode.CompletionItemKind.Field);
+                const item = this.nameItem(col, vscode.CompletionItemKind.Field);
                 item.detail = 'Column';
-                item.insertText = this.quoteIdentifier(col);
-                item.sortText = `${prio('columns')}${String(i).padStart(5, '0')}_${displayName}`;
+                item.sortText = `${prio('columns')}${String(i).padStart(5, '0')}_${this.bareName(col)}`;
                 out.push(item);
             }
         }
@@ -581,14 +585,14 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
         if (order.includes('objects')) {
             for (const item of this.getObjectCompletions(objects)) {
-                item.sortText = `${prio('objects')}${item.label}`;
+                item.sortText = `${prio('objects')}${item.filterText}`;
                 out.push(item);
             }
         }
 
         if (order.includes('schemas')) {
             for (const item of this.getSchemaCompletions(schemas)) {
-                item.sortText = `${prio('schemas')}${item.label}`;
+                item.sortText = `${prio('schemas')}${item.filterText}`;
                 out.push(item);
             }
         }

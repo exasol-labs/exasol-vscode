@@ -26,16 +26,16 @@ const { ExasolCompletionProvider } = require('../../providers/completionProvider
 /** Stored names that cover every quoting case. */
 const NAMES = ['ID', 'id', 'SELECT', 'lower v', 'MixedCase', 'a"b', '1X', 'PLAIN_COL'];
 
-/** Expected [label, insertText] per stored name in NAMES. */
-const EXPECTED: [string, string][] = [
-    ['id', 'id'],
-    ['id', '"id"'],
-    ['SELECT', '"SELECT"'],
-    ['lower v', '"lower v"'],
-    ['MixedCase', '"MixedCase"'],
-    ['a"b', '"a""b"'],
-    ['1X', '"1X"'],
-    ['plain_col', 'plain_col'],
+/** Expected [label, insertText, filterText] per stored name in NAMES. */
+const EXPECTED: [string, string, string][] = [
+    ['id', 'id', 'id'],
+    ['"id"', '"id"', 'id'],
+    ['"SELECT"', '"SELECT"', 'SELECT'],
+    ['"lower v"', '"lower v"', 'lower v'],
+    ['"MixedCase"', '"MixedCase"', 'MixedCase'],
+    ['"a""b"', '"a""b"', 'a"b'],
+    ['"1X"', '"1X"', '1X'],
+    ['plain_col', 'plain_col', 'plain_col'],
 ];
 
 function makeProvider(): InstanceType<typeof ExasolCompletionProvider> {
@@ -73,65 +73,81 @@ async function complete(sqlWithCursor: string): Promise<vscode.CompletionItem[]>
     );
 }
 
-function pairs(items: vscode.CompletionItem[], kind: number): [string, string][] {
-    return items.filter(i => i.kind === kind).map(i => [String(i.label), String(i.insertText)]);
+/** [label, insertText, filterText] of each item. */
+function texts(items: vscode.CompletionItem[]): [string, string, string][] {
+    return items.map(i => [String(i.label), String(i.insertText), String(i.filterText)]);
+}
+
+function ofKind(items: vscode.CompletionItem[], kind: number): [string, string, string][] {
+    return texts(items.filter(i => i.kind === kind));
 }
 
 suite('ExasolCompletionProvider - quoting of stored names', () => {
     test('columns after a table alias', async () => {
         const items = await complete('SELECT x.| FROM s.t x');
-        assert.deepStrictEqual(pairs(items, CompletionItemKind.Field), EXPECTED);
+        assert.deepStrictEqual(ofKind(items, CompletionItemKind.Field), EXPECTED);
     });
 
     test('columns of the FROM tables after SELECT', async () => {
         const items = await complete('SELECT | FROM s.t');
-        const cols = items.filter(i => i.detail === 'Column').map(i => [String(i.label), String(i.insertText)]);
-        assert.deepStrictEqual(cols, EXPECTED);
+        assert.deepStrictEqual(texts(items.filter(i => i.detail === 'Column')), EXPECTED);
     });
 
     test('objects after a schema prefix', async () => {
         const items = await complete('SELECT * FROM "lower s".|');
-        assert.deepStrictEqual(pairs(items, CompletionItemKind.Class), EXPECTED);
-        assert.strictEqual(items[0].detail, 'table in lower s');
+        assert.deepStrictEqual(ofKind(items, CompletionItemKind.Class), EXPECTED);
+        assert.strictEqual(items[0].detail, 'table in "lower s"');
     });
 
     test('objects and schemas after FROM', async () => {
         const items = await complete('SELECT * FROM |');
-        const objects = items.filter(i => i.kind === CompletionItemKind.Class && i.detail === 'table in lower s');
-        assert.deepStrictEqual(objects.map(i => [String(i.label), String(i.insertText)]), EXPECTED);
+        const objects = items.filter(i => i.kind === CompletionItemKind.Class && i.detail === 'table in "lower s"');
+        assert.deepStrictEqual(texts(objects), EXPECTED);
         // Schemas come back sorted, plus SYS and EXA_STATISTICS.
-        const schemas = pairs(items, CompletionItemKind.Module).filter(([, insert]) => !['sys', 'exa_statistics'].includes(insert));
-        assert.deepStrictEqual(schemas.sort(), [...EXPECTED].sort());
+        const schemas = items.filter(i => i.kind === CompletionItemKind.Module && !['sys', 'exa_statistics'].includes(String(i.insertText)));
+        assert.deepStrictEqual(texts(schemas).sort(), [...EXPECTED].sort());
+        // Sorting uses the name without quotes, so quoted names do not all sort first.
+        for (const item of [...objects, ...schemas]) {
+            assert.ok(String(item.sortText).endsWith(`_${item.filterText}`), String(item.sortText));
+        }
     });
 
     test('SELECT-list aliases after LOCAL.', async () => {
         const items = await complete('SELECT 1 AS id, 2 AS "id", 3 AS "SELECT", 4 AS "lower v", 5 AS plain_col FROM t WHERE local.|');
-        assert.deepStrictEqual(items.map(i => [String(i.label), String(i.insertText)]), [
-            ['id', 'id'],
-            ['id', '"id"'],
-            ['SELECT', '"SELECT"'],
-            ['lower v', '"lower v"'],
-            ['plain_col', 'plain_col'],
+        assert.deepStrictEqual(texts(items), [
+            ['id', 'id', 'id'],
+            ['"id"', '"id"', 'id'],
+            ['"SELECT"', '"SELECT"', 'SELECT'],
+            ['"lower v"', '"lower v"', 'lower v'],
+            ['plain_col', 'plain_col', 'plain_col'],
         ]);
     });
 
     test('CTE columns', async () => {
         const items = await complete('WITH c AS (SELECT 1 AS id, 2 AS "id", 3 AS "SELECT", 4 AS MixedCase, 5 AS "MixedCase") SELECT c.| FROM c');
-        assert.deepStrictEqual(items.map(i => [String(i.label), String(i.insertText)]), [
-            ['id', 'id'],
-            ['id', '"id"'],
-            ['SELECT', '"SELECT"'],
-            ['mixedcase', 'mixedcase'],
-            ['MixedCase', '"MixedCase"'],
+        assert.deepStrictEqual(texts(items), [
+            ['id', 'id', 'id'],
+            ['"id"', '"id"', 'id'],
+            ['"SELECT"', '"SELECT"', 'SELECT'],
+            ['mixedcase', 'mixedcase', 'mixedcase'],
+            ['"MixedCase"', '"MixedCase"', 'MixedCase'],
+        ]);
+    });
+
+    test('CTE columns without AS', async () => {
+        const items = await complete('WITH c AS (SELECT 1 a, x b FROM t) SELECT c.| FROM c');
+        assert.deepStrictEqual(texts(items), [
+            ['a', 'a', 'a'],
+            ['b', 'b', 'b'],
         ]);
     });
 
     test('CTE explicit column list', async () => {
         const items = await complete('WITH c (id, "id", "a""b") AS (SELECT 1, 2, 3) SELECT c.| FROM c');
-        assert.deepStrictEqual(items.map(i => [String(i.label), String(i.insertText)]), [
-            ['id', 'id'],
-            ['id', '"id"'],
-            ['a"b', '"a""b"'],
+        assert.deepStrictEqual(texts(items), [
+            ['id', 'id', 'id'],
+            ['"id"', '"id"', 'id'],
+            ['"a""b"', '"a""b"', 'a"b'],
         ]);
     });
 });

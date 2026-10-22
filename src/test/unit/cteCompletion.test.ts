@@ -133,6 +133,16 @@ LIMIT 100`;
         const ctes = parseCtes(stmt);
         assert.deepStrictEqual(ctes[0].columns, ['COL_A', 'COL_B']);
     });
+
+    test('column aliases without AS', () => {
+        const stmt = `WITH c AS (SELECT 1 a, x b, t.y "Low", f(z) d, CASE WHEN p THEN 1 END e, 'lit' g FROM t) SELECT c.`;
+        assert.deepStrictEqual(parseCtes(stmt)[0].columns, ['A', 'B', 'Low', 'D', 'E', 'G']);
+    });
+
+    test('keywords and operands are not taken as aliases without AS', () => {
+        const stmt = `WITH c AS (SELECT a + b, NOT x, y IS NULL, INTERVAL '1' DAY, CASE WHEN p THEN 1 END, f(z) FROM t) SELECT c.`;
+        assert.deepStrictEqual(parseCtes(stmt)[0].columns, []);
+    });
 });
 
 suite('ExasolCompletionProvider - CTE column completion', () => {

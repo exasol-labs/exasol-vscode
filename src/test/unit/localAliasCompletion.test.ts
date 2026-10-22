@@ -85,6 +85,24 @@ where local.`;
         assert.deepStrictEqual(names('SELECT coalesce(a, b), c.id FROM t'), ['id']);
     });
 
+    test('alias without AS', () => {
+        assert.deepStrictEqual(
+            names(`SELECT 1 one, x two, t.y "Three", coalesce(a, b) four, CASE WHEN p THEN 1 END five, 2.5E3 six FROM t`),
+            ['one', 'two', 'Three', 'four', 'five', 'six']
+        );
+    });
+
+    test('operator, keyword or literal at the end is not an alias without AS', () => {
+        assert.deepStrictEqual(
+            names(`SELECT a + b, -c, NOT d, e IS NULL, f IS NOT NULL, INTERVAL '1' DAY TO SECOND, 'x' 'y', x OVER w FROM t`),
+            []
+        );
+    });
+
+    test('unclosed quoted alias without AS is skipped', () => {
+        assert.deepStrictEqual(names('SELECT 1 "open FROM t'), []);
+    });
+
     test('CASE expression without AS is skipped', () => {
         assert.deepStrictEqual(
             names("SELECT CASE WHEN x > 0 THEN 'a' ELSE 'b' END, id FROM t"),

@@ -9,9 +9,7 @@
  *   expr AS "Quoted"       -> Quoted (quotes stripped)
  *   table.column           -> column (Exasol resolves LOCAL.column for this)
  *   bare_column            -> bare_column
- *
- * Intentionally NOT supported (false-positive prone, omitted by design):
- *   expr alias             (bare alias without AS)
+ *   expr alias             -> alias (no AS; see extractImplicitAlias)
  *
  * Skipped entries: `*`, `table.*`.
  *
@@ -433,8 +431,8 @@ function splitTopLevelCommas(text: string): string[] {
  *   3. Else, if the item is a simple `[table.]column` reference (the trailing
  *      token is a bare identifier and what precedes it is empty, a dot, or a
  *      qualifier), use the trailing identifier as the alias.
- *   4. Else give up (covers expressions without explicit AS; intentionally
- *      ignored to avoid false positives).
+ *   4. Else, if the item is `expr alias` without AS, use the alias.
+ *   5. Else give up (expressions without an alias).
  */
 function extractAliasFromItem(item: string): SelectAlias | undefined {
     const trimmed = item.replace(/\s+$/, '');
@@ -444,7 +442,118 @@ function extractAliasFromItem(item: string): SelectAlias | undefined {
     const asAlias = extractAsAlias(trimmed);
     if (asAlias) { return asAlias; }
 
-    return extractTrailingColumnAlias(trimmed);
+    return extractTrailingColumnAlias(trimmed) ?? extractImplicitAlias(trimmed);
+}
+
+/**
+ * Keywords that are never an implicit alias: operators, clause starts, and
+ * words that end an expression, such as `END`, `NULL` or the `DAY` of
+ * `INTERVAL '1' DAY`. Exasol reserves all of them, so an unquoted alias
+ * cannot be one of them.
+ */
+const NON_ALIAS_KEYWORDS = new Set([
+    'AND', 'OR', 'NOT', 'IS', 'IN', 'LIKE', 'BETWEEN', 'ESCAPE', 'DISTINCT', 'ALL',
+    'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'NULL', 'TRUE', 'FALSE', 'UNKNOWN',
+    'PRIOR', 'CONNECT_BY_ROOT', 'OVER', 'AS', 'TO',
+    'YEAR', 'MONTH', 'DAY', 'HOUR', 'MINUTE', 'SECOND',
+    'SELECT', 'FROM', 'WHERE', 'GROUP', 'HAVING', 'QUALIFY', 'ORDER', 'LIMIT',
+    'UNION', 'INTERSECT', 'EXCEPT', 'MINUS', 'INTO', 'CONNECT', 'START', 'PREFERRING',
+    'JOIN', 'ON', 'WITH'
+]);
+
+/** Keywords of NON_ALIAS_KEYWORDS that can end the expression before an alias. */
+const EXPRESSION_END_KEYWORDS = new Set([
+    'END', 'NULL', 'TRUE', 'FALSE', 'UNKNOWN', 'YEAR', 'MONTH', 'DAY', 'HOUR', 'MINUTE', 'SECOND'
+]);
+
+type ItemToken =
+    | { kind: 'word'; text: string }
+    | { kind: 'quoted'; name: string }
+    | { kind: 'value' }
+    | { kind: 'operator' };
+
+/**
+ * `expr alias` without AS: the last token is a bare or quoted identifier that
+ * is not a keyword, and the token before it ends an expression (identifier,
+ * literal, closing paren, or a keyword such as `END`). So `1 a`, `x b`,
+ * `f(x) y` and `CASE ... END total` have an alias, while `a + b`, `NOT x`,
+ * `x IS NULL` and `INTERVAL '1' DAY` do not.
+ */
+function extractImplicitAlias(item: string): SelectAlias | undefined {
+    const tokens = tokenizeItem(item);
+    if (!tokens || tokens.length < 2) { return undefined; }
+    const last = tokens[tokens.length - 1];
+    const prev = tokens[tokens.length - 2];
+    if (prev.kind === 'operator') { return undefined; }
+    if (prev.kind === 'word') {
+        const upper = prev.text.toUpperCase();
+        if (NON_ALIAS_KEYWORDS.has(upper) && !EXPRESSION_END_KEYWORDS.has(upper)) { return undefined; }
+    }
+    if (last.kind === 'quoted') { return last.name ? { name: last.name, quoted: true } : undefined; }
+    if (last.kind === 'word' && !NON_ALIAS_KEYWORDS.has(last.text.toUpperCase())) {
+        return { name: last.text, quoted: false };
+    }
+    return undefined;
+}
+
+/**
+ * Split one SELECT-list item into top-level tokens. A parenthesized group,
+ * a string literal and a number are each one `value` token. Returns
+ * undefined for an unclosed quoted identifier or paren. An unclosed string
+ * runs to the end of the item, so it is the last token and never an alias.
+ */
+function tokenizeItem(item: string): ItemToken[] | undefined {
+    const tokens: ItemToken[] = [];
+    const len = item.length;
+    let i = 0;
+    while (i < len) {
+        const ch = item[i];
+        if (/\s/.test(ch)) { i++; continue; }
+        if (ch === "'") {
+            tokens.push({ kind: 'value' });
+            i = skipSingleQuoted(item, i);
+        } else if (ch === '"') {
+            const close = findClosingDoubleQuote(item, i);
+            if (close < 0) { return undefined; }
+            tokens.push({ kind: 'quoted', name: item.slice(i + 1, close).replace(/""/g, '"') });
+            i = close + 1;
+        } else if (ch === '(') {
+            const end = skipParenGroup(item, i);
+            if (end < 0) { return undefined; }
+            tokens.push({ kind: 'value' });
+            i = end;
+        } else if (/[A-Za-z_]/.test(ch)) {
+            const start = i;
+            while (i < len && isIdentChar(item[i])) { i++; }
+            tokens.push({ kind: 'word', text: item.slice(start, i) });
+        } else if (/[0-9]/.test(ch)) {
+            const m = /^[0-9]+(\.[0-9]*)?(E[+-]?[0-9]+)?/i.exec(item.slice(i));
+            tokens.push({ kind: 'value' });
+            i += m ? m[0].length : 1;
+        } else {
+            tokens.push({ kind: 'operator' });
+            i++;
+        }
+    }
+    return tokens;
+}
+
+/** Index after the `)` that closes the `(` at `openIdx`, or -1 when unclosed. */
+function skipParenGroup(text: string, openIdx: number): number {
+    let depth = 0;
+    let i = openIdx;
+    while (i < text.length) {
+        const ch = text[i];
+        if (ch === "'") { i = skipSingleQuoted(text, i); continue; }
+        if (ch === '"') { i = skipDoubleQuoted(text, i); continue; }
+        if (ch === '(') { depth++; }
+        if (ch === ')') {
+            depth--;
+            if (depth === 0) { return i + 1; }
+        }
+        i++;
+    }
+    return -1;
 }
 
 /**
