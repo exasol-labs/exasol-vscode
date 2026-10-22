@@ -28,7 +28,7 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - The Indices folder of a table was always empty. It now lists each index with its description from `EXA_ALL_INDICES`, for example `LOCAL INDEX (NAME)`
 - Expanding a system table in the Objects view listed no columns for users without read access to the table. The columns now come from `EXA_SYS_COLUMNS`, as in Describe Table
 - SQL completion now suggests the columns of `SYS` and `EXA_STATISTICS` tables
-- SQL completion now suggests the columns of tables with quoted lowercase names, such as `"lower v"`. Before, it looked up the uppercase name and found no columns
+- SQL completion now suggests the columns of tables with quoted lowercase names, such as `"lower v"`, after an alias, in a query that reads from the table, and when the name is written directly, as in `s."lower v".`. Before, it looked up the uppercase name and found no columns. A quoted name and the same name without quotes, such as `"t"` and `T`, now complete the columns of their own table
 - Describe Table, Generate SELECT Statement and Show Table DDL on an object without visible columns opened an empty panel, an invalid `SELECT` or the error `Table definition not found`. They now show the message `No columns visible for "SCHEMA"."NAME"`
 - Show View DDL repeated the `CREATE VIEW` header. It now opens the stored statement as `CREATE OR REPLACE VIEW` with the name qualified by its schema. When the stored statement has no final `;`, it is added on a new line, so a comment at the end does not hide it. When no view is found, it shows `No view visible for "SCHEMA"."NAME"`
 - Show Table DDL and Show View DDL now show the text of a database error, instead of `[object Object]`

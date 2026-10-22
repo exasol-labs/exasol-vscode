@@ -265,6 +265,49 @@ suite('ExasolCompletionProvider - lazy column fetch', () => {
         assert.match(columnQueries[0], /COLUMN_SCHEMA = 'S' AND COLUMN_TABLE = 'lower v'/);
     });
 
+    test('quoted and unquoted names resolve to different tables, also when written directly', async () => {
+        const driver = makeDriver((sql: string) => {
+            if (sql.includes('exa_sql_keywords')) {
+                return createRawResult(['KEYWORD'], [['SELECT']]);
+            }
+            if (sql.includes('EXA_ALL_TABLES')) {
+                // Both exist side by side after CREATE TABLE S."t" and CREATE TABLE S.T (docker, 2026-10-22).
+                return createRawResult(['TABLE_SCHEMA', 'TABLE_NAME', 'OBJECT_TYPE'],
+                    [['S', 'T', 'table'], ['S', 't', 'table'], ['S', 'lower v', 'table']]);
+            }
+            const column = ({ T: 'OF_UPPER_T', t: 'OF_LOWER_T', 'lower v': 'OF_LOWER_V' } as Record<string, string>)[
+                /COLUMN_TABLE = '([^']*)'/.exec(sql)?.[1] ?? ''
+            ];
+            if (column) {
+                return createRawResult(['COLUMN_NAME'], [[column]]);
+            }
+            return createRawResult(['TABLE_SCHEMA', 'TABLE_NAME'], []);
+        });
+        const { manager } = makeManager(driver);
+        const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
+
+        const cases: Array<[string, string]> = [
+            ['select * from s."t" x\nwhere x.', 'of_lower_t'],
+            ['select * from s.t x\nwhere x.', 'of_upper_t'],
+            ['select * from s."t"\nwhere ', 'of_lower_t'],
+            ['select * from s.t\nwhere ', 'of_upper_t'],
+            ['select\ns."lower v".', 'of_lower_v'],
+            ['select\n"S"."lower v".', 'of_lower_v'],
+            ['select\n"lower v".', 'of_lower_v'],
+            ['select\ns."t".', 'of_lower_t'],
+            ['select\ns.t.', 'of_upper_t'],
+        ];
+        for (const [sql, expected] of cases) {
+            const lines = sql.split('\n');
+            const items = await provider.provideCompletionItems(
+                makeDocument(sql), makePosition(1, lines[1].length), {} as vscode.CancellationToken, {} as vscode.CompletionContext
+            );
+            const labels = items.map(i => typeof i.label === 'string' ? i.label : i.label.label);
+            // Column labels are shown in lowercase.
+            assert.deepStrictEqual(labels.filter(l => l.startsWith('of_')), [expected], `${JSON.stringify(sql)}: ${JSON.stringify(labels)}`);
+        }
+    });
+
     test('columns of SYS and EXA_STATISTICS tables come from EXA_SYS_COLUMNS', async () => {
         const seenSql: string[] = [];
         const driver = makeDriver((sql: string) => {

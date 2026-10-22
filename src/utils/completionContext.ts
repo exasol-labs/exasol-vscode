@@ -7,7 +7,7 @@
  * the comment-stripped statement text and the cursor offset within it.
  */
 
-import { stripCommentsPreservingStrings } from './sql';
+import { normalizeIdentifier, stripCommentsPreservingStrings } from './sql';
 import { findEnclosingSelectRange } from './selectAliases';
 
 export type ContextKind =
@@ -19,6 +19,7 @@ export type ContextKind =
     | 'STATEMENT_START'
     | 'UNKNOWN';
 
+/** Names as the database stores them (see normalizeIdentifier). */
 export interface FromTableRef {
     schema?: string;
     table: string;
@@ -218,7 +219,7 @@ function extractFromTables(text: string, upper: string, fromIdx: number, scopeEn
     const body = text.slice(bodyStart, bodyEnd);
 
     const out: FromTableRef[] = [];
-    const ident = '(?:"([^"]+)"|([A-Za-z_]\\w*))';
+    const ident = '("(?:[^"]|"")+"|[A-Za-z_]\\w*)';
     // Anchor on FROM/JOIN to avoid grabbing aliases or ON-clause refs.
     // We synthesise a leading FROM so the first table in the body matches too.
     const withFrom = 'FROM ' + body;
@@ -231,12 +232,9 @@ function extractFromTables(text: string, upper: string, fromIdx: number, scopeEn
     const STOP = new Set(['ON','WHERE','GROUP','ORDER','HAVING','QUALIFY','LIMIT',
         'UNION','INTERSECT','EXCEPT','JOIN','INNER','LEFT','RIGHT','FULL','CROSS','OUTER','AS']);
     while ((m = re.exec(withFrom)) !== null) {
-        const schema = m[1] ?? m[2];
-        const table = m[3] ?? m[4];
-        if (!table) { continue; }
-        const tu = table.toUpperCase();
-        if (STOP.has(tu)) { continue; }
-        if (schema && STOP.has(schema.toUpperCase())) { continue; }
+        const schema = m[1] && normalizeIdentifier(m[1]);
+        const table = normalizeIdentifier(m[2]);
+        if (STOP.has(table) || (schema && STOP.has(schema))) { continue; }
         out.push(schema ? { schema, table } : { table });
     }
     return dedupe(out);
@@ -246,7 +244,7 @@ function dedupe(refs: FromTableRef[]): FromTableRef[] {
     const seen = new Set<string>();
     const out: FromTableRef[] = [];
     for (const r of refs) {
-        const k = `${(r.schema ?? '').toUpperCase()}.${r.table.toUpperCase()}`;
+        const k = JSON.stringify([r.schema, r.table]);
         if (seen.has(k)) { continue; }
         seen.add(k);
         out.push(r);

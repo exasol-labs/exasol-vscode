@@ -19,6 +19,15 @@ export function escapeSqlIdentifier(name: string): string {
     return name.replace(/"/g, '""');
 }
 
+/**
+ * The name a database stores for an identifier written in SQL: a quoted
+ * identifier as written, without its quotes and with `""` unescaped; any
+ * other identifier in uppercase.
+ */
+export function normalizeIdentifier(written: string): string {
+    return /^".*"$/s.test(written) ? written.slice(1, -1).replace(/""/g, '"') : written.toUpperCase();
+}
+
 /** Columns of SYS and EXA_STATISTICS tables are listed in EXA_SYS_COLUMNS, not in EXA_ALL_COLUMNS. */
 export function columnsViewFor(schemaName: string): string {
     return schemaName === 'SYS' || schemaName === 'EXA_STATISTICS' ? 'SYS.EXA_SYS_COLUMNS' : 'SYS.EXA_ALL_COLUMNS';

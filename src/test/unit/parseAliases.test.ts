@@ -17,28 +17,28 @@ const { parseAliases } = require('../../providers/completionProvider') as typeof
 suite('parseAliases', () => {
     test('unquoted: FROM users u', () => {
         const m = parseAliases('SELECT * FROM users u');
-        assert.deepStrictEqual(m.get('U'), { table: 'users' });
+        assert.deepStrictEqual(m.get('U'), { table: 'USERS' });
     });
 
     test('unquoted with AS: FROM users AS u', () => {
         const m = parseAliases('SELECT * FROM users AS u');
-        assert.deepStrictEqual(m.get('U'), { table: 'users' });
+        assert.deepStrictEqual(m.get('U'), { table: 'USERS' });
     });
 
     test('INNER JOIN orders o', () => {
         const m = parseAliases('SELECT * FROM a x INNER JOIN orders o ON x.id = o.id');
-        assert.deepStrictEqual(m.get('O'), { table: 'orders' });
-        assert.deepStrictEqual(m.get('X'), { table: 'a' });
+        assert.deepStrictEqual(m.get('O'), { table: 'ORDERS' });
+        assert.deepStrictEqual(m.get('X'), { table: 'A' });
     });
 
     test('LEFT OUTER JOIN products p', () => {
         const m = parseAliases('SELECT * FROM a x LEFT OUTER JOIN products p ON x.id = p.id');
-        assert.deepStrictEqual(m.get('P'), { table: 'products' });
+        assert.deepStrictEqual(m.get('P'), { table: 'PRODUCTS' });
     });
 
     test('schema-qualified unquoted: FROM schema.table t', () => {
         const m = parseAliases('SELECT * FROM myschema.mytable t');
-        assert.deepStrictEqual(m.get('T'), { schema: 'myschema', table: 'mytable' });
+        assert.deepStrictEqual(m.get('T'), { schema: 'MYSCHEMA', table: 'MYTABLE' });
     });
 
     test('quoted table only: JOIN "Table" AS t', () => {
@@ -53,12 +53,12 @@ suite('parseAliases', () => {
 
     test('quoted schema, unquoted table', () => {
         const m = parseAliases('SELECT * FROM "SCHEMA_A".table_x b');
-        assert.deepStrictEqual(m.get('B'), { schema: 'SCHEMA_A', table: 'table_x' });
+        assert.deepStrictEqual(m.get('B'), { schema: 'SCHEMA_A', table: 'TABLE_X' });
     });
 
     test('unquoted schema, quoted table', () => {
         const m = parseAliases('SELECT * FROM schema_a."TABLE_X" b');
-        assert.deepStrictEqual(m.get('B'), { schema: 'schema_a', table: 'TABLE_X' });
+        assert.deepStrictEqual(m.get('B'), { schema: 'SCHEMA_A', table: 'TABLE_X' });
     });
 
     test('skips SQL keywords as aliases (no alias case)', () => {
@@ -74,8 +74,8 @@ suite('parseAliases', () => {
 
     test('case-insensitive keywords (lowercase from/join)', () => {
         const m = parseAliases('select * from users u inner join orders o on u.id = o.uid');
-        assert.deepStrictEqual(m.get('U'), { table: 'users' });
-        assert.deepStrictEqual(m.get('O'), { table: 'orders' });
+        assert.deepStrictEqual(m.get('U'), { table: 'USERS' });
+        assert.deepStrictEqual(m.get('O'), { table: 'ORDERS' });
     });
 
     test('multiple FROM/JOIN entries with mixed quoting', () => {
@@ -87,7 +87,7 @@ suite('parseAliases', () => {
         `;
         const m = parseAliases(sql);
         assert.deepStrictEqual(m.get('A'), { schema: 'S1', table: 'T1' });
-        assert.deepStrictEqual(m.get('B'), { schema: 's2', table: 't2' });
+        assert.deepStrictEqual(m.get('B'), { schema: 'S2', table: 'T2' });
         assert.deepStrictEqual(m.get('C'), { table: 'T3' });
     });
 
@@ -124,5 +124,16 @@ limit 100;`;
         // Sanity: only the FROM-declared alias is in the map; commented lines
         // must not introduce phantom entries.
         assert.strictEqual(m.size, 1, `expected only B alias; got: ${JSON.stringify([...m.entries()])}`);
+    });
+    test('quoted names keep their case and unescape doubled quotes; unquoted ones are uppercased', () => {
+        const m = parseAliases('SELECT * FROM s."t" a JOIN s.t b ON 1=1 JOIN "My ""S"""."x y" c ON 1=1');
+        assert.deepStrictEqual(m.get('A'), { schema: 'S', table: 't' });
+        assert.deepStrictEqual(m.get('B'), { schema: 'S', table: 'T' });
+        assert.deepStrictEqual(m.get('C'), { schema: 'My "S"', table: 'x y' });
+    });
+
+    test('an alias equal to a quoted lowercase table name is kept', () => {
+        const m = parseAliases('SELECT * FROM "users" users');
+        assert.deepStrictEqual(m.get('USERS'), { table: 'users' });
     });
 });

@@ -36,7 +36,7 @@ suite('classifyContext', () => {
         const text = 'SELECT HERE FROM schema_d.table_dates';
         const r = classifyContext(text, at(text, 'HERE'));
         assert.strictEqual(r.kind, 'AFTER_SELECT_KEYWORD');
-        assert.deepStrictEqual(r.fromTables, [{ schema: 'schema_d', table: 'table_dates' }]);
+        assert.deepStrictEqual(r.fromTables, [{ schema: 'SCHEMA_D', table: 'TABLE_DATES' }]);
     });
 
     test('AFTER_SELECT_KEYWORD: no FROM yet (mid-edit)', () => {
@@ -62,14 +62,14 @@ suite('classifyContext', () => {
         const text = 'SELECT * FROM schema_d.table_dates WHERE HERE';
         const r = classifyContext(text, at(text, 'HERE'));
         assert.strictEqual(r.kind, 'AFTER_WHERE_HAVING_QUALIFY');
-        assert.deepStrictEqual(r.fromTables, [{ schema: 'schema_d', table: 'table_dates' }]);
+        assert.deepStrictEqual(r.fromTables, [{ schema: 'SCHEMA_D', table: 'TABLE_DATES' }]);
     });
 
     test('AFTER_WHERE_HAVING_QUALIFY: cursor after AND', () => {
         const text = 'SELECT * FROM t WHERE x = 1 AND HERE';
         const r = classifyContext(text, at(text, 'HERE'));
         assert.strictEqual(r.kind, 'AFTER_WHERE_HAVING_QUALIFY');
-        assert.deepStrictEqual(r.fromTables, [{ table: 't' }]);
+        assert.deepStrictEqual(r.fromTables, [{ table: 'T' }]);
     });
 
     test('AFTER_WHERE_HAVING_QUALIFY: cursor after HAVING', () => {
@@ -101,15 +101,15 @@ suite('classifyContext', () => {
         const r = classifyContext(text, at(text, 'HERE'));
         assert.strictEqual(r.kind, 'AFTER_WHERE_HAVING_QUALIFY');
         const sigs = r.fromTables.map(t => `${t.schema ?? ''}.${t.table}`).sort();
-        assert.deepStrictEqual(sigs, ['.t2', 's1.t1']);
+        assert.deepStrictEqual(sigs, ['.T2', 'S1.T1']);
     });
 
     test('fromTables: scoped to enclosing SELECT (does not leak from outer)', () => {
         const text = `WITH x AS (SELECT a FROM inner_table WHERE HERE) SELECT * FROM outer_table`;
         const r = classifyContext(text, at(text, 'HERE'));
         assert.strictEqual(r.kind, 'AFTER_WHERE_HAVING_QUALIFY');
-        const names = r.fromTables.map(t => t.table.toLowerCase()).sort();
-        assert.deepStrictEqual(names, ['inner_table']);
+        const names = r.fromTables.map(t => t.table).sort();
+        assert.deepStrictEqual(names, ['INNER_TABLE']);
     });
 
     test('STATEMENT_START: cursor on a fresh line below a complete statement', () => {
@@ -124,6 +124,11 @@ suite('classifyContext', () => {
         // Not strictly immediate-after-FROM; we still expose fromTables=[t1] but
         // the kind itself isn't AFTER_FROM_OR_JOIN once there's an intervening token.
         assert.ok(r.kind === 'UNKNOWN' || r.kind === 'AFTER_FROM_OR_JOIN');
-        assert.ok(r.fromTables.some(t => t.table.toLowerCase() === 't1'));
+        assert.ok(r.fromTables.some(t => t.table === 'T1'));
+    });
+    test('fromTables: quoted names keep their case, so "t" and T stay apart', () => {
+        const text = 'SELECT * FROM s."t" a JOIN s.t b ON 1=1 JOIN "a""b" c ON 1=1 WHERE HERE';
+        const r = classifyContext(text, at(text, 'HERE'));
+        assert.deepStrictEqual(r.fromTables, [{ schema: 'S', table: 't' }, { schema: 'S', table: 'T' }, { table: 'a"b' }]);
     });
 });

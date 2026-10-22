@@ -65,4 +65,24 @@ suite('resolvePrefixCompletions', () => {
         const r = resolvePrefixCompletions(objects, aliases, 'x');
         assert.deepStrictEqual(r, { kind: 'columns', schema: 'B', table: 'T' });
     });
+    test('a quoted alias target matches only the object with that exact name', () => {
+        const objects: DatabaseObject[] = [
+            { schema: 'S', name: 'T', type: 'table' },
+            { schema: 'S', name: 't', type: 'table' },
+        ];
+        const quoted = new Map<string, AliasTarget>([['X', { schema: 'S', table: 't' }]]);
+        assert.deepStrictEqual(resolvePrefixCompletions(objects, quoted, 'x'), { kind: 'columns', schema: 'S', table: 't' });
+        const unquoted = new Map<string, AliasTarget>([['X', { schema: 'S', table: 'T' }]]);
+        assert.deepStrictEqual(resolvePrefixCompletions(objects, unquoted, 'x'), { kind: 'columns', schema: 'S', table: 'T' });
+    });
+
+    test('a quoted prefix is compared as written', () => {
+        const objects: DatabaseObject[] = [
+            { schema: 'S', name: 'T', type: 'table' },
+            { schema: 'S', name: 'lower v', type: 'table' },
+        ];
+        assert.deepStrictEqual(resolvePrefixCompletions(objects, new Map(), '"lower v"'), { kind: 'columns', schema: 'S', table: 'lower v' });
+        assert.deepStrictEqual(resolvePrefixCompletions(objects, new Map(), '"t"'), { kind: 'none' });
+        assert.strictEqual(resolvePrefixCompletions(objects, new Map(), '"S"').kind, 'schemaObjects');
+    });
 });

@@ -6,6 +6,7 @@ import {
     escapeSqlString,
     findStatementAtCursor,
     getRowsFromResult,
+    normalizeIdentifier,
     offsetAtLineCharacter,
     parseCtes,
     parseEnclosingSelectListAliases,
@@ -42,39 +43,28 @@ export type PrefixResolution =
     | { kind: 'none' }
     | { kind: 'empty' };
 
-/**
- * Whether a name from the database matches a name written in SQL. Parsed
- * names come without their quotes: an unquoted name is stored uppercase, a
- * quoted one as written, so either form matches.
- */
-function nameMatches(dbName: string, written: string): boolean {
-    return dbName === written.toUpperCase() || dbName === written;
-}
-
 export function resolvePrefixCompletions(
     objects: DatabaseObject[],
     aliases: Map<string, AliasTarget>,
     prefix: string
 ): PrefixResolution {
-    const prefixUpper = prefix.toUpperCase();
+    const name = normalizeIdentifier(prefix);
 
-    if (aliases.has(prefixUpper)) {
-        const target = aliases.get(prefixUpper)!;
-        const obj = objects.find(o =>
-            nameMatches(o.name, target.table) && (!target.schema || nameMatches(o.schema, target.schema))
-        );
+    const target = aliases.get(name);
+    if (target) {
+        const obj = objects.find(o => o.name === target.table && (!target.schema || o.schema === target.schema));
         if (obj) {
             return { kind: 'columns', schema: obj.schema, table: obj.name };
         }
         return { kind: 'empty' };
     }
 
-    const schemaObjects = objects.filter(obj => obj.schema === prefixUpper);
+    const schemaObjects = objects.filter(obj => obj.schema === name);
     if (schemaObjects.length > 0) {
         return { kind: 'schemaObjects', objects: schemaObjects };
     }
 
-    const obj = objects.find(o => o.name === prefixUpper);
+    const obj = objects.find(o => o.name === name);
     if (obj) {
         return { kind: 'columns', schema: obj.schema, table: obj.name };
     }
@@ -84,12 +74,13 @@ export function resolvePrefixCompletions(
 
 // Exported for unit testing. Handles every combination of quoted/unquoted
 // schema and table in FROM/JOIN clauses: schema.table, "schema".table,
-// schema."table", "schema"."table". Captures contain the unquoted identifier
-// text only; callers must compare case-insensitively (Exasol normalises to upper).
+// schema."table", "schema"."table". Keys are aliases in uppercase. Schema and
+// table are the names the database stores (see normalizeIdentifier), so
+// callers compare them with ===.
 export function parseAliases(queryText: string): Map<string, AliasTarget> {
     const aliases = new Map<string, AliasTarget>();
 
-    const ident = '(?:"([^"]+)"|(\\w+))';
+    const ident = '("(?:[^"]|"")+"|\\w+)';
     const tableAliasPattern = new RegExp(
         `(?:from|(?:(?:inner|left|right|full|cross)\\s+)?(?:outer\\s+)?join)\\s+` +
         `(?:${ident}\\s*\\.\\s*)?${ident}\\s+(?:as\\s+)?(\\w+)\\b`,
@@ -101,13 +92,11 @@ export function parseAliases(queryText: string): Map<string, AliasTarget> {
 
     let match: RegExpExecArray | null;
     while ((match = tableAliasPattern.exec(queryText)) !== null) {
-        const schema = match[1] ?? match[2];
-        const table = match[3] ?? match[4];
-        const alias = match[5];
-        if (!table || !alias) { continue; }
-        const aliasUpper = alias.toUpperCase();
+        const schema = match[1] && normalizeIdentifier(match[1]);
+        const table = normalizeIdentifier(match[2]);
+        const aliasUpper = match[3].toUpperCase();
         if (STOP.has(aliasUpper)) { continue; }
-        if (aliasUpper === table.toUpperCase()) { continue; }
+        if (aliasUpper === table) { continue; }
         aliases.set(aliasUpper, schema ? { schema, table } : { table });
     }
 
@@ -197,11 +186,13 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                 return this.getLocalAliasCompletions(aliasesList);
             }
 
-            // schema.table. pattern (highest priority): two qualified identifiers.
-            const schemaTableMatch = linePrefix.match(/(\w+)\.(\w+)\.\s*$/);
+            // schema.table. pattern (highest priority): two qualified identifiers,
+            // each unquoted or quoted.
+            const ident = '("(?:[^"]|"")+"|\\w+)';
+            const schemaTableMatch = linePrefix.match(new RegExp(`${ident}\\.${ident}\\.\\s*$`));
             if (schemaTableMatch) {
-                const schemaName = schemaTableMatch[1].toUpperCase();
-                const tableName = schemaTableMatch[2].toUpperCase();
+                const schemaName = normalizeIdentifier(schemaTableMatch[1]);
+                const tableName = normalizeIdentifier(schemaTableMatch[2]);
                 const obj = objects.find(o => o.schema === schemaName && o.name === tableName);
                 if (obj) {
                     const cols = await this.getColumnsForTable(activeConnection.id, obj.schema, obj.name);
@@ -214,13 +205,13 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
             }
 
             // Single-identifier prefix: alias, schema, or bare table name.
-            const aliasMatch = linePrefix.match(/(\w+)\.\s*$/);
+            const aliasMatch = linePrefix.match(new RegExp(`${ident}\\.\\s*$`));
             if (aliasMatch) {
                 const prefix = aliasMatch[1];
-                const prefixUpper = prefix.toUpperCase();
+                const prefixName = normalizeIdentifier(prefix);
 
                 // CTE alias indirection: alias parsed -> table name -> matches a CTE.
-                const aliasTarget = aliases.get(prefixUpper);
+                const aliasTarget = aliases.get(prefixName);
                 if (aliasTarget && !aliasTarget.schema) {
                     const cte = cteByUpper.get(aliasTarget.table.toUpperCase());
                     if (cte && cte.columns.length > 0) {
@@ -229,7 +220,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                     }
                 }
                 // Direct CTE reference: `cte_name.|`
-                const directCte = cteByUpper.get(prefixUpper);
+                const directCte = cteByUpper.get(prefixName);
                 if (directCte && directCte.columns.length > 0) {
                     log?.appendLine(`[completion] '${prefix}' -> CTE ${directCte.name} (${directCte.columns.length} cols)`);
                     return this.getColumnCompletions(directCte.columns);
@@ -479,9 +470,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         const out: string[] = [];
         const seen = new Set<string>();
         for (const ref of ctx.fromTables) {
-            const obj = objects.find(o =>
-                nameMatches(o.name, ref.table) && (!ref.schema || nameMatches(o.schema, ref.schema))
-            );
+            const obj = objects.find(o => o.name === ref.table && (!ref.schema || o.schema === ref.schema));
             if (!obj) { continue; }
             const cols = await this.getColumnsForTable(connectionId, obj.schema, obj.name);
             if (!cols) { continue; }
