@@ -202,10 +202,6 @@
         "icon": "$(debug-restart)"
       },
       {
-        "command": "exasol.openObject",
-        "title": "Open Object"
-      },
-      {
         "command": "exasol.copyQualifiedName",
         "title": "Copy Name",
         "icon": "$(copy)"
@@ -334,7 +330,7 @@
         },
         {
           "command": "exasol.describeTable",
-          "when": "view == exasol.objects && (viewItem == table || viewItem == virtual-table || viewItem == system-table)",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == virtual-table || viewItem == system-table)",
           "group": "exasol@3"
         },
         {
@@ -365,11 +361,16 @@
         {
           "command": "exasol.generateSelect",
           "when": "view == exasol.objects && viewItem == view",
-          "group": "exasol@3"
+          "group": "exasol@4"
         },
         {
           "command": "exasol.openScriptSource",
-          "when": "view == exasol.objects && (viewItem == script-udf || viewItem == script-adapter)",
+          "when": "view == exasol.objects && (viewItem == script || viewItem == script-udf || viewItem == script-adapter)",
+          "group": "exasol@1"
+        },
+        {
+          "command": "exasol.openFunctionSource",
+          "when": "view == exasol.objects && viewItem == function",
           "group": "exasol@1"
         },
         {

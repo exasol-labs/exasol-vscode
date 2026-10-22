@@ -5,21 +5,22 @@ All notable changes to the "Exasol" extension will be documented in this file.
 ## [1.9.0] - 2026-10-22
 
 ### Added
-- Virtual tables in the Objects view now support Preview Table, Describe Table, Generate SELECT Statement, and Copy Name, and clicking a virtual table opens Describe ([#81](https://github.com/exasol-labs/exasol-vscode/issues/81))
+- Virtual tables in the Objects view now support Preview Table, Describe Table, Generate SELECT Statement, and Copy Name ([#81](https://github.com/exasol-labs/exasol-vscode/issues/81))
 - Refresh Metadata on a virtual schema or virtual table runs `ALTER VIRTUAL SCHEMA ... REFRESH` and reloads the Objects view
 - Explain Pushdown on a virtual table shows the result of `EXPLAIN VIRTUAL` for the table
-- UDF scripts in the Objects view now support Open Source, Generate Call, and Copy Name. Generate Call opens a `SELECT` that calls the UDF, with its parameter names as placeholders. Adapter scripts support Open Source and Copy Name. Scripts can also be dragged into the editor as their qualified name
-- System tables in the Objects view now support Preview Table, Describe Table, Generate SELECT Statement, and Copy Name, and clicking a system table opens Describe. Describe Table and Generate SELECT Statement read the columns of system tables from `EXA_SYS_COLUMNS`. System schemas support Copy Name. Both can be dragged into the editor as their qualified name
+- UDF scripts in the Objects view now support Open Source, Generate Call, and Copy Name. Generate Call opens a `SELECT` that calls the UDF, with its parameter names as placeholders. Adapter scripts support Open Source and Copy Name. Other scripts and functions support Open Source. Scripts can also be dragged into the editor as their qualified name
+- System tables in the Objects view now support Preview Table, Describe Table, Generate SELECT Statement, and Copy Name. Describe Table and Generate SELECT Statement read the columns of system tables from `EXA_SYS_COLUMNS`. System schemas support Copy Name. Both can be dragged into the editor as their qualified name
 - A Connections folder in the Objects view lists the connections from `EXA_ALL_CONNECTIONS`, with the creation time and comment in the tooltip. Copy Name and drag give the quoted name. Show Connection DDL opens `CREATE OR REPLACE CONNECTION` and `COMMENT ON CONNECTION`, with the address and user from `EXA_DBA_CONNECTIONS` and a placeholder for the password. Without the `SELECT ANY DICTIONARY` privilege, address and user are placeholders too. Generate IMPORT Statement and Generate EXPORT Statement open a template that reads from or writes to the connection: a CSV file statement, with the other documented types as comments. IMPORT lists FBV and PARQUET files and the EXA, ORA and JDBC databases, each with `TABLE` or `STATEMENT`. EXPORT lists the same, without PARQUET, because Exasol does not export Parquet files
 
 ### Changed
 - Virtual schemas are now listed in a Virtual Schemas folder in the Objects view, next to the Connections and System Schemas folders. Before, they were listed between the schemas and the schema groups ([#81](https://github.com/exasol-labs/exasol-vscode/issues/81))
+- Clicking an object in the Objects view only selects it. Before, clicking a table or view opened Describe. Describe, Show DDL and Open Source are in the context menu. Views now also support Describe Table
 - Generate SELECT Statement now opens the statement in a new editor. Before, it inserted the statement at the cursor of the active SQL editor. All commands that generate SQL now open it in a new editor
 
 ### Fixed
 - Expanding a virtual table now lists its columns with their data types; before, the list was empty ([#81](https://github.com/exasol-labs/exasol-vscode/issues/81))
 - Virtual schemas and virtual tables are no longer listed twice in the Objects view
-- Clicking a script or a function in the Objects view did nothing, because the commands behind the click were never registered. It now opens the source as a `CREATE OR REPLACE` statement in a new editor, with the name qualified by its schema
+- Open Source for scripts and functions did nothing, because its commands were never registered. Open Source is now in the context menu of scripts and functions. It opens the source as a `CREATE OR REPLACE` statement in a new editor, with the name qualified by its schema
 - Running a file or the statement at the cursor no longer splits `CREATE SCRIPT` and `CREATE FUNCTION` at the semicolons inside their body. A script runs until a line that holds only `/`, or to the end of the file. A function ends at a `/` line, or at the `;` after its final `END`. The `/` line is not sent to the database. Open Source ends the statement with a `/` line
 - `CREATE SCRIPT` and `CREATE FUNCTION` statements are no longer cut before their final `;`, so the stored source keeps the final `;` of the body and a comment after it
 - Running a file, the statement at the cursor or a CodeLens no longer splits a statement at a `;` inside a quoted identifier, such as `SELECT 1 AS "a;b"`. A `--` or `/*` inside a quoted identifier no longer starts a comment

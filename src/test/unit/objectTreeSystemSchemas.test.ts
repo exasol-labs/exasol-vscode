@@ -182,11 +182,9 @@ suite('ObjectTreeProvider, System Schemas', () => {
                 [null, true, true]
             );
 
-            // System tables open Describe on click and copy or drag as quoted qualified names.
+            // System tables copy or drag as quoted qualified names.
             const systemTable = table as ObjectTreeItem;
             assert.strictEqual(systemTable.contextValue, 'system-table');
-            assert.strictEqual(systemTable.command?.command, 'exasol.openObject');
-            assert.deepStrictEqual(systemTable.command?.arguments, [systemTable]);
             assert.strictEqual(getQualifiedName(systemTable), '"SYS"."EXA_ALL_COLUMNS"');
             assert.strictEqual(getQualifiedName(sysNode as ObjectTreeItem), '"SYS"');
         });

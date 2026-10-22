@@ -106,13 +106,6 @@ suite('ObjectTreeProvider, Virtual Schemas folder', () => {
 
 suite('ObjectTreeProvider, virtual schema nodes', () => {
 
-    test('clicking a virtual table opens it like a table', () => {
-        const item = makeVirtualTableItem();
-
-        assert.strictEqual(item.command?.command, 'exasol.openObject');
-        assert.deepStrictEqual(item.command?.arguments, [item]);
-    });
-
     test('dragging virtual schema and virtual table nodes gives quoted qualified names', async () => {
         const provider = new ObjectTreeProvider(asConnectionManager(new MockConnectionManager({
             query: async () => createEmptyRawResult(['DUMMY'])

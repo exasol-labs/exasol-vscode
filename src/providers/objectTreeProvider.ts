@@ -831,37 +831,11 @@ export class ObjectTreeItem extends vscode.TreeItem {
                 if (this.tableInfo?.rowCount !== undefined) {
                     this.description = `${this.tableInfo.rowCount.toLocaleString()} rows`;
                 }
-                this.command = {
-                    command: 'exasol.openObject',
-                    title: 'Open Table',
-                    arguments: [this]
-                };
                 break;
             case 'views-folder':
                 if (this.viewCount !== undefined) {
                     this.description = `${this.viewCount}`;
                 }
-                break;
-            case 'view':
-                this.command = {
-                    command: 'exasol.openObject',
-                    title: 'Open View',
-                    arguments: [this]
-                };
-                break;
-            case 'virtual-table':
-                this.command = {
-                    command: 'exasol.openObject',
-                    title: 'Open Virtual Table',
-                    arguments: [this]
-                };
-                break;
-            case 'system-table':
-                this.command = {
-                    command: 'exasol.openObject',
-                    title: 'Open System Table',
-                    arguments: [this]
-                };
                 break;
             case 'column':
                 if (this.columnInfo) {
@@ -888,18 +862,6 @@ export class ObjectTreeItem extends vscode.TreeItem {
                         this.description = this.scriptInfo.language;
                     }
                 }
-                this.command = {
-                    command: 'exasol.openScriptSource',
-                    title: 'Open Script Source',
-                    arguments: [this]
-                };
-                break;
-            case 'function':
-                this.command = {
-                    command: 'exasol.openFunctionSource',
-                    title: 'Open Function Source',
-                    arguments: [this]
-                };
                 break;
             case 'constraint':
                 if (this.constraintType) {

@@ -356,30 +356,6 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.window.showTextDocument(document);
     });
 
-
-    // Prevent rapid duplicate executions (e.g., double-click)
-    const openObjectExecuting = new Map<string, boolean>();
-
-    const openObjectCmd = vscode.commands.registerCommand('exasol.openObject', async (item?: TreeCommandItem) => {
-        if (item && item.connection && item.schemaName && item.tableInfo) {
-            const key = `${item.connection.id}:${item.schemaName}:${item.tableInfo.name}`;
-
-            // If already executing for this object, skip
-            if (openObjectExecuting.get(key)) {
-                return;
-            }
-
-            try {
-                openObjectExecuting.set(key, true);
-                // Double-click shows table structure only (not preview)
-                await objectActions.describeTable(item.connection, item.schemaName, item.tableInfo.name);
-            } finally {
-                // Clear after a short delay to allow UI to settle
-                setTimeout(() => openObjectExecuting.delete(key), 500);
-            }
-        }
-    });
-
     const clearCacheCmd = vscode.commands.registerCommand('exasol.clearCache', () => {
         completionProvider.clearCache();
         vscode.window.showInformationMessage('Autocomplete cache cleared');
@@ -537,7 +513,6 @@ export function activate(context: vscode.ExtensionContext) {
         exportResultsCmd,
         exportSourceToCsvCmd,
         openQueryFromHistoryCmd,
-        openObjectCmd,
         clearCacheCmd,
         setActiveConnectionCmd,
         reconnectConnectionCmd,

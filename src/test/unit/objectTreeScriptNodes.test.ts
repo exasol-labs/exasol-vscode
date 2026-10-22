@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type * as vscode from 'vscode';
 import { registerVscodeMock, registerExtensionMock } from '../helpers/vscodeMock';
+import type { ObjectTreeItemType } from '../../providers/objectTreeTypes';
 
 registerVscodeMock();
 registerExtensionMock();
@@ -43,26 +44,35 @@ suite('ObjectTreeProvider, script, function and system nodes', () => {
         assert.strictEqual(makeScriptItem('SCRIPTING').contextValue, 'script');
     });
 
-    test('clicking any script opens its source', () => {
-        for (const scriptType of ['UDF', 'ADAPTER', 'SCRIPTING']) {
-            const item = makeScriptItem(scriptType);
-            assert.strictEqual(item.command?.command, 'exasol.openScriptSource');
-            assert.deepStrictEqual(item.command?.arguments, [item]);
+    test('no node of any type runs a command on click', () => {
+        // A Record keyed by the type union fails to compile when a node type is added and not listed here.
+        const allTypes: Record<ObjectTreeItemType, true> = {
+            'schema': true, 'tables-folder': true, 'table': true, 'views-folder': true, 'view': true,
+            'column': true, 'virtual-schemas-folder': true, 'virtual-schema': true, 'virtual-table': true,
+            'udfs-folder': true, 'procedures-folder': true, 'adapters-folder': true, 'functions-folder': true,
+            'script': true, 'function': true, 'constraints-folder': true, 'indices-folder': true,
+            'constraint': true, 'index': true, 'system-schemas-folder': true, 'system-schema': true,
+            'system-table': true, 'schema-group': true, 'db-connections-folder': true, 'db-connection': true
+        };
+        for (const type of Object.keys(allTypes) as ObjectTreeItemType[]) {
+            for (const scriptType of type === 'script' ? ['UDF', 'ADAPTER', 'SCRIPTING'] : [undefined]) {
+                const item = new ObjectTreeItem({
+                    label: 'X',
+                    id: `conn-1:VS_SRC:X:${type}`,
+                    collapsibleState: 0,
+                    type,
+                    connection: TEST_CONNECTION,
+                    schemaName: 'VS_SRC',
+                    tableInfo: { name: 'X', rowCount: 1 },
+                    columnInfo: { name: 'C', type: 'DECIMAL(18,0)', nullable: true },
+                    scriptType,
+                    scriptInfo: { name: 'X', language: 'PYTHON3', inputType: null, scriptType: scriptType ?? 'UDF' },
+                    functionInfo: { name: 'X' },
+                    dbConnectionInfo: { name: 'X' }
+                });
+                assert.strictEqual(item.command, undefined, `${type} ${scriptType ?? ''} has a click command`);
+            }
         }
-    });
-
-    test('clicking a function opens its source', () => {
-        const item = new ObjectTreeItem({
-            label: 'F1',
-            id: 'conn-1:VS_SRC:F1:function',
-            collapsibleState: 0,
-            type: 'function',
-            connection: TEST_CONNECTION,
-            schemaName: 'VS_SRC',
-            functionInfo: { name: 'F1' }
-        });
-        assert.strictEqual(item.command?.command, 'exasol.openFunctionSource');
-        assert.deepStrictEqual(item.command?.arguments, [item]);
     });
 
     test('dragging a script gives its quoted qualified name', async () => {
@@ -77,15 +87,26 @@ suite('ObjectTreeProvider, script, function and system nodes', () => {
         assert.strictEqual(store.get('text/plain')?.value, '"VS_SRC"."my""udf"');
     });
 
-    test('UDF and adapter nodes have their context menus; other scripts and functions have none', () => {
+    test('every script and function node has Open Source in its context menu', () => {
         assert.deepStrictEqual(menuCommandsFor('script-udf'), [
             'exasol.openScriptSource', 'exasol.generateScriptCall', 'exasol.copyQualifiedName (inline)'
         ]);
         assert.deepStrictEqual(menuCommandsFor('script-adapter'), [
             'exasol.openScriptSource', 'exasol.copyQualifiedName (inline)'
         ]);
-        assert.deepStrictEqual(menuCommandsFor('script'), []);
-        assert.deepStrictEqual(menuCommandsFor('function'), []);
+        assert.deepStrictEqual(menuCommandsFor('script'), ['exasol.openScriptSource']);
+        assert.deepStrictEqual(menuCommandsFor('function'), ['exasol.openFunctionSource']);
+    });
+
+    test('tables and views have Describe and Show DDL in their context menus', () => {
+        assert.deepStrictEqual(menuCommandsFor('table'), [
+            'exasol.showTableDDL', 'exasol.previewTable', 'exasol.describeTable', 'exasol.generateSelect',
+            'exasol.copyQualifiedName (inline)'
+        ]);
+        assert.deepStrictEqual(menuCommandsFor('view'), [
+            'exasol.describeTable', 'exasol.showViewDDL', 'exasol.previewTable', 'exasol.generateSelect',
+            'exasol.copyQualifiedName (inline)'
+        ]);
     });
 
     test('system tables and system schemas have their context menus', () => {

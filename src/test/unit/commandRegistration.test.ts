@@ -3,9 +3,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
- * Tree items and menus name commands by string, so a command that is
- * referenced but never registered compiles fine and silently does nothing
- * on click. These checks read the sources and package.json to catch that.
+ * Menus name commands by string, so a command that is referenced but never
+ * registered compiles fine and silently does nothing when chosen. These
+ * checks read the sources and package.json to catch that.
  */
 const srcDir = path.resolve(__dirname, '../..');
 const packageJson = JSON.parse(fs.readFileSync(path.resolve(srcDir, '../package.json'), 'utf8')) as {
@@ -34,15 +34,10 @@ const registered = matchAll(sources, /(?:registerCommand|itemCommand)\(\s*'(exas
 const declared = new Set(packageJson.contributes.commands.map(c => c.command));
 
 suite('Command registration', () => {
-    test('every command a tree item runs on click is registered and declared', () => {
-        const providerSources = readSources(path.join(srcDir, 'providers'));
-        const clickCommands = matchAll(providerSources, /command: '(exasol\.[\w.]+)'/g);
-        assert.ok(clickCommands.has('exasol.openScriptSource'), 'scan must find the script click command');
-        for (const command of clickCommands) {
-            assert.ok(registered.has(command), `${command} is used by a tree item but never registered`);
-        }
-        for (const command of ['exasol.openScriptSource', 'exasol.openFunctionSource', 'exasol.openObject']) {
-            assert.ok(declared.has(command), `${command} is not declared in package.json`);
+    test('every command declared in package.json is registered', () => {
+        assert.ok(registered.has('exasol.openScriptSource'), 'scan must find itemCommand registrations');
+        for (const command of declared) {
+            assert.ok(registered.has(command), `${command} is declared but never registered`);
         }
     });
 
