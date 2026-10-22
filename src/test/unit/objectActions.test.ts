@@ -85,6 +85,7 @@ registerExtensionMock();
 const { ObjectActions, refreshVirtualSchemaAndReload, qualifyScriptText, qualifyFunctionText, buildScriptCall, buildConnectionDDL, buildTransferTemplate } = require('../../objectActions') as typeof import('../../objectActions');
 const { ResultsPanel } = require('../../panels/resultsPanel') as typeof import('../../panels/resultsPanel');
 
+import { splitIntoStatements } from '../../utils';
 import { createRawResult, createEmptyRawResult, createRawErrorResult, MockConnectionManager, TEST_CONNECTION, asConnectionManager, type MockDriver } from '../helpers/mockConnectionManager';
 
 /** The rows shape createRawResult accepts, derived rather than re-declared
@@ -622,24 +623,24 @@ suite('qualifyScriptText', () => {
     // SCRIPT_TEXT values as the database stores them (docker, 2026-10-22).
     const shapes: Array<[string, string, string]> = [
         ['PYVER', 'CREATE PYTHON3 SCALAR SCRIPT "PYVER" () RETURNS VARCHAR(200) UTF8 AS\nimport sys\ndef run(ctx):\n    return sys.version\n',
-            'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "VS_SRC"."PYVER" () RETURNS VARCHAR(200) UTF8 AS\nimport sys\ndef run(ctx):\n    return sys.version\n'],
+            'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "VS_SRC"."PYVER" () RETURNS VARCHAR(200) UTF8 AS\nimport sys\ndef run(ctx):\n    return sys.version\n\n/'],
         ['PYSET', 'CREATE PYTHON3 SET SCRIPT "PYSET" ("a" DECIMAL(18,0), "b" VARCHAR(10) UTF8) EMITS ("X" DECIMAL(18,0), "Y" VARCHAR(10) UTF8) AS\ndef run(ctx):\n    pass\n',
-            'CREATE OR REPLACE PYTHON3 SET SCRIPT "VS_SRC"."PYSET" ("a" DECIMAL(18,0), "b" VARCHAR(10) UTF8) EMITS ("X" DECIMAL(18,0), "Y" VARCHAR(10) UTF8) AS\ndef run(ctx):\n    pass\n'],
+            'CREATE OR REPLACE PYTHON3 SET SCRIPT "VS_SRC"."PYSET" ("a" DECIMAL(18,0), "b" VARCHAR(10) UTF8) EMITS ("X" DECIMAL(18,0), "Y" VARCHAR(10) UTF8) AS\ndef run(ctx):\n    pass\n\n/'],
         ['PYDYN', 'CREATE PYTHON3 SCALAR SCRIPT "PYDYN" (...) RETURNS VARCHAR(100) UTF8 AS\ndef run(ctx):\n    return \'x\'\n',
-            'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "VS_SRC"."PYDYN" (...) RETURNS VARCHAR(100) UTF8 AS\ndef run(ctx):\n    return \'x\'\n'],
+            'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "VS_SRC"."PYDYN" (...) RETURNS VARCHAR(100) UTF8 AS\ndef run(ctx):\n    return \'x\'\n\n/'],
         ['PYEMITDYN', 'CREATE PYTHON3 SCALAR SCRIPT "PYEMITDYN" ("v" VARCHAR(10) UTF8) EMITS (...) AS\ndef run(ctx):\n    ctx.emit(\'x\')\n',
-            'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "VS_SRC"."PYEMITDYN" ("v" VARCHAR(10) UTF8) EMITS (...) AS\ndef run(ctx):\n    ctx.emit(\'x\')\n'],
+            'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "VS_SRC"."PYEMITDYN" ("v" VARCHAR(10) UTF8) EMITS (...) AS\ndef run(ctx):\n    ctx.emit(\'x\')\n\n/'],
         ['ADAPTER', 'CREATE LUA  ADAPTER SCRIPT "ADAPTER" AS\nfunction adapter_call(request)\nend\n',
-            'CREATE OR REPLACE LUA  ADAPTER SCRIPT "VS_SRC"."ADAPTER" AS\nfunction adapter_call(request)\nend\n'],
+            'CREATE OR REPLACE LUA  ADAPTER SCRIPT "VS_SRC"."ADAPTER" AS\nfunction adapter_call(request)\nend\n\n/'],
         ['LUASCR', 'CREATE LUA SCRIPT "LUASCR" (a,b) RETURNS TABLE AS\nlocal x = 1;\n  exit({{a}}, "v int")',
-            'CREATE OR REPLACE LUA SCRIPT "VS_SRC"."LUASCR" (a,b) RETURNS TABLE AS\nlocal x = 1;\n  exit({{a}}, "v int")'],
+            'CREATE OR REPLACE LUA SCRIPT "VS_SRC"."LUASCR" (a,b) RETURNS TABLE AS\nlocal x = 1;\n  exit({{a}}, "v int")\n/'],
     ];
 
     for (const [name, text, expected] of shapes) {
         test(`qualifies the ${name} header and keeps the body`, () => {
             const result = qualifyScriptText(text, 'VS_SRC', name);
             assert.strictEqual(result, expected);
-            assert.ok(result.endsWith(text.slice(text.indexOf(' AS\n'))), 'body must be unchanged');
+            assert.ok(result.endsWith(`${text.slice(text.indexOf(' AS\n'))}\n/`), 'body must be unchanged');
         });
     }
 
@@ -647,8 +648,14 @@ suite('qualifyScriptText', () => {
         const text = 'CREATE PYTHON3 SCALAR SCRIPT "my ""odd"" udf" ("lo" VARCHAR(10) UTF8) RETURNS VARCHAR(30) UTF8 AS\nSCRIPT "x"\n';
         assert.strictEqual(
             qualifyScriptText(text, 's"x', 'my "odd" udf'),
-            'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "s""x"."my ""odd"" udf" ("lo" VARCHAR(10) UTF8) RETURNS VARCHAR(30) UTF8 AS\nSCRIPT "x"\n'
+            'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "s""x"."my ""odd"" udf" ("lo" VARCHAR(10) UTF8) RETURNS VARCHAR(30) UTF8 AS\nSCRIPT "x"\n\n/'
         );
+    });
+
+    test('the splitter reads the result as one statement with the body unchanged', () => {
+        for (const [name, text, expected] of shapes) {
+            assert.deepStrictEqual(splitIntoStatements(qualifyScriptText(text, 'VS_SRC', name)), [expected.slice(0, -2)]);
+        }
     });
 
     test('returns text with an unexpected header unchanged', () => {
@@ -660,26 +667,34 @@ suite('qualifyFunctionText', () => {
     test('replaces an unquoted qualified name', () => {
         assert.strictEqual(
             qualifyFunctionText('FUNCTION VS_SRC.F1(p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END;', 'VS_SRC', 'F1'),
-            'CREATE OR REPLACE FUNCTION "VS_SRC"."F1"(p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END;'
+            'CREATE OR REPLACE FUNCTION "VS_SRC"."F1"(p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END;\n/'
         );
     });
 
     test('adds the schema to a name written without it', () => {
         assert.strictEqual(
             qualifyFunctionText('function "fn lower" (p decimal) return decimal is\nbegin\n  return p;\nend "fn lower";', 'VS_SRC', 'fn lower'),
-            'CREATE OR REPLACE function "VS_SRC"."fn lower" (p decimal) return decimal is\nbegin\n  return p;\nend "fn lower";'
+            'CREATE OR REPLACE function "VS_SRC"."fn lower" (p decimal) return decimal is\nbegin\n  return p;\nend "fn lower";\n/'
         );
     });
 
     test('replaces a quoted qualified name and escapes double quotes', () => {
         assert.strictEqual(
             qualifyFunctionText('FUNCTION "a""b"."f" (p decimal) return decimal is begin return p; end;', 'a"b', 'f'),
-            'CREATE OR REPLACE FUNCTION "a""b"."f" (p decimal) return decimal is begin return p; end;'
+            'CREATE OR REPLACE FUNCTION "a""b"."f" (p decimal) return decimal is begin return p; end;\n/'
+        );
+    });
+
+    test('the splitter reads the result as one statement', () => {
+        const text = 'FUNCTION VS_SRC.F3 (s VARCHAR(10)) RETURN VARCHAR(20)\nIS\n  r VARCHAR(20);\nBEGIN\n  r := s || \';\';\n  RETURN r;\nEND F3;';
+        assert.deepStrictEqual(
+            splitIntoStatements(`${qualifyFunctionText(text, 'VS_SRC', 'F3')}\nSELECT 1;`),
+            [`CREATE OR REPLACE FUNCTION "VS_SRC"."F3"${text.slice('FUNCTION VS_SRC.F3'.length)}`, 'SELECT 1;']
         );
     });
 
     test('only prefixes text with an unexpected header', () => {
-        assert.strictEqual(qualifyFunctionText('something else', 'S', 'N'), 'CREATE OR REPLACE something else');
+        assert.strictEqual(qualifyFunctionText('something else', 'S', 'N'), 'CREATE OR REPLACE something else\n/');
     });
 });
 
@@ -735,7 +750,7 @@ suite('ObjectActions script and function source', () => {
 
         assert.ok(capturedSql[0].includes("SCRIPT_SCHEMA = 'S''X'"));
         assert.ok(capturedSql[0].includes("SCRIPT_NAME = 'O''B'"));
-        assert.deepStrictEqual(opened, ['CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "S\'X"."O\'B" () RETURNS INT AS\nx']);
+        assert.deepStrictEqual(opened, ['CREATE OR REPLACE PYTHON3 SCALAR SCRIPT "S\'X"."O\'B" () RETURNS INT AS\nx\n/']);
     });
 
     test('openScriptSource warns when the script is gone', async () => {
@@ -754,7 +769,7 @@ suite('ObjectActions script and function source', () => {
         await oa.openFunctionSource(TEST_CONNECTION, 'S', 'F1');
 
         assert.ok(capturedSql[0].includes('FROM SYS.EXA_ALL_FUNCTIONS'));
-        assert.deepStrictEqual(opened, ['CREATE OR REPLACE FUNCTION "S"."F1"(p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END;']);
+        assert.deepStrictEqual(opened, ['CREATE OR REPLACE FUNCTION "S"."F1"(p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END;\n/']);
     });
 
     test('openFunctionSource shows the database error text', async () => {

@@ -496,7 +496,8 @@ const QUOTED_NAME_START = new RegExp(`^${QUOTED_IDENTIFIER}`);
  * schema. The database stores the header as `CREATE <...> SCRIPT "NAME"`,
  * without schema and without OR REPLACE, so running it unchanged would create
  * the script in the current schema. Only the header changes; the body is kept
- * byte for byte. Text with an unexpected header is returned unchanged.
+ * byte for byte. A `/` line closes the statement, as the body may contain
+ * semicolons. Text with an unexpected header is returned unchanged.
  */
 export function qualifyScriptText(scriptText: string, schemaName: string, scriptName: string): string {
     const header = SCRIPT_HEADER.exec(scriptText);
@@ -504,22 +505,23 @@ export function qualifyScriptText(scriptText: string, schemaName: string, script
         return scriptText;
     }
     const name = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(scriptName)}"`;
-    return `CREATE OR REPLACE ${header[1]}${name}${scriptText.slice(header[0].length)}`;
+    return `CREATE OR REPLACE ${header[1]}${name}${scriptText.slice(header[0].length)}\n/`;
 }
 
 /**
  * Turns FUNCTION_TEXT into a statement that recreates the function in its own
  * schema. The database stores the text as written after `CREATE [OR REPLACE]`,
  * so the name may lack the schema; it is replaced by the quoted qualified name.
+ * A `/` line closes the statement, as for scripts.
  */
 export function qualifyFunctionText(functionText: string, schemaName: string, functionName: string): string {
     const part = `(?:${QUOTED_IDENTIFIER}|[^\\s."(]+)`;
     const header = new RegExp(`^(FUNCTION\\s+)${part}(?:\\.${part})?`, 'i').exec(functionText);
     if (!header) {
-        return `CREATE OR REPLACE ${functionText}`;
+        return `CREATE OR REPLACE ${functionText}\n/`;
     }
     const name = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(functionName)}"`;
-    return `CREATE OR REPLACE ${header[1]}${name}${functionText.slice(header[0].length)}`;
+    return `CREATE OR REPLACE ${header[1]}${name}${functionText.slice(header[0].length)}\n/`;
 }
 
 /**

@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { splitIntoStatements, findStatementEnds, stripCommentsPreservingStrings, buildLineOffsets, offsetToLine } from '../../utils';
+import { splitIntoStatements, findStatementEnds, findStatementRanges, findStatementAtCursor, stripCommentsPreservingStrings, buildLineOffsets, offsetToLine } from '../../utils';
 
 suite('splitIntoStatements: string literal awareness', () => {
     test('semicolon inside string literal is not a statement boundary', () => {
@@ -181,5 +181,109 @@ suite('offsetToLine', () => {
 
     test('offset 30 is line 3', () => {
         assert.strictEqual(offsetToLine(offsets, 30), 3);
+    });
+});
+
+suite('splitIntoStatements: script and function definitions', () => {
+    const luaScript = 'CREATE OR REPLACE LUA SCRIPT s.lua_scr (a) RETURNS TABLE AS\nlocal x = 1; -- trailing; comment\nexit({{x}}, "v int")';
+    const pythonUdf = 'CREATE PYTHON3 SCALAR SCRIPT s.py_udf (v VARCHAR(10)) RETURNS VARCHAR(20) AS\n# it\'s a comment; with / inside\ndef run(ctx):\n    return \'a;b\' + "/;" + ctx.v\n';
+    const adapter = 'CREATE OR REPLACE JAVA ADAPTER SCRIPT s.adapter AS\n%scriptclass com.example.Adapter;\n%jar /buckets/bfsdefault/default/adapter.jar;\n';
+    const fn = 'CREATE OR REPLACE FUNCTION s.f (p DECIMAL) RETURN DECIMAL\nIS\n  r DECIMAL;\nBEGIN\n  IF p > 0 THEN\n    r := CASE WHEN p > 1 THEN 2 ELSE 1 END;\n  ELSE\n    r := 0;\n  END IF;\n  FOR i := 1 TO 2 DO r := r + 1; END FOR;\n  WHILE r < 5 DO r := r + 1; END WHILE;\n  RETURN r;\nEND f;';
+
+    test('Lua script with semicolons ends at the / line', () => {
+        assert.deepStrictEqual(splitIntoStatements(`${luaScript}\n/\nSELECT 1;`), [luaScript, 'SELECT 1;']);
+    });
+
+    test('Python UDF with ; and / in strings and comments keeps its body exactly', () => {
+        assert.deepStrictEqual(splitIntoStatements(`${pythonUdf}\n/\nSELECT 2;`), [pythonUdf, 'SELECT 2;']);
+    });
+
+    test('adapter script is one statement', () => {
+        assert.deepStrictEqual(splitIntoStatements(`${adapter}\n/`), [adapter]);
+    });
+
+    test('script without a / line runs to the end of the text', () => {
+        assert.deepStrictEqual(splitIntoStatements(`SELECT 1;\n${luaScript}\nSELECT 2;`), ['SELECT 1;', `${luaScript}\nSELECT 2;`]);
+    });
+
+    test('/ line with surrounding whitespace and CRLF line breaks', () => {
+        assert.deepStrictEqual(
+            splitIntoStatements('CREATE LUA SCRIPT x AS\r\nlocal a = 1;\r\n  /  \r\nSELECT 1;'),
+            ['CREATE LUA SCRIPT x AS\r\nlocal a = 1;', 'SELECT 1;']
+        );
+    });
+
+    test('lowercase keywords and comments before and inside the header', () => {
+        const text = '-- a comment;\n/* block; */ create /* x */ or replace python3 set script s.u (a int) emits (b int) as\ndef run(ctx):\n    ctx.emit(1); pass\n/\nselect 3;';
+        assert.deepStrictEqual(splitIntoStatements(text), [
+            '/* block; */ create /* x */ or replace python3 set script s.u (a int) emits (b int) as\ndef run(ctx):\n    ctx.emit(1); pass',
+            'select 3;'
+        ]);
+    });
+
+    test('function with IF, CASE, FOR and WHILE ends at the ; after END name', () => {
+        assert.deepStrictEqual(splitIntoStatements(`${fn}\nSELECT s.f(1);`), [fn, 'SELECT s.f(1);']);
+    });
+
+    test('function followed by a / line', () => {
+        assert.deepStrictEqual(splitIntoStatements(`${fn}\n/\nSELECT s.f(1);`), [fn, 'SELECT s.f(1);']);
+    });
+
+    test('function closed by a / line without a final semicolon', () => {
+        const text = 'create function f (p decimal) return decimal is begin return p; end "f"';
+        assert.deepStrictEqual(splitIntoStatements(`${text}\n/\nselect 1;`), [text, 'select 1;']);
+    });
+
+    test('function with a quoted name ending in END', () => {
+        const text = 'CREATE FUNCTION "case end" (p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END "case end";';
+        assert.deepStrictEqual(splitIntoStatements(`${text} SELECT 1;`), [text, 'SELECT 1;']);
+    });
+
+    test('mixed file: script, /, SELECT, function, /, SELECT', () => {
+        const text = `${luaScript}\n/\nSELECT 1;\n${fn}\n/\nSELECT 2;\n`;
+        assert.deepStrictEqual(splitIntoStatements(text), [luaScript, 'SELECT 1;', fn, 'SELECT 2;']);
+    });
+
+    test('other CREATE statements and divisions are unchanged', () => {
+        assert.deepStrictEqual(
+            splitIntoStatements('CREATE TABLE t (a INT);\nCREATE VIEW v AS SELECT 4\n/\n2 AS x FROM t;\nCREATE SCHEMA s;'),
+            ['CREATE TABLE t (a INT);', 'CREATE VIEW v AS SELECT 4\n/\n2 AS x FROM t;', 'CREATE SCHEMA s;']
+        );
+    });
+
+    test('a / line between statements is not sent', () => {
+        assert.deepStrictEqual(splitIntoStatements('SELECT 1;\n/\nSELECT 2;'), ['SELECT 1;', 'SELECT 2;']);
+    });
+
+    test('findStatementEnds points at the / of the terminator line', () => {
+        const text = `${luaScript}\n/\nSELECT 1;`;
+        assert.deepStrictEqual(findStatementEnds(text), [luaScript.length + 1, text.length - 1]);
+    });
+});
+
+suite('findStatementRanges and findStatementAtCursor: script definitions', () => {
+    const text = 'SELECT 0;\nCREATE LUA SCRIPT x AS\nlocal a = 1;\nexit()\n/\nSELECT 1;';
+
+    test('range of a script ends before the / line', () => {
+        const ranges = findStatementRanges(text).map(r => text.slice(r.start, r.end + 1));
+        assert.deepStrictEqual(ranges, ['SELECT 0;', 'CREATE LUA SCRIPT x AS\nlocal a = 1;\nexit()', 'SELECT 1;']);
+    });
+
+    test('cursor inside the body selects the whole script', () => {
+        for (const line of [1, 2, 3]) {
+            const result = findStatementAtCursor(text, line);
+            assert.ok(result);
+            assert.strictEqual(result.text, 'CREATE LUA SCRIPT x AS\nlocal a = 1;\nexit()');
+            assert.deepStrictEqual(result.range, { start: 1, end: 3 });
+        }
+    });
+
+    test('cursor after the / line selects the next statement', () => {
+        assert.strictEqual(findStatementAtCursor(text, 5)?.text, 'SELECT 1;');
+    });
+
+    test('cursor inside an unterminated script at the end of the text', () => {
+        const result = findStatementAtCursor('SELECT 0;\ncreate python3 scalar script p() returns int as\ndef run(ctx): return 1; # x', 2);
+        assert.strictEqual(result?.text, 'create python3 scalar script p() returns int as\ndef run(ctx): return 1; # x');
     });
 });
