@@ -109,13 +109,16 @@ export function parseAliases(queryText: string): Map<string, AliasTarget> {
  * Range of a quoted identifier the user is typing: from its opening `"` to
  * the end of the word at the cursor, plus a closing `"` right after it, such
  * as the one added by auto-closing. Undefined when the cursor is not inside a
- * quoted identifier opened on the same line. Only the current statement is
- * scanned, so a quote in an earlier statement, such as an apostrophe in a
- * script body, does not count. The word pattern of the language excludes `"`
+ * quoted identifier opened on the same line, so a line without `"` before
+ * the cursor returns early, without scanning the document. Only the current
+ * statement is scanned, so a quote in an earlier statement, such as an
+ * apostrophe in a script body, does not count. The word pattern of the language excludes `"`
  * and spaces, so the default range of a completion would leave the opening
  * quote and earlier words in place.
  */
 function openingQuoteRange(document: vscode.TextDocument, position: vscode.Position): vscode.Range | undefined {
+    const line = document.lineAt(position).text;
+    if (!line.slice(0, position.character).includes('"')) { return undefined; }
     const text = document.getText();
     const cursor = offsetAtLineCharacter(text, position.line, position.character);
     const statementStart = (findStatementEnds(text).filter(end => end < cursor).pop() ?? -1) + 1;
@@ -124,7 +127,6 @@ function openingQuoteRange(document: vscode.TextDocument, position: vscode.Posit
     const quoteIdx = quoteInStatement === undefined ? undefined : statementStart + quoteInStatement;
     const lineStart = cursor - position.character;
     if (quoteIdx === undefined || quoteIdx < lineStart) { return undefined; }
-    const line = document.lineAt(position).text;
     const wordEnd = Math.max(document.getWordRangeAtPosition(position)?.end.character ?? 0, position.character);
     const end = line[wordEnd] === '"' ? wordEnd + 1 : wordEnd;
     return new vscode.Range(position.line, quoteIdx - lineStart, position.line, end);

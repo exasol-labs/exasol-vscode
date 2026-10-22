@@ -249,6 +249,16 @@ suite('ExasolCompletionProvider - completion after an opening quote', () => {
         assert.ok(items.every(i => rangeOf(i) === undefined));
     });
 
+    test('no quote before the cursor on its line: same result as unquoted typing', async () => {
+        const unquoted = await complete('SELECT i| FROM s.t');
+        for (const sql of ['SELECT "id",\ni| FROM s.t', 'SELECT i| "x" FROM s.t', `SELECT 'a"b',\ni| FROM s.t`]) {
+            const items = await complete(sql);
+            assert.ok(items.every(i => rangeOf(i) === undefined), sql);
+            assert.deepStrictEqual(texts(items.filter(i => i.detail === 'Column')), texts(unquoted.filter(i => i.detail === 'Column')), sql);
+            assert.ok(items.some(i => i.kind === CompletionItemKind.Keyword), sql);
+        }
+    });
+
     test('a closing quote or a quote in a string does not start a quoted identifier', async () => {
         for (const sql of [
             'SELECT "id"| FROM s.t', `SELECT x FROM s.t WHERE x = 'a"|`, 'SELECT 1 -- "|',
