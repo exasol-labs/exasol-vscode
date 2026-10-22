@@ -442,20 +442,24 @@ suite('ObjectActions virtual schema actions', () => {
         assert.strictEqual(query, capturedSql[0]);
     });
 
-    test('explainPushdown never passes PUSHDOWN_JSON to the results panel', async () => {
+    test('explainPushdown passes only the allowlisted columns to the results panel', async () => {
         const { oa } = makeObjectActions(async () => createRawResult(
-            ['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_JSON', 'PUSHDOWN_INVOLVED_TABLES'],
-            [[1, 'SELECT * FROM T', '{"schemaMetadataInfo":{"properties":{"SECRET_PASSWORD":"hunter2"}}}', 'T']]
+            ['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_JSON', 'PUSHDOWN_INVOLVED_TABLES', 'PUSHDOWN_EXTRA'],
+            [[1, 'SELECT * FROM T', '{"schemaMetadataInfo":{"properties":{"SECRET_PASSWORD":"hunter2"}}}', 'T', 'extra-secret']]
         ));
 
         const { result } = await explainAndCapture(oa, 'VS', 'T');
 
         assert.deepStrictEqual(result.columns, ['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_INVOLVED_TABLES']);
-        assert.ok(!result.columnMetadata?.some(col => col.name === 'PUSHDOWN_JSON'));
+        assert.deepStrictEqual(result.columnMetadata?.map(col => col.name), ['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_INVOLVED_TABLES']);
         assert.strictEqual(result.rowCount, 1);
+        assert.deepStrictEqual(Object.keys(result.rows[0]), ['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_INVOLVED_TABLES']);
         assert.strictEqual(result.rows[0].PUSHDOWN_SQL, 'SELECT * FROM T');
-        assert.ok(!JSON.stringify(result.rows).includes('hunter2'), 'rows must not contain the schema properties');
-        assert.ok(!JSON.stringify(result).includes('PUSHDOWN_JSON'));
+        const serialized = JSON.stringify(result);
+        assert.ok(!serialized.includes('hunter2'), 'the schema properties must not reach the panel');
+        assert.ok(!serialized.includes('extra-secret'), 'an unknown column must not reach the panel');
+        assert.ok(!serialized.includes('PUSHDOWN_JSON'));
+        assert.ok(!serialized.includes('PUSHDOWN_EXTRA'));
     });
 
     test('explainPushdown shows the database error text', async () => {
@@ -476,6 +480,36 @@ suite('ObjectActions virtual schema actions', () => {
         assert.strictEqual(ok, true);
         assert.deepStrictEqual(capturedSql, ['ALTER VIRTUAL SCHEMA "a""b" REFRESH']);
         assert.strictEqual(errorMessages.length, 0);
+    });
+
+    test('refreshVirtualSchema runs inside a progress notification', async () => {
+        const progressTitles: string[] = [];
+        let queriesInsideProgress = 0;
+        let insideProgress = false;
+        extendedVscodeMock.window = {
+            ...extendedVscodeMock.window,
+            withProgress: async (opts, task) => {
+                progressTitles.push((opts as vscode.ProgressOptions).title ?? '');
+                insideProgress = true;
+                try {
+                    return await task();
+                } finally {
+                    insideProgress = false;
+                }
+            },
+        };
+        const { oa } = makeObjectActions(async () => {
+            if (insideProgress) {
+                queriesInsideProgress++;
+            }
+            return createEmptyRawResult([]);
+        });
+
+        const ok = await oa.refreshVirtualSchema(TEST_CONNECTION, 'VS', 'T');
+
+        assert.strictEqual(ok, true);
+        assert.deepStrictEqual(progressTitles, ['Refreshing virtual schema metadata for VS.T...']);
+        assert.strictEqual(queriesInsideProgress, 1, 'the refresh statement must run while the progress is shown');
     });
 
     test('refreshVirtualSchema refreshes a single table with escaped identifiers', async () => {

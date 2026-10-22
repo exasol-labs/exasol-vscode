@@ -87,10 +87,6 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         this.onDidChangeTreeDataEmitter.fire();
     }
 
-    refreshNode(node: ObjectNode): void {
-        this.onDidChangeTreeDataEmitter.fire(node);
-    }
-
     getTreeItem(element: ObjectNode): vscode.TreeItem {
         return element;
     }

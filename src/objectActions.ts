@@ -5,6 +5,9 @@ import { ResultsPanel } from './panels/resultsPanel';
 import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier } from './utils';
 import { isExecutionPlanEnabled } from './settings';
 
+/** EXPLAIN VIRTUAL columns that are safe to show; PUSHDOWN_JSON is left out on purpose. */
+const PUSHDOWN_SAFE_COLUMNS: ReadonlySet<string> = new Set(['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_INVOLVED_TABLES']);
+
 export class ObjectActions {
     constructor(
         private connectionManager: ConnectionManager,
@@ -238,11 +241,18 @@ export class ObjectActions {
         try {
             const tablesClause = tableName ? ` TABLES "${escapeSqlIdentifier(tableName)}"` : '';
             const query = `ALTER VIRTUAL SCHEMA "${escapeSqlIdentifier(schemaName)}" REFRESH${tablesClause}`;
-            await this.connectionManager.executeWithRetry(async () => {
-                const driver = await this.connectionManager.getDriver(connection.id);
-                // Raw responses carry SQL errors as status, not as a throw.
-                getRowsFromResult(await rawExecute(driver, query));
-            }, connection.id);
+            await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: `Refreshing virtual schema metadata for ${target}...`,
+                    cancellable: false
+                },
+                () => this.connectionManager.executeWithRetry(async () => {
+                    const driver = await this.connectionManager.getDriver(connection.id);
+                    // Raw responses carry SQL errors as status, not as a throw.
+                    getRowsFromResult(await rawExecute(driver, query));
+                }, connection.id)
+            );
             vscode.window.setStatusBarMessage(`Exasol: Refreshed virtual schema metadata for ${target}`, 3000);
             return true;
         } catch (error) {
@@ -262,12 +272,11 @@ export class ObjectActions {
                 const executionTime = Date.now() - startTime;
 
                 // PUSHDOWN_JSON contains the virtual schema properties in clear text,
-                // credentials included, so it must never reach the results panel.
-                const columnsMeta = getColumnsFromResult(result).filter(col => col.name !== 'PUSHDOWN_JSON');
-                const rows = getRowsFromResult(result);
-                for (const row of rows) {
-                    delete row.PUSHDOWN_JSON;
-                }
+                // credentials included, so only known safe columns reach the results panel.
+                const columnsMeta = getColumnsFromResult(result).filter(col => PUSHDOWN_SAFE_COLUMNS.has(col.name));
+                const rows = getRowsFromResult(result).map(row => Object.fromEntries(
+                    Object.entries(row).filter(([key]) => PUSHDOWN_SAFE_COLUMNS.has(key))
+                ));
                 const columns = columnsMeta.map(extractColumnName);
                 const columnMetadata = extractColumnMetadata(columnsMeta);
 

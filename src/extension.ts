@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { ConnectionTreeProvider } from './providers/connectionTreeProvider';
-import { ObjectTreeProvider, ObjectTreeItem } from './providers/objectTreeProvider';
+import { ObjectTreeProvider } from './providers/objectTreeProvider';
+import type { ObjectTreeItem } from './providers/objectTreeProvider';
 import { QueryHistoryProvider } from './providers/queryHistoryProvider';
 import { ExasolCompletionProvider } from './providers/completionProvider';
 import { ExasolCodeLensProvider } from './providers/codeLensProvider';
@@ -181,9 +182,10 @@ export function activate(context: vscode.ExtensionContext) {
             const tableName = i.type === 'virtual-table' ? i.tableInfo?.name : undefined;
             if (await objectActions.refreshVirtualSchema(i.connection, i.schemaName, tableName)) {
                 completionProvider.clearCache(i.connection.id);
-                if (i instanceof ObjectTreeItem) {
-                    objectTreeProvider.refreshNode(i);
-                }
+                // Both refresh forms update the schema's LAST_REFRESH, which the
+                // root-level node shows in its tooltip. Stable node ids keep the
+                // expansion state, so expanded nodes reload their children.
+                objectTreeProvider.refresh();
             }
         }),
         itemCommand('exasol.explainPushdown', ['connection', 'schemaName', 'tableInfo'], (i) =>

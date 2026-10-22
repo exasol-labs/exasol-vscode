@@ -137,8 +137,7 @@
       },
       {
         "command": "exasol.refreshVirtualSchema",
-        "title": "Refresh Virtual Schema Metadata",
-        "icon": "$(refresh)"
+        "title": "Refresh Metadata"
       },
       {
         "command": "exasol.explainPushdown",
