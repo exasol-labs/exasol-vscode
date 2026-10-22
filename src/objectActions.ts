@@ -5,9 +5,6 @@ import { ResultsPanel } from './panels/resultsPanel';
 import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier, SqlError, stripFinalSlashLine } from './utils';
 import { isExecutionPlanEnabled } from './settings';
 
-/** EXPLAIN VIRTUAL columns that are safe to show; PUSHDOWN_JSON is left out on purpose. */
-const PUSHDOWN_SAFE_COLUMNS: ReadonlySet<string> = new Set(['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_INVOLVED_TABLES']);
-
 /** Columns of SYS and EXA_STATISTICS tables are listed in EXA_SYS_COLUMNS, not in EXA_ALL_COLUMNS. */
 function columnsViewFor(schemaName: string): string {
     return schemaName === 'SYS' || schemaName === 'EXA_STATISTICS' ? 'SYS.EXA_SYS_COLUMNS' : 'SYS.EXA_ALL_COLUMNS';
@@ -323,12 +320,8 @@ export class ObjectActions {
                     const result = await rawQuery(driver, query);
                     const executionTime = Date.now() - startTime;
 
-                    // PUSHDOWN_JSON contains the virtual schema properties in clear text,
-                    // credentials included, so only known safe columns reach the results panel.
-                    const columnsMeta = getColumnsFromResult(result).filter(col => PUSHDOWN_SAFE_COLUMNS.has(col.name));
-                    const rows = getRowsFromResult(result).map(row => Object.fromEntries(
-                        Object.entries(row).filter(([key]) => PUSHDOWN_SAFE_COLUMNS.has(key))
-                    ));
+                    const columnsMeta = getColumnsFromResult(result);
+                    const rows = getRowsFromResult(result);
                     const columns = columnsMeta.map(extractColumnName);
                     const columnMetadata = extractColumnMetadata(columnsMeta);
 

@@ -909,7 +909,7 @@ export class ObjectTreeItem extends vscode.TreeItem {
                 }
                 break;
             case 'db-connection':
-                // Never the address or user: those are readable only with dictionary privileges.
+                // EXA_ALL_CONNECTIONS has no address or user columns.
                 if (this.dbConnectionInfo) {
                     const parts: string[] = [];
                     if (this.dbConnectionInfo.created) {

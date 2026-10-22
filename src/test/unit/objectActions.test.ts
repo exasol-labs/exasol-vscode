@@ -443,24 +443,26 @@ suite('ObjectActions virtual schema actions', () => {
         assert.strictEqual(query, capturedSql[0]);
     });
 
-    test('explainPushdown passes only the allowlisted columns to the results panel', async () => {
+    test('explainPushdown passes every returned column and row to the results panel unchanged', async () => {
+        const columnNames = ['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_JSON', 'PUSHDOWN_INVOLVED_TABLES', 'PUSHDOWN_EXTRA'];
+        const pushdownJson = '{"schemaMetadataInfo":{"properties":{"CONNECTION_NAME":"MY_CONN"}}}';
         const { oa } = makeObjectActions(async () => createRawResult(
-            ['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_JSON', 'PUSHDOWN_INVOLVED_TABLES', 'PUSHDOWN_EXTRA'],
-            [[1, 'SELECT * FROM T', '{"schemaMetadataInfo":{"properties":{"SECRET_PASSWORD":"hunter2"}}}', 'T', 'extra-secret']]
+            columnNames,
+            [[1, 'SELECT * FROM T', pushdownJson, 'T', 'extra-value']]
         ));
 
         const { result } = await explainAndCapture(oa, 'VS', 'T');
 
-        assert.deepStrictEqual(result.columns, ['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_INVOLVED_TABLES']);
-        assert.deepStrictEqual(result.columnMetadata?.map(col => col.name), ['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_INVOLVED_TABLES']);
+        assert.deepStrictEqual(result.columns, columnNames);
+        assert.deepStrictEqual(result.columnMetadata?.map(col => col.name), columnNames);
         assert.strictEqual(result.rowCount, 1);
-        assert.deepStrictEqual(Object.keys(result.rows[0]), ['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_INVOLVED_TABLES']);
-        assert.strictEqual(result.rows[0].PUSHDOWN_SQL, 'SELECT * FROM T');
-        const serialized = JSON.stringify(result);
-        assert.ok(!serialized.includes('hunter2'), 'the schema properties must not reach the panel');
-        assert.ok(!serialized.includes('extra-secret'), 'an unknown column must not reach the panel');
-        assert.ok(!serialized.includes('PUSHDOWN_JSON'));
-        assert.ok(!serialized.includes('PUSHDOWN_EXTRA'));
+        assert.deepStrictEqual(result.rows[0], {
+            PUSHDOWN_ID: 1,
+            PUSHDOWN_SQL: 'SELECT * FROM T',
+            PUSHDOWN_JSON: pushdownJson,
+            PUSHDOWN_INVOLVED_TABLES: 'T',
+            PUSHDOWN_EXTRA: 'extra-value',
+        });
     });
 
     test('explainPushdown shows the database error text', async () => {

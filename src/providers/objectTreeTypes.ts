@@ -25,7 +25,7 @@ export type ObjectTreeItemType =
     | 'db-connections-folder'
     | 'db-connection';
 
-/** A database CONNECTION object; address and user are never part of it. */
+/** A database CONNECTION object as listed in EXA_ALL_CONNECTIONS. */
 export interface DbConnectionInfo {
     name: string;
     created?: string;
