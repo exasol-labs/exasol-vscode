@@ -3,6 +3,7 @@ import { ConnectionManager, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionMan
 import { getOutputChannel } from '../extension';
 import {
     columnsViewFor,
+    escapeSqlIdentifier,
     escapeSqlString,
     findStatementAtCursor,
     getRowsFromResult,
@@ -240,7 +241,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                         return [];
                     }
                     case 'schemaObjects':
-                        return this.getObjectCompletions(resolution.objects, true);
+                        return this.getObjectCompletions(resolution.objects);
                     case 'empty':
                         log?.appendLine(`[completion] alias '${prefix}' parsed but table not in object cache; returning empty`);
                         return [];
@@ -296,13 +297,23 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         }
     }
 
-    private quoteIdentifier(identifier: string): string {
-        const upperIdent = identifier.toUpperCase();
-        // Only quote if it's a reserved keyword
-        if (this.reservedKeywords.has(upperIdent)) {
-            return `"${identifier.toLowerCase()}"`;
-        }
-        return identifier.toLowerCase();
+    /**
+     * True when the stored name can be written unquoted: a regular identifier
+     * (ASCII letter, then letters, digits or underscores), stored in uppercase,
+     * and not a reserved keyword.
+     */
+    private isRegularName(stored: string): boolean {
+        return /^[A-Z][A-Z0-9_]*$/.test(stored) && !this.reservedKeywords.has(stored);
+    }
+
+    /** Insert text: regular names in lowercase, any other name quoted with its exact case. */
+    private quoteIdentifier(stored: string): string {
+        return this.isRegularName(stored) ? stored.toLowerCase() : `"${escapeSqlIdentifier(stored)}"`;
+    }
+
+    /** Label: regular names in lowercase, any other name exactly as stored. */
+    private displayName(stored: string): string {
+        return this.isRegularName(stored) ? stored.toLowerCase() : stored;
     }
 
     private getKeywordCompletions(): vscode.CompletionItem[] {
@@ -395,10 +406,11 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
     private getSchemaCompletions(schemas: string[]): vscode.CompletionItem[] {
         return schemas.filter((s): s is string => typeof s === 'string' && s.length > 0).map(schema => {
-            const item = new vscode.CompletionItem(schema.toLowerCase(), vscode.CompletionItemKind.Module);
+            const displayName = this.displayName(schema);
+            const item = new vscode.CompletionItem(displayName, vscode.CompletionItemKind.Module);
             item.detail = 'Schema';
             item.insertText = this.quoteIdentifier(schema);
-            item.sortText = `0_${schema.toLowerCase()}`;
+            item.sortText = `0_${displayName}`;
             return item;
         });
     }
@@ -409,17 +421,17 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         function:       vscode.CompletionItemKind.Function,
     };
 
-    private getObjectCompletions(objects: DatabaseObject[], skipQuoting = false): vscode.CompletionItem[] {
+    private getObjectCompletions(objects: DatabaseObject[]): vscode.CompletionItem[] {
         return objects.filter(o => o && o.name && o.schema).map(obj => {
             const kind = ExasolCompletionProvider.OBJECT_KIND[obj.type] ?? vscode.CompletionItemKind.Class;
 
-            const displayName = obj.name.toLowerCase();
+            const displayName = this.displayName(obj.name);
             const item = new vscode.CompletionItem(displayName, kind);
             const typeLabel = obj.type === 'virtual-table' ? 'virtual table'
                 : obj.type === 'system-table' ? 'system table'
                 : obj.type;
-            item.detail = `${typeLabel} in ${obj.schema.toLowerCase()}`;
-            item.insertText = skipQuoting ? displayName : this.quoteIdentifier(obj.name);
+            item.detail = `${typeLabel} in ${this.displayName(obj.schema)}`;
+            item.insertText = this.quoteIdentifier(obj.name);
             item.sortText = `1_${displayName}`;
             return item;
         });
@@ -427,10 +439,11 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
     private getLocalAliasCompletions(aliases: SelectAlias[]): vscode.CompletionItem[] {
         return aliases.map((a, idx) => {
-            const displayName = a.name.toLowerCase();
+            const stored = a.quoted ? a.name : a.name.toUpperCase();
+            const displayName = this.displayName(stored);
             const item = new vscode.CompletionItem(displayName, vscode.CompletionItemKind.Field);
             item.detail = 'SELECT alias';
-            item.insertText = a.quoted ? `"${a.name.replace(/"/g, '""')}"` : this.quoteIdentifier(a.name);
+            item.insertText = this.quoteIdentifier(stored);
             item.sortText = ExasolCompletionProvider.sourceOrderSortText(idx, displayName);
             return item;
         });
@@ -439,7 +452,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
     private getColumnCompletions(columns: string[]): vscode.CompletionItem[] {
         const valid = columns.filter((c): c is string => typeof c === 'string' && c.length > 0);
         return valid.map((col, idx) => {
-            const displayName = col.toLowerCase();
+            const displayName = this.displayName(col);
             const item = new vscode.CompletionItem(displayName, vscode.CompletionItemKind.Field);
             item.insertText = this.quoteIdentifier(col);
             item.sortText = ExasolCompletionProvider.sourceOrderSortText(idx, displayName);
@@ -535,7 +548,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         if (order.includes('columns') && fromColumns.length > 0) {
             for (let i = 0; i < fromColumns.length; i++) {
                 const col = fromColumns[i];
-                const displayName = col.toLowerCase();
+                const displayName = this.displayName(col);
                 const item = new vscode.CompletionItem(displayName, vscode.CompletionItemKind.Field);
                 item.detail = 'Column';
                 item.insertText = this.quoteIdentifier(col);

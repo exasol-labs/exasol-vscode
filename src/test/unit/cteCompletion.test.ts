@@ -60,7 +60,7 @@ LIMIT 100`;
         const ctes = parseCtes(stmt);
         assert.strictEqual(ctes.length, 1);
         assert.strictEqual(ctes[0].name, 'TEST');
-        assert.deepStrictEqual(ctes[0].columns, ['col_a', 'col_b']);
+        assert.deepStrictEqual(ctes[0].columns, ['COL_A', 'COL_B']);
     });
 
     test('WITH RECURSIVE is supported', () => {
@@ -68,14 +68,14 @@ LIMIT 100`;
         const ctes = parseCtes(stmt);
         assert.strictEqual(ctes.length, 1);
         assert.strictEqual(ctes[0].name, 'FOO');
-        assert.deepStrictEqual(ctes[0].columns, ['a', 'b']);
+        assert.deepStrictEqual(ctes[0].columns, ['A', 'B']);
     });
 
     test('explicit column list overrides the body SELECT list', () => {
         const stmt = `WITH foo (a, b) AS (SELECT x, y FROM t) SELECT * FROM foo`;
         const ctes = parseCtes(stmt);
         assert.strictEqual(ctes.length, 1);
-        assert.deepStrictEqual(ctes[0].columns, ['a', 'b']);
+        assert.deepStrictEqual(ctes[0].columns, ['A', 'B']);
     });
 
     test('multiple chained CTEs both resolve', () => {
@@ -85,8 +85,8 @@ LIMIT 100`;
             SELECT * FROM a JOIN b ON a.one = b.three`;
         const ctes = parseCtes(stmt);
         assert.deepStrictEqual(ctes.map((c: CteDefinition) => c.name), ['A', 'B']);
-        assert.deepStrictEqual(ctes[0].columns, ['one', 'two']);
-        assert.deepStrictEqual(ctes[1].columns, ['three']);
+        assert.deepStrictEqual(ctes[0].columns, ['ONE', 'TWO']);
+        assert.deepStrictEqual(ctes[1].columns, ['THREE']);
     });
 
     test('SELECT * body returns empty columns', () => {
@@ -111,7 +111,7 @@ LIMIT 100`;
             FROM t b
         ) SELECT * FROM foo`;
         const ctes = parseCtes(stmt);
-        assert.deepStrictEqual(ctes[0].columns, ['flag', 'id']);
+        assert.deepStrictEqual(ctes[0].columns, ['FLAG', 'ID']);
     });
 
     test('quoted CTE name and quoted column list', () => {
@@ -131,7 +131,7 @@ LIMIT 100`;
             SELECT col_a, /* total */ col_b FROM t
         ) SELECT * FROM foo`;
         const ctes = parseCtes(stmt);
-        assert.deepStrictEqual(ctes[0].columns, ['col_a', 'col_b']);
+        assert.deepStrictEqual(ctes[0].columns, ['COL_A', 'COL_B']);
     });
 });
 

@@ -20,6 +20,7 @@ import { parseSelectListAliases } from './selectAliases';
 export interface CteDefinition {
     /** Name as the database stores it (see normalizeIdentifier); compare with ===. */
     name: string;
+    /** Column names as the database stores them (see normalizeIdentifier). */
     columns: string[];
 }
 
@@ -178,8 +179,9 @@ function parseColumnList(text: string): string[] {
     const cols: string[] = [];
     const parts = splitTopLevelCommas(text);
     for (const raw of parts) {
-        const tok = readIdentifier(raw.trim(), 0);
-        if (tok && tok.name) { cols.push(tok.name); }
+        const trimmed = raw.trim();
+        const tok = readIdentifier(trimmed, 0);
+        if (tok && tok.name) { cols.push(normalizeIdentifier(trimmed.slice(0, tok.end))); }
     }
     return cols;
 }
@@ -209,5 +211,5 @@ function splitTopLevelCommas(text: string): string[] {
 function deriveColumnsFromBody(body: string): string[] {
     // parseSelectListAliases already strips comments, splits at top-level commas,
     // and skips '*' / 'table.*' entries.
-    return parseSelectListAliases(body).map(a => a.name);
+    return parseSelectListAliases(body).map(a => a.quoted ? a.name : a.name.toUpperCase());
 }
