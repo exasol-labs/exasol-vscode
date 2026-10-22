@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { ExasolDriver } from '@exasol/exasol-driver-ts';
 import { ConnectionManager } from './connectionManager';
-import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, ColumnMetadata, SqlRow, stripCommentsPreservingStrings, safeFetch } from './utils';
+import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, ColumnMetadata, SqlRow, stripCommentsPreservingStrings, safeFetch, isScriptOrFunctionDefinition } from './utils';
 import { parseLocalCsvImport, parseLocalParquetImport, resolveImportPath } from './localCsvImport';
 import { getOutputChannel } from './extension';
 import { isExecutionPlanEnabled } from './settings';
@@ -79,8 +79,12 @@ export class QueryExecutor {
         const maxRows = config.get<number>('maxResultRows', 10000);
         const queryTimeoutMs = config.get<number>('queryTimeout', 300) * 1000;
 
-        // Clean the query - remove trailing semicolons and trim
-        let finalQuery = query.trim().replace(/;+\s*$/, '').trim();
+        // Remove trailing semicolons and whitespace, so that a LIMIT can be
+        // appended to a SELECT. Script and function definitions are sent as
+        // written, because the database stores their text as sent.
+        let finalQuery = isScriptOrFunctionDefinition(query)
+            ? query.trimStart()
+            : query.trim().replace(/;+\s*$/, '').trim();
 
         // Intercept local file imports: raw SQL cannot stream a local file over the
         // WebSocket protocol, so route them through the driver's programmatic import.

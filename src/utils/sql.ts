@@ -205,6 +205,15 @@ function definitionKind(words: string[]): 'script' | 'function' | undefined {
 }
 
 /**
+ * True for a `CREATE [OR REPLACE] ... SCRIPT` or `CREATE [OR REPLACE] FUNCTION`
+ * statement. Exasol stores the text of these definitions as sent, including a
+ * final `;` and trailing whitespace of the body.
+ */
+export function isScriptOrFunctionDefinition(sql: string): boolean {
+    return definitionKind(readWords(sql, 0, 6)) !== undefined;
+}
+
+/**
  * Return the character indices where statements end. An index points either
  * at a terminating `;` (part of the statement) or at the `/` of a line that
  * holds only `/` (not part of the statement; the statement ends before the

@@ -921,8 +921,9 @@ async function executeStatement(
 ) {
     const output = getOutputChannel();
 
-    // Get the query text from the range
-    const query = document.getText(range).trim();
+    // Get the query text from the range. The end is kept, because a script or
+    // function definition is sent as written.
+    const query = document.getText(range).trimStart();
 
     if (!query) {
         vscode.window.showWarningMessage('No query to execute');

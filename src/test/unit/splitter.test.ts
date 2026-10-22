@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { splitIntoStatements, findStatementEnds, findStatementRanges, findStatementAtCursor, stripCommentsPreservingStrings, buildLineOffsets, offsetToLine, stripFinalSlashLine } from '../../utils';
+import { splitIntoStatements, findStatementEnds, findStatementRanges, findStatementAtCursor, stripCommentsPreservingStrings, buildLineOffsets, offsetToLine, stripFinalSlashLine, isScriptOrFunctionDefinition } from '../../utils';
 
 suite('splitIntoStatements: string literal awareness', () => {
     test('semicolon inside string literal is not a statement boundary', () => {
@@ -321,5 +321,25 @@ suite('stripFinalSlashLine', () => {
 
     test('removes only one / line', () => {
         assert.strictEqual(stripFinalSlashLine('SELECT 1\n/\n/'), 'SELECT 1\n/');
+    });
+});
+
+suite('isScriptOrFunctionDefinition', () => {
+    test('detects CREATE SCRIPT and CREATE FUNCTION in their variants', () => {
+        assert.strictEqual(isScriptOrFunctionDefinition('CREATE FUNCTION f() RETURN DECIMAL IS BEGIN RETURN 1; END f;'), true);
+        assert.strictEqual(isScriptOrFunctionDefinition('create or replace function s.f(p DECIMAL) return decimal'), true);
+        assert.strictEqual(isScriptOrFunctionDefinition('CREATE SCRIPT s.x AS\nexit()'), true);
+        assert.strictEqual(isScriptOrFunctionDefinition('CREATE OR REPLACE LUA SCALAR SCRIPT x() RETURNS INT AS'), true);
+        assert.strictEqual(isScriptOrFunctionDefinition('CREATE OR REPLACE JAVA ADAPTER SCRIPT a AS'), true);
+        assert.strictEqual(isScriptOrFunctionDefinition('  -- header\n/* note */ CREATE PYTHON3 SET SCRIPT p(a INT) EMITS (b INT) AS'), true);
+    });
+
+    test('rejects other statements', () => {
+        assert.strictEqual(isScriptOrFunctionDefinition('SELECT 1;'), false);
+        assert.strictEqual(isScriptOrFunctionDefinition('CREATE TABLE script_log (a INT);'), false);
+        assert.strictEqual(isScriptOrFunctionDefinition('CREATE OR REPLACE VIEW v AS SELECT 1;'), false);
+        assert.strictEqual(isScriptOrFunctionDefinition('DROP SCRIPT s.x;'), false);
+        assert.strictEqual(isScriptOrFunctionDefinition('EXECUTE SCRIPT s.x();'), false);
+        assert.strictEqual(isScriptOrFunctionDefinition(''), false);
     });
 });

@@ -163,3 +163,36 @@ suite('QueryExecutor.execute routing: local Parquet import interception', () => 
         assert.strictEqual((options as { retryOnConnectionError: boolean }).retryOnConnectionError, true);
     });
 });
+
+suite('QueryExecutor.execute: statement text sent to the database', () => {
+    setup(() => {
+        (vscodeMock as unknown as QueryExecutorVscodeMock).workspace = {
+            getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback })
+        };
+    });
+
+    test('a CREATE FUNCTION keeps the final ; after END', async () => {
+        const { qe, calls } = makeExecutor();
+        const sql = 'CREATE OR REPLACE FUNCTION s.f(p DECIMAL) RETURN DECIMAL IS\nBEGIN\n  RETURN p;\nEND f;';
+        await qe.execute(`\n  ${sql}`);
+        assert.strictEqual(calls.execute.length, 1);
+        assert.strictEqual(calls.execute[0][0], sql);
+    });
+
+    test('a Lua script keeps the final ; and trailing whitespace of its body', async () => {
+        const { qe, calls } = makeExecutor();
+        const sql = 'CREATE OR REPLACE LUA SCRIPT s.x() AS\nlocal x = 1;  ';
+        await qe.execute(sql);
+        assert.strictEqual(calls.execute.length, 1);
+        assert.strictEqual(calls.execute[0][0], sql);
+    });
+
+    test('other statements still lose the trailing ; and whitespace', async () => {
+        const { qe, calls } = makeExecutor();
+        await qe.execute('  CREATE TABLE t (a INT);;  \n');
+        await qe.execute('SELECT 1;');
+        assert.strictEqual(calls.execute[0][0], 'CREATE TABLE t (a INT)');
+        // The last query() call is the SELECT; the ones before it capture the plan identity.
+        assert.strictEqual(calls.query[calls.query.length - 1][0], 'SELECT 1 LIMIT 10000');
+    });
+});

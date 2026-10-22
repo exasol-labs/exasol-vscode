@@ -13,7 +13,8 @@ export {
     findStatementRanges,
     findStatementAtCursor,
     splitIntoStatements,
-    stripFinalSlashLine
+    stripFinalSlashLine,
+    isScriptOrFunctionDefinition
 } from './sql';
 
 export {
