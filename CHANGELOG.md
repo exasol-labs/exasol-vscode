@@ -2,6 +2,24 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.9.0] - 2026-10-22
+
+### Added
+- Virtual tables in the Objects view now support Preview Table, Describe Table, Generate SELECT Statement, and Copy Name, and clicking a virtual table opens Describe ([#81](https://github.com/exasol-labs/exasol-vscode/issues/81))
+- Refresh Metadata on a virtual schema or virtual table runs `ALTER VIRTUAL SCHEMA ... REFRESH` and reloads the Objects view
+- Explain Pushdown on a virtual table shows the pushdown SQL from `EXPLAIN VIRTUAL`. The `PUSHDOWN_JSON` column is not shown, because it contains the virtual schema properties, such as credentials, in clear text
+
+### Fixed
+- Expanding a virtual table now lists its columns with their data types; before, the list was empty ([#81](https://github.com/exasol-labs/exasol-vscode/issues/81))
+- Virtual schemas and virtual tables are no longer listed twice in the Objects view
+- Object search and SQL completion no longer list virtual schemas and virtual tables as regular schemas and tables
+- The `EXA_ALL_OBJECTS` fallback for listing tables and views filtered on `OBJECT_SCHEMA`, a column that does not exist; it now uses `ROOT_NAME`
+
+### Security
+- Updated `brace-expansion`, `fast-uri`, `follow-redirects`, `markdown-it`, and `source-map-js` to patched versions
+- Updated the development tools `@vscode/vsce` to 4.0.0, `@vscode/test-cli` to 0.0.15, and `ovsx` to 1.3.0, which removes the vulnerable `braces` and `micromatch` packages
+- `node-forge` 1.4.0, used by `@exasol/exasol-driver-ts`, has an advisory for RSA PKCS#1 v1.5 signature verification (GHSA-86w9-cpqp-85rv). No patched version exists. The extension is not affected: the driver uses `node-forge` only for RSA encryption of the login password, self-signed certificates for local file transfer, and SHA-256, and never verifies signatures
+
 ## [1.8.0] - 2026-09-15
 
 ### Added
