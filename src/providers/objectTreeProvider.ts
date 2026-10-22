@@ -141,6 +141,9 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 const delimiter = cfg.get<string>('schemaGrouping.delimiter', '_');
 
                 const allNodes: ObjectNode[] = [];
+                if (schemas.length === 0) {
+                    allNodes.push(new ObjectMessageItem('No schemas visible for this user'));
+                }
 
                 if (!groupingEnabled || !delimiter) {
                     const schemaNodes: ObjectNode[] = schemas.map(schema => {
@@ -461,20 +464,16 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             const indices = await fetchIndices(
                 this.connectionManager, element.connection!, element.schemaName!, element.tableInfo!.name
             );
-            return indices.map(idx => {
-                const item = new ObjectTreeItem({
-                    label: idx.name,
-                    id: `${element.connection!.id}:${element.schemaName}:${element.tableInfo!.name}:${idx.name}:index`,
-                    collapsibleState: vscode.TreeItemCollapsibleState.None,
-                    type: 'index',
-                    connection: element.connection,
-                    schemaName: element.schemaName,
-                    tableInfo: element.tableInfo,
-                    parent: element
-                });
-                item.description = idx.columns;
-                return item;
-            });
+            return indices.map(idx => new ObjectTreeItem({
+                label: idx.description,
+                id: `${element.connection!.id}:${element.schemaName}:${element.tableInfo!.name}:${idx.objectId}:index`,
+                collapsibleState: vscode.TreeItemCollapsibleState.None,
+                type: 'index',
+                connection: element.connection,
+                schemaName: element.schemaName,
+                tableInfo: element.tableInfo,
+                parent: element
+            }));
         }
 
         if (element.type === 'constraint') {
@@ -808,22 +807,21 @@ export class ObjectTreeItem extends vscode.TreeItem {
         }
 
         switch (options.type) {
-            case 'schema':
-                if (this.tableCount !== undefined || this.viewCount !== undefined) {
-                    const parts: string[] = [];
-                    if (this.tableCount !== undefined && this.tableCount > 0) {
-                        parts.push(`${this.tableCount} ${this.tableCount === 1 ? 'table' : 'tables'}`);
-                    }
-                    if (this.viewCount !== undefined && this.viewCount > 0) {
-                        parts.push(`${this.viewCount} ${this.viewCount === 1 ? 'view' : 'views'}`);
-                    }
-                    if (parts.length > 0) {
-                        this.description = parts.join(', ');
-                    } else if (this.tableCount === 0 && this.viewCount === 0) {
-                        this.description = 'empty';
-                    }
+            case 'schema': {
+                // Counts include only objects the user can see, so a schema
+                // without visible objects gets no description.
+                const parts: string[] = [];
+                if (this.tableCount !== undefined && this.tableCount > 0) {
+                    parts.push(`${this.tableCount} ${this.tableCount === 1 ? 'table' : 'tables'}`);
+                }
+                if (this.viewCount !== undefined && this.viewCount > 0) {
+                    parts.push(`${this.viewCount} ${this.viewCount === 1 ? 'view' : 'views'}`);
+                }
+                if (parts.length > 0) {
+                    this.description = parts.join(', ');
                 }
                 break;
+            }
             case 'tables-folder':
                 if (this.tableCount !== undefined) {
                     this.description = `${this.tableCount}`;

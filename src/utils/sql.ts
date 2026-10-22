@@ -19,6 +19,11 @@ export function escapeSqlIdentifier(name: string): string {
     return name.replace(/"/g, '""');
 }
 
+/** Columns of SYS and EXA_STATISTICS tables are listed in EXA_SYS_COLUMNS, not in EXA_ALL_COLUMNS. */
+export function columnsViewFor(schemaName: string): string {
+    return schemaName === 'SYS' || schemaName === 'EXA_STATISTICS' ? 'SYS.EXA_SYS_COLUMNS' : 'SYS.EXA_ALL_COLUMNS';
+}
+
 // ---------------------------------------------------------------------------
 // State-machine SQL tokenizer
 // ---------------------------------------------------------------------------

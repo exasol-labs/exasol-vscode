@@ -233,4 +233,23 @@ suite('ExasolCompletionProvider - lazy column fetch', () => {
         await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
         assert.strictEqual(columnQueries, 1, 'expected exactly one column fetch (second hit cache)');
     });
+
+    test('columns of SYS and EXA_STATISTICS tables come from EXA_SYS_COLUMNS', async () => {
+        const seenSql: string[] = [];
+        const driver = makeDriver((sql: string) => {
+            seenSql.push(sql);
+            return createRawResult(['COLUMN_NAME'], [['USER_NAME']]);
+        });
+        const { manager } = makeManager(driver);
+        const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
+        const internals = provider as unknown as CompletionProviderInternals;
+
+        assert.deepStrictEqual(await internals.getColumnsForTable('conn1', 'sys', 'exa_dba_users'), ['USER_NAME']);
+        await internals.getColumnsForTable('conn1', 'EXA_STATISTICS', 'EXA_DBA_AUDIT_SQL');
+        await internals.getColumnsForTable('conn1', 'MY_SCHEMA', 'T');
+
+        assert.deepStrictEqual(seenSql.map(sql => /FROM (SYS\.EXA_\w+_COLUMNS)/.exec(sql)?.[1]), [
+            'SYS.EXA_SYS_COLUMNS', 'SYS.EXA_SYS_COLUMNS', 'SYS.EXA_ALL_COLUMNS'
+        ]);
+    });
 });

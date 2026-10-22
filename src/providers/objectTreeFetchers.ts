@@ -2,7 +2,7 @@ import type { SQLQueriesResponse, SQLResponse } from '@exasol/exasol-driver-ts';
 import { ConnectionManager, StoredConnection, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
 import type { DbConnectionInfo } from './objectTreeTypes';
-import { getRowsFromResult, escapeSqlString, escapeSqlIdentifier, rawQuery, safeFetch, throwSqlError } from '../utils';
+import { getRowsFromResult, escapeSqlString, columnsViewFor, rawQuery, safeFetch, throwSqlError } from '../utils';
 
 // ---------------------------------------------------------------------------
 // Helper utilities
@@ -275,14 +275,14 @@ export async function fetchViews(
                 {
                     description: 'views from EXA_ALL_VIEWS',
                     sql: `
-                        SELECT TABLE_NAME AS VIEW_NAME
+                        SELECT VIEW_NAME
                         FROM SYS.EXA_ALL_VIEWS
                         WHERE VIEW_SCHEMA = '${escapeSqlString(schemaName)}'
-                        ORDER BY TABLE_NAME
+                        ORDER BY VIEW_NAME
                     `,
                     map: mapViewNames,
                     recoverable: error =>
-                        isColumnMissingError(error, 'TABLE_NAME') ||
+                        isColumnMissingError(error, 'VIEW_NAME') ||
                         isColumnMissingError(error, 'VIEW_SCHEMA') ||
                         isRawDataError(error)
                 },
@@ -369,7 +369,7 @@ export async function fetchColumns(
                     COLUMN_NAME,
                     COLUMN_TYPE,
                     COLUMN_IS_NULLABLE
-                FROM SYS.EXA_ALL_COLUMNS
+                FROM ${columnsViewFor(schemaName)}
                 WHERE COLUMN_SCHEMA = '${escapeSqlString(schemaName)}'
                 AND COLUMN_TABLE = '${escapeSqlString(tableName)}'
                 ORDER BY COLUMN_ORDINAL_POSITION
@@ -607,30 +607,34 @@ export async function fetchConstraintColumns(
     [], getOutputChannel());
 }
 
+/**
+ * EXA_ALL_INDICES has no index name and no column list; REMARKS describes the
+ * index, e.g. `LOCAL INDEX (NAME)`.
+ */
 export async function fetchIndices(
     connectionManager: ConnectionManager,
     connection: StoredConnection,
     schemaName: string,
     tableName: string
-): Promise<Array<{ name: string; columns: string }>> {
+): Promise<Array<{ objectId: string; description: string }>> {
     return safeFetch(`Failed to fetch indices for '${schemaName}'.'${tableName}'`, () =>
         connectionManager.executeWithRetry(async () => {
             const driver = await connectionManager.getDriver(connection.id, 'background');
             const result = await rawQuery(driver, `
-                SELECT INDEX_NAME, INDEX_TYPE, INDEX_COLUMNS
+                SELECT INDEX_OBJECT_ID, INDEX_TYPE, REMARKS
                 FROM SYS.EXA_ALL_INDICES
                 WHERE INDEX_SCHEMA = '${escapeSqlString(schemaName)}'
                 AND INDEX_TABLE = '${escapeSqlString(tableName)}'
-                ORDER BY INDEX_NAME
+                ORDER BY REMARKS
             `);
             const rows = getRowsFromResult<{
-                INDEX_NAME?: string;
-                INDEX_TYPE?: string;
-                INDEX_COLUMNS?: string;
+                INDEX_OBJECT_ID: number | string;
+                INDEX_TYPE: string;
+                REMARKS: string | null;
             }>(result);
             return rows.map(row => ({
-                name: row.INDEX_NAME ?? row.INDEX_TYPE ?? 'INDEX',
-                columns: row.INDEX_COLUMNS ?? ''
+                objectId: String(row.INDEX_OBJECT_ID),
+                description: row.REMARKS ?? `${row.INDEX_TYPE} INDEX`
             }));
         }, connection.id, { role: 'background' }),
     [], getOutputChannel());
@@ -744,6 +748,7 @@ export async function fetchSystemTables(
     [], getOutputChannel());
 }
 
+/** Same as fetchColumns, but logs a failure and returns no columns. */
 export async function fetchSystemTableColumns(
     connectionManager: ConnectionManager,
     connection: StoredConnection,
@@ -751,19 +756,7 @@ export async function fetchSystemTableColumns(
     tableName: string
 ): Promise<Array<{ name: string; type: string; nullable: boolean | null }>> {
     return safeFetch(`Failed to fetch system table columns for '${schemaName}'.'${tableName}'`, () =>
-        connectionManager.executeWithRetry(async () => {
-            const driver = await connectionManager.getDriver(connection.id, 'background');
-            const result = await rawQuery(driver, `
-                DESCRIBE "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(tableName)}"
-            `);
-            const rows = getRowsFromResult<{ COLUMN_NAME: string; SQL_TYPE?: string; NULLABLE?: boolean | null }>(result);
-            // DESCRIBE reports NULLABLE as null for system tables; pass it through.
-            return rows.map(row => ({
-                name: row.COLUMN_NAME,
-                type: row.SQL_TYPE ?? 'UNKNOWN',
-                nullable: row.NULLABLE ?? null
-            }));
-        }, connection.id, { role: 'background' }),
+        fetchColumns(connectionManager, connection, schemaName, tableName),
     [], getOutputChannel());
 }
 

@@ -5,6 +5,7 @@
 export {
     escapeSqlString,
     escapeSqlIdentifier,
+    columnsViewFor,
     stripCommentsPreservingStrings,
     findStatementEnds,
     buildLineOffsets,

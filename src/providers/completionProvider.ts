@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ConnectionManager, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
 import {
+    columnsViewFor,
     escapeSqlString,
     findStatementAtCursor,
     getRowsFromResult,
@@ -803,10 +804,11 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connectionId, 'background');
-                // EXA_ALL_COLUMNS uses identifiers stored uppercase; escape as string literals.
+                // Identifiers are stored uppercase; escape as string literals.
+                const upperSchema = schema.toUpperCase();
                 const sql =
-                    `SELECT COLUMN_NAME FROM SYS.EXA_ALL_COLUMNS ` +
-                    `WHERE COLUMN_SCHEMA = '${escapeSqlString(schema.toUpperCase())}' ` +
+                    `SELECT COLUMN_NAME FROM ${columnsViewFor(upperSchema)} ` +
+                    `WHERE COLUMN_SCHEMA = '${escapeSqlString(upperSchema)}' ` +
                     `AND COLUMN_TABLE = '${escapeSqlString(table.toUpperCase())}' ` +
                     `ORDER BY COLUMN_ORDINAL_POSITION`;
                 const result = await rawQuery(driver, sql);
