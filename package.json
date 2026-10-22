@@ -317,17 +317,17 @@
         },
         {
           "command": "exasol.previewTable",
-          "when": "view == exasol.objects && (viewItem == table || viewItem == virtual-table)",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == virtual-table || viewItem == system-table)",
           "group": "exasol@2"
         },
         {
           "command": "exasol.describeTable",
-          "when": "view == exasol.objects && (viewItem == table || viewItem == virtual-table)",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == virtual-table || viewItem == system-table)",
           "group": "exasol@3"
         },
         {
           "command": "exasol.generateSelect",
-          "when": "view == exasol.objects && (viewItem == table || viewItem == virtual-table)",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == virtual-table || viewItem == system-table)",
           "group": "exasol@4"
         },
         {
@@ -367,7 +367,7 @@
         },
         {
           "command": "exasol.copyQualifiedName",
-          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == schema || viewItem == virtual-table || viewItem == virtual-schema || viewItem == script-udf || viewItem == script-adapter)",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == schema || viewItem == virtual-table || viewItem == virtual-schema || viewItem == script-udf || viewItem == script-adapter || viewItem == system-schema || viewItem == system-table)",
           "group": "inline@1"
         },
         {

@@ -27,8 +27,9 @@ import { escapeSqlIdentifier } from '../utils';
 export type ObjectNode = ObjectTreeItem | ObjectMessageItem;
 
 /**
- * The quoted SQL name of a schema, table, view, column or script node, as
- * used by drag and drop and Copy Name; undefined for other node types.
+ * The quoted SQL name of a schema, table, view, column or script node,
+ * including system schemas and tables, as used by drag and drop and Copy
+ * Name; undefined for other node types.
  */
 export function getQualifiedName(
     item: Partial<Pick<ObjectTreeItem, 'type' | 'schemaName' | 'tableInfo' | 'columnInfo' | 'scriptInfo'>>
@@ -36,10 +37,12 @@ export function getQualifiedName(
     switch (item.type) {
         case 'schema':
         case 'virtual-schema':
+        case 'system-schema':
             return item.schemaName ? `"${escapeSqlIdentifier(item.schemaName)}"` : undefined;
         case 'table':
         case 'view':
         case 'virtual-table':
+        case 'system-table':
             return item.schemaName && item.tableInfo
                 ? `"${escapeSqlIdentifier(item.schemaName)}"."${escapeSqlIdentifier(item.tableInfo.name)}"`
                 : undefined;
@@ -671,7 +674,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     type: 'column',
                     connection: element.connection,
                     schemaName: element.schemaName,
-                    columnInfo: { name: col.name, type: col.type, nullable: false },
+                    columnInfo: { name: col.name, type: col.type, nullable: col.nullable },
                     parent: element
                 });
             });
@@ -821,6 +824,13 @@ export class ObjectTreeItem extends vscode.TreeItem {
                 this.command = {
                     command: 'exasol.openObject',
                     title: 'Open Virtual Table',
+                    arguments: [this]
+                };
+                break;
+            case 'system-table':
+                this.command = {
+                    command: 'exasol.openObject',
+                    title: 'Open System Table',
                     arguments: [this]
                 };
                 break;

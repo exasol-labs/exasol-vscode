@@ -35,7 +35,7 @@ function menuCommandsFor(contextValue: string): string[] {
         .map(entry => `${entry.command}${entry.group?.startsWith('inline') ? ' (inline)' : ''}`);
 }
 
-suite('ObjectTreeProvider, script and function nodes', () => {
+suite('ObjectTreeProvider, script, function and system nodes', () => {
 
     test('UDF, adapter and other scripts get their own context values', () => {
         assert.strictEqual(makeScriptItem('UDF').contextValue, 'script-udf');
@@ -86,5 +86,12 @@ suite('ObjectTreeProvider, script and function nodes', () => {
         ]);
         assert.deepStrictEqual(menuCommandsFor('script'), []);
         assert.deepStrictEqual(menuCommandsFor('function'), []);
+    });
+
+    test('system tables and system schemas have their context menus', () => {
+        assert.deepStrictEqual(menuCommandsFor('system-table'), [
+            'exasol.previewTable', 'exasol.describeTable', 'exasol.generateSelect', 'exasol.copyQualifiedName (inline)'
+        ]);
+        assert.deepStrictEqual(menuCommandsFor('system-schema'), ['exasol.copyQualifiedName (inline)']);
     });
 });

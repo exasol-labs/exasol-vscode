@@ -8,6 +8,11 @@ import { isExecutionPlanEnabled } from './settings';
 /** EXPLAIN VIRTUAL columns that are safe to show; PUSHDOWN_JSON is left out on purpose. */
 const PUSHDOWN_SAFE_COLUMNS: ReadonlySet<string> = new Set(['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_INVOLVED_TABLES']);
 
+/** Columns of SYS and EXA_STATISTICS tables are listed in EXA_SYS_COLUMNS, not in EXA_ALL_COLUMNS. */
+function columnsViewFor(schemaName: string): string {
+    return schemaName === 'SYS' || schemaName === 'EXA_STATISTICS' ? 'SYS.EXA_SYS_COLUMNS' : 'SYS.EXA_ALL_COLUMNS';
+}
+
 export class ObjectActions {
     constructor(
         private connectionManager: ConnectionManager,
@@ -151,7 +156,7 @@ export class ObjectActions {
                 const driver = await this.connectionManager.getDriver(connection.id);
                 const query = `
                     SELECT COLUMN_NAME
-                    FROM SYS.EXA_ALL_COLUMNS
+                    FROM ${columnsViewFor(schemaName)}
                     WHERE COLUMN_SCHEMA = '${escapeSqlString(schemaName)}'
                     AND COLUMN_TABLE = '${escapeSqlString(tableName)}'
                     ORDER BY COLUMN_ORDINAL_POSITION
@@ -243,7 +248,7 @@ export class ObjectActions {
                         COLUMN_IS_NULLABLE,
                         COLUMN_DEFAULT,
                         COLUMN_COMMENT
-                    FROM SYS.EXA_ALL_COLUMNS
+                    FROM ${columnsViewFor(schemaName)}
                     WHERE COLUMN_SCHEMA = '${escapeSqlString(schemaName)}'
                     AND COLUMN_TABLE = '${escapeSqlString(tableName)}'
                     ORDER BY COLUMN_ORDINAL_POSITION

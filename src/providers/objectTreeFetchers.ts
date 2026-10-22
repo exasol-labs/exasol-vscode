@@ -748,17 +748,19 @@ export async function fetchSystemTableColumns(
     connection: StoredConnection,
     schemaName: string,
     tableName: string
-): Promise<Array<{ name: string; type: string }>> {
+): Promise<Array<{ name: string; type: string; nullable: boolean | null }>> {
     return safeFetch(`Failed to fetch system table columns for '${schemaName}'.'${tableName}'`, () =>
         connectionManager.executeWithRetry(async () => {
             const driver = await connectionManager.getDriver(connection.id, 'background');
             const result = await rawQuery(driver, `
                 DESCRIBE "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(tableName)}"
             `);
-            const rows = getRowsFromResult<{ COLUMN_NAME: string; SQL_TYPE?: string }>(result);
+            const rows = getRowsFromResult<{ COLUMN_NAME: string; SQL_TYPE?: string; NULLABLE?: boolean | null }>(result);
+            // DESCRIBE reports NULLABLE as null for system tables; pass it through.
             return rows.map(row => ({
                 name: row.COLUMN_NAME,
-                type: row.SQL_TYPE ?? 'UNKNOWN'
+                type: row.SQL_TYPE ?? 'UNKNOWN',
+                nullable: row.NULLABLE ?? null
             }));
         }, connection.id, { role: 'background' }),
     [], getOutputChannel());

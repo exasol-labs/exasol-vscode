@@ -1,12 +1,12 @@
 import * as assert from 'assert';
 import type { ConnectionManager } from '../../connectionManager';
-import type { ObjectNode } from '../../providers/objectTreeProvider';
+import type { ObjectNode, ObjectTreeItem } from '../../providers/objectTreeProvider';
 import { registerVscodeMock, registerExtensionMock } from '../helpers/vscodeMock';
 
 registerVscodeMock();
 registerExtensionMock();
 
-const { ObjectTreeProvider } = require('../../providers/objectTreeProvider') as typeof import('../../providers/objectTreeProvider');
+const { ObjectTreeProvider, getQualifiedName } = require('../../providers/objectTreeProvider') as typeof import('../../providers/objectTreeProvider');
 
 import { createRawResult, createEmptyRawResult } from '../helpers/mockConnectionManager';
 import { MockConnectionManager } from '../helpers/mockConnectionManager';
@@ -141,11 +141,11 @@ suite('ObjectTreeProvider, System Schemas', () => {
                     }
                     if (sql.includes('DESCRIBE')) {
                         return createRawResult(
-                            ['COLUMN_NAME', 'SQL_TYPE'],
+                            ['COLUMN_NAME', 'SQL_TYPE', 'NULLABLE'],
                             [
-                                ['COLUMN_SCHEMA', 'VARCHAR(128) UTF8'],
-                                ['COLUMN_TABLE', 'VARCHAR(128) UTF8'],
-                                ['COLUMN_NAME', 'VARCHAR(128) UTF8']
+                                ['COLUMN_SCHEMA', 'VARCHAR(128) UTF8', null],
+                                ['COLUMN_TABLE', 'VARCHAR(128) UTF8', null],
+                                ['COLUMN_NAME', 'VARCHAR(128) UTF8', null]
                             ]
                         );
                     }
@@ -174,6 +174,17 @@ suite('ObjectTreeProvider, System Schemas', () => {
                 firstLabel.includes('COLUMN_SCHEMA'),
                 `First column label should contain COLUMN_SCHEMA, got: ${firstLabel}`
             );
+            // DESCRIBE reports NULLABLE as null for system tables; it must not become "not nullable".
+            const firstColumn = columns[0] as ObjectTreeItem;
+            assert.strictEqual(firstColumn.columnInfo?.nullable, null);
+
+            // System tables open Describe on click and copy or drag as quoted qualified names.
+            const systemTable = table as ObjectTreeItem;
+            assert.strictEqual(systemTable.contextValue, 'system-table');
+            assert.strictEqual(systemTable.command?.command, 'exasol.openObject');
+            assert.deepStrictEqual(systemTable.command?.arguments, [systemTable]);
+            assert.strictEqual(getQualifiedName(systemTable), '"SYS"."EXA_ALL_COLUMNS"');
+            assert.strictEqual(getQualifiedName(sysNode as ObjectTreeItem), '"SYS"');
         });
     });
 

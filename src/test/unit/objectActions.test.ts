@@ -877,3 +877,46 @@ suite('ObjectActions.generateScriptCall', () => {
         assert.deepStrictEqual(opened, []);
     });
 });
+
+suite('ObjectActions on system tables', () => {
+    let savedWindow: ObjectActionsVscodeMock['window'];
+    let savedWorkspace: ObjectActionsVscodeMock['workspace'];
+
+    setup(() => {
+        savedWindow = extendedVscodeMock.window;
+        savedWorkspace = extendedVscodeMock.workspace;
+        extendedVscodeMock.window = buildWindowMock();
+        extendedVscodeMock.workspace = buildWorkspaceMock();
+    });
+
+    teardown(() => {
+        extendedVscodeMock.window = savedWindow;
+        extendedVscodeMock.workspace = savedWorkspace;
+    });
+
+    async function columnsViewUsed(action: 'describeTable' | 'generateSelectStatement', schemaName: string): Promise<string> {
+        const { oa, capturedSql } = makeObjectActionsCapturingSql();
+        const originalShow = ResultsPanel.show;
+        ResultsPanel.show = () => {};
+        try {
+            await oa[action](TEST_CONNECTION, schemaName, 'EXA_ALL_TABLES');
+        } finally {
+            ResultsPanel.show = originalShow;
+        }
+        const view = /FROM (SYS\.EXA_\w+_COLUMNS)/.exec(capturedSql[0])?.[1];
+        assert.ok(view, `no columns view in: ${capturedSql[0]}`);
+        return view;
+    }
+
+    for (const action of ['describeTable', 'generateSelectStatement'] as const) {
+        test(`${action} reads SYS and EXA_STATISTICS columns from EXA_SYS_COLUMNS`, async () => {
+            assert.strictEqual(await columnsViewUsed(action, 'SYS'), 'SYS.EXA_SYS_COLUMNS');
+            assert.strictEqual(await columnsViewUsed(action, 'EXA_STATISTICS'), 'SYS.EXA_SYS_COLUMNS');
+        });
+
+        test(`${action} keeps EXA_ALL_COLUMNS for other schemas`, async () => {
+            assert.strictEqual(await columnsViewUsed(action, 'MY_SCHEMA'), 'SYS.EXA_ALL_COLUMNS');
+            assert.strictEqual(await columnsViewUsed(action, 'sys'), 'SYS.EXA_ALL_COLUMNS');
+        });
+    }
+});

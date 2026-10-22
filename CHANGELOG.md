@@ -9,6 +9,7 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - Refresh Metadata on a virtual schema or virtual table runs `ALTER VIRTUAL SCHEMA ... REFRESH` and reloads the Objects view
 - Explain Pushdown on a virtual table shows the pushdown SQL from `EXPLAIN VIRTUAL`. The `PUSHDOWN_JSON` column is not shown, because it contains the virtual schema properties, such as credentials, in clear text
 - UDF scripts in the Objects view now support Open Source, Generate Call, and Copy Name. Generate Call inserts a `SELECT` that calls the UDF, with its parameter names as placeholders. Adapter scripts support Open Source and Copy Name. Scripts can also be dragged into the editor as their qualified name
+- System tables in the Objects view now support Preview Table, Describe Table, Generate SELECT Statement, and Copy Name, and clicking a system table opens Describe. Describe Table and Generate SELECT Statement read the columns of system tables from `EXA_SYS_COLUMNS`. System schemas support Copy Name. Both can be dragged into the editor as their qualified name
 
 ### Fixed
 - Expanding a virtual table now lists its columns with their data types; before, the list was empty ([#81](https://github.com/exasol-labs/exasol-vscode/issues/81))
