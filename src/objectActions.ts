@@ -386,14 +386,9 @@ export class ObjectActions {
         }
     }
 
-    /** Asks for the source type and inserts an IMPORT or EXPORT template; a cancelled pick does nothing. */
+    /** Opens an IMPORT or EXPORT template for the connection in a new tab. */
     async generateTransfer(direction: TransferDirection, connectionName: string) {
-        const picked = await vscode.window.showQuickPick(TRANSFER_SOURCES, {
-            placeHolder: direction === 'IMPORT' ? 'Import from' : 'Export to'
-        });
-        if (picked) {
-            await insertIntoSqlEditor(buildTransferTemplate(direction, picked.source, connectionName));
-        }
+        await openSqlDocument(buildTransferTemplate(direction, connectionName));
     }
 }
 
@@ -452,23 +447,30 @@ export function buildConnectionDDL(
 }
 
 type TransferDirection = 'IMPORT' | 'EXPORT';
-type TransferSource = 'CSV' | 'EXA' | 'JDBC';
 
-const TRANSFER_SOURCES: ReadonlyArray<vscode.QuickPickItem & { source: TransferSource }> = [
-    { label: 'Cloud file (CSV)', source: 'CSV' },
-    { label: 'Exasol', source: 'EXA' },
-    { label: 'JDBC', source: 'JDBC' }
-];
-
-/** IMPORT or EXPORT through a connection, with placeholders for the parts the user fills in. */
-export function buildTransferTemplate(direction: TransferDirection, source: TransferSource, connectionName: string): string {
+/**
+ * IMPORT or EXPORT through a connection: a CSV file statement plus the other
+ * documented sources (IMPORT) or destinations (EXPORT) as commented
+ * alternatives. EXPORT writes CSV and FBV files only, no Parquet. Names are
+ * placeholder identifiers, so every variant parses as written.
+ */
+export function buildTransferTemplate(direction: TransferDirection, connectionName: string): string {
     const at = `AT "${escapeSqlIdentifier(connectionName)}"`;
-    const target = {
-        CSV: `CSV ${at} FILE '<path>'`,
-        EXA: `EXA ${at} TABLE <schema>.<table>`,
-        JDBC: direction === 'IMPORT' ? `JDBC ${at} STATEMENT '<sql>'` : `JDBC ${at} TABLE <schema>.<table>`
-    }[source];
-    return direction === 'IMPORT' ? `IMPORT INTO <table> FROM ${target};` : `EXPORT <table> INTO ${target};`;
+    const [clause, statement] = direction === 'IMPORT' ? ['FROM', "'<SELECT ...>'"] : ['INTO', "'<INSERT ... VALUES (?, ?)>'"];
+    const files = direction === 'IMPORT' ? ['FBV', 'PARQUET'] : ['FBV'];
+    const alternatives = [
+        ...files.map(format => `${clause} ${format} ${at} FILE '<path/file.${format.toLowerCase()}>'`),
+        ...['EXA', 'ORA', 'JDBC'].flatMap(type => [
+            `${clause} ${type} ${at} TABLE remote_schema.remote_table`,
+            `${clause} ${type} ${at} STATEMENT ${statement}`
+        ])
+    ];
+    return [
+        direction === 'IMPORT' ? 'IMPORT INTO my_schema.my_table' : 'EXPORT my_schema.my_table',
+        `${clause} CSV ${at} FILE '<path/file.csv>';`,
+        `-- Other ${direction === 'IMPORT' ? 'sources' : 'destinations'}, replace the ${clause} line:`,
+        ...alternatives.map(line => `-- ${line}`)
+    ].join('\n');
 }
 
 async function openSqlDocument(content: string): Promise<void> {

@@ -1125,20 +1125,46 @@ suite('ObjectActions.showConnectionDDL', () => {
 });
 
 suite('buildTransferTemplate', () => {
-    test('IMPORT per source type', () => {
-        assert.strictEqual(buildTransferTemplate('IMPORT', 'CSV', 'C'), 'IMPORT INTO <table> FROM CSV AT "C" FILE \'<path>\';');
-        assert.strictEqual(buildTransferTemplate('IMPORT', 'EXA', 'C'), 'IMPORT INTO <table> FROM EXA AT "C" TABLE <schema>.<table>;');
-        assert.strictEqual(buildTransferTemplate('IMPORT', 'JDBC', 'C'), 'IMPORT INTO <table> FROM JDBC AT "C" STATEMENT \'<sql>\';');
+    test('IMPORT: CSV statement with the other documented sources as comments', () => {
+        assert.strictEqual(buildTransferTemplate('IMPORT', 'C'), [
+            'IMPORT INTO my_schema.my_table',
+            'FROM CSV AT "C" FILE \'<path/file.csv>\';',
+            '-- Other sources, replace the FROM line:',
+            '-- FROM FBV AT "C" FILE \'<path/file.fbv>\'',
+            '-- FROM PARQUET AT "C" FILE \'<path/file.parquet>\'',
+            '-- FROM EXA AT "C" TABLE remote_schema.remote_table',
+            '-- FROM EXA AT "C" STATEMENT \'<SELECT ...>\'',
+            '-- FROM ORA AT "C" TABLE remote_schema.remote_table',
+            '-- FROM ORA AT "C" STATEMENT \'<SELECT ...>\'',
+            '-- FROM JDBC AT "C" TABLE remote_schema.remote_table',
+            '-- FROM JDBC AT "C" STATEMENT \'<SELECT ...>\''
+        ].join('\n'));
     });
 
-    test('EXPORT per source type', () => {
-        assert.strictEqual(buildTransferTemplate('EXPORT', 'CSV', 'C'), 'EXPORT <table> INTO CSV AT "C" FILE \'<path>\';');
-        assert.strictEqual(buildTransferTemplate('EXPORT', 'EXA', 'C'), 'EXPORT <table> INTO EXA AT "C" TABLE <schema>.<table>;');
-        assert.strictEqual(buildTransferTemplate('EXPORT', 'JDBC', 'C'), 'EXPORT <table> INTO JDBC AT "C" TABLE <schema>.<table>;');
+    test('EXPORT: CSV statement with the other documented destinations as comments, without PARQUET', () => {
+        assert.strictEqual(buildTransferTemplate('EXPORT', 'C'), [
+            'EXPORT my_schema.my_table',
+            'INTO CSV AT "C" FILE \'<path/file.csv>\';',
+            '-- Other destinations, replace the INTO line:',
+            '-- INTO FBV AT "C" FILE \'<path/file.fbv>\'',
+            '-- INTO EXA AT "C" TABLE remote_schema.remote_table',
+            '-- INTO EXA AT "C" STATEMENT \'<INSERT ... VALUES (?, ?)>\'',
+            '-- INTO ORA AT "C" TABLE remote_schema.remote_table',
+            '-- INTO ORA AT "C" STATEMENT \'<INSERT ... VALUES (?, ?)>\'',
+            '-- INTO JDBC AT "C" TABLE remote_schema.remote_table',
+            '-- INTO JDBC AT "C" STATEMENT \'<INSERT ... VALUES (?, ?)>\''
+        ].join('\n'));
     });
 
-    test('the connection name is a quoted identifier', () => {
-        assert.strictEqual(buildTransferTemplate('IMPORT', 'EXA', 'VS_LOWER"Q'), 'IMPORT INTO <table> FROM EXA AT "VS_LOWER""Q" TABLE <schema>.<table>;');
+    test('the connection name is a quoted identifier on every line', () => {
+        const lines = buildTransferTemplate('IMPORT', 'VS_LOWER"Q').split('\n').filter(line => line.includes(' AT '));
+        assert.strictEqual(lines.length, 9);
+        assert.ok(lines.every(line => line.includes('AT "VS_LOWER""Q" ')), lines.join('\n'));
+    });
+
+    test('the splitter reads the template as the one active statement', () => {
+        assert.deepStrictEqual(splitIntoStatements(buildTransferTemplate('EXPORT', 'C')),
+            ['EXPORT my_schema.my_table\nINTO CSV AT "C" FILE \'<path/file.csv>\';']);
     });
 });
 
@@ -1146,21 +1172,12 @@ suite('ObjectActions.generateTransfer', () => {
     let savedWindow: ObjectActionsVscodeMock['window'];
     let savedWorkspace: ObjectActionsVscodeMock['workspace'];
     let opened: string[];
-    let pickedLabel: string | undefined;
-    let offered: string[];
 
     setup(() => {
         savedWindow = extendedVscodeMock.window;
         savedWorkspace = extendedVscodeMock.workspace;
         opened = [];
-        offered = [];
-        extendedVscodeMock.window = {
-            ...buildWindowMock(),
-            showQuickPick: (items: Array<{ label: string }>) => {
-                offered = items.map(item => item.label);
-                return Promise.resolve(items.find(item => item.label === pickedLabel));
-            },
-        } as ObjectActionsVscodeMock['window'];
+        extendedVscodeMock.window = buildWindowMock();
         extendedVscodeMock.workspace = {
             ...buildWorkspaceMock(),
             openTextDocument: (opts: unknown) => {
@@ -1175,23 +1192,13 @@ suite('ObjectActions.generateTransfer', () => {
         extendedVscodeMock.workspace = savedWorkspace;
     });
 
-    test('offers the three source types and opens the picked template', async () => {
-        pickedLabel = 'JDBC';
+    test('opens the template in a new document without running SQL', async () => {
         const { oa, capturedSql } = makeObjectActionsCapturingSql();
 
         await oa.generateTransfer('IMPORT', 'C');
-
-        assert.deepStrictEqual(offered, ['Cloud file (CSV)', 'Exasol', 'JDBC']);
-        assert.deepStrictEqual(opened, ['IMPORT INTO <table> FROM JDBC AT "C" STATEMENT \'<sql>\';']);
-        assert.deepStrictEqual(capturedSql, []);
-    });
-
-    test('a cancelled pick does nothing', async () => {
-        pickedLabel = undefined;
-        const { oa } = makeObjectActionsCapturingSql();
-
         await oa.generateTransfer('EXPORT', 'C');
 
-        assert.deepStrictEqual(opened, []);
+        assert.deepStrictEqual(opened, [buildTransferTemplate('IMPORT', 'C'), buildTransferTemplate('EXPORT', 'C')]);
+        assert.deepStrictEqual(capturedSql, []);
     });
 });
