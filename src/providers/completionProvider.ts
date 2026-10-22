@@ -605,6 +605,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                     SELECT SCHEMA_NAME
                     FROM SYS.EXA_SCHEMAS
                     WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
+                    AND SCHEMA_IS_VIRTUAL = FALSE
                     ORDER BY SCHEMA_NAME
                 `;
                 const result = await rawQuery(driver, schemasQuery);
@@ -658,6 +659,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                         'table' AS OBJECT_TYPE
                     FROM SYS.EXA_ALL_TABLES
                     WHERE TABLE_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
+                    AND TABLE_IS_VIRTUAL = FALSE
                     UNION ALL
                     SELECT
                         VIEW_SCHEMA AS TABLE_SCHEMA,

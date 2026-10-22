@@ -1,8 +1,7 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { ConnectionTreeProvider } from './providers/connectionTreeProvider';
-import { ObjectTreeProvider } from './providers/objectTreeProvider';
-import type { ObjectTreeItem } from './providers/objectTreeProvider';
+import { ObjectTreeProvider, ObjectTreeItem } from './providers/objectTreeProvider';
 import { QueryHistoryProvider } from './providers/queryHistoryProvider';
 import { ExasolCompletionProvider } from './providers/completionProvider';
 import { ExasolCodeLensProvider } from './providers/codeLensProvider';
@@ -178,6 +177,17 @@ export function activate(context: vscode.ExtensionContext) {
             objectActions.generateSelectStatement(i.connection, i.schemaName, i.tableInfo.name)),
         itemCommand('exasol.describeTable', ['connection', 'schemaName', 'tableInfo'], (i) =>
             objectActions.describeTable(i.connection, i.schemaName, i.tableInfo.name)),
+        itemCommand('exasol.refreshVirtualSchema', ['connection', 'schemaName'], async (i) => {
+            const tableName = i.type === 'virtual-table' ? i.tableInfo?.name : undefined;
+            if (await objectActions.refreshVirtualSchema(i.connection, i.schemaName, tableName)) {
+                completionProvider.clearCache(i.connection.id);
+                if (i instanceof ObjectTreeItem) {
+                    objectTreeProvider.refreshNode(i);
+                }
+            }
+        }),
+        itemCommand('exasol.explainPushdown', ['connection', 'schemaName', 'tableInfo'], (i) =>
+            objectActions.explainPushdown(i.connection, i.schemaName, i.tableInfo.name)),
         itemCommand('exasol.setSchema', ['schemaName'], (i) =>
             sessionManager.setSchema(i.schemaName)),
         itemCommand('exasol.editConnection', ['connection'], (i) =>
@@ -451,9 +461,9 @@ export function activate(context: vscode.ExtensionContext) {
     const copyQualifiedNameCmd = vscode.commands.registerCommand('exasol.copyQualifiedName', async (item?: TreeCommandItem) => {
         let qualifiedName: string | undefined;
 
-        if (item?.type === 'schema' && item?.schemaName) {
+        if ((item?.type === 'schema' || item?.type === 'virtual-schema') && item?.schemaName) {
             qualifiedName = `"${item.schemaName}"`;
-        } else if ((item?.type === 'table' || item?.type === 'view') && item?.schemaName && item?.tableInfo) {
+        } else if ((item?.type === 'table' || item?.type === 'view' || item?.type === 'virtual-table') && item?.schemaName && item?.tableInfo) {
             qualifiedName = `"${item.schemaName}"."${item.tableInfo.name}"`;
         } else if (item?.type === 'column' && item?.columnInfo) {
             qualifiedName = `"${item.columnInfo.name}"`;

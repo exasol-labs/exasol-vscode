@@ -63,9 +63,11 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
     private getQualifiedName(item: ObjectTreeItem): string | undefined {
         switch (item.type) {
             case 'schema':
+            case 'virtual-schema':
                 return item.schemaName ? `"${item.schemaName}"` : undefined;
             case 'table':
             case 'view':
+            case 'virtual-table':
                 return item.schemaName && item.tableInfo
                     ? `"${item.schemaName}"."${item.tableInfo.name}"`
                     : undefined;
@@ -83,6 +85,10 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
 
     refresh(): void {
         this.onDidChangeTreeDataEmitter.fire();
+    }
+
+    refreshNode(node: ObjectNode): void {
+        this.onDidChangeTreeDataEmitter.fire(node);
     }
 
     getTreeItem(element: ObjectNode): vscode.TreeItem {
@@ -801,6 +807,13 @@ export class ObjectTreeItem extends vscode.TreeItem {
                 this.command = {
                     command: 'exasol.openObject',
                     title: 'Open View',
+                    arguments: [this]
+                };
+                break;
+            case 'virtual-table':
+                this.command = {
+                    command: 'exasol.openObject',
+                    title: 'Open Virtual Table',
                     arguments: [this]
                 };
                 break;

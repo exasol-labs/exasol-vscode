@@ -268,6 +268,20 @@ suite('ObjectSearchProvider', () => {
         assert.ok(colItem, 'Should find ID column item');
     });
 
+    test('regular table query excludes virtual tables, which are fetched separately', async () => {
+        const seenSql: string[] = [];
+        const baseQuery = mockDriver.query;
+        mockDriver.query = async (sql: string) => {
+            seenSql.push(sql);
+            return baseQuery(sql);
+        };
+
+        await searchProvider.showSearch();
+
+        const tablesSql = seenSql.find(sql => sql.includes('EXA_ALL_TABLES') && sql.includes('UNION'));
+        assert.ok(tablesSql?.includes('TABLE_IS_VIRTUAL = FALSE'), `Got: ${tablesSql}`);
+    });
+
     test('sets busy true initially then false after loading', async () => {
         await searchProvider.showSearch();
 

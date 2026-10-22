@@ -136,6 +136,15 @@
         "title": "Describe Table"
       },
       {
+        "command": "exasol.refreshVirtualSchema",
+        "title": "Refresh Virtual Schema Metadata",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "exasol.explainPushdown",
+        "title": "Explain Pushdown"
+      },
+      {
         "command": "exasol.setSchema",
         "title": "Set as Active Schema"
       },
@@ -297,18 +306,28 @@
         },
         {
           "command": "exasol.previewTable",
-          "when": "view == exasol.objects && viewItem == table",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == virtual-table)",
           "group": "exasol@2"
         },
         {
           "command": "exasol.describeTable",
-          "when": "view == exasol.objects && viewItem == table",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == virtual-table)",
           "group": "exasol@3"
         },
         {
           "command": "exasol.generateSelect",
-          "when": "view == exasol.objects && viewItem == table",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == virtual-table)",
           "group": "exasol@4"
+        },
+        {
+          "command": "exasol.refreshVirtualSchema",
+          "when": "view == exasol.objects && (viewItem == virtual-schema || viewItem == virtual-table)",
+          "group": "exasol@1"
+        },
+        {
+          "command": "exasol.explainPushdown",
+          "when": "view == exasol.objects && viewItem == virtual-table",
+          "group": "exasol@5"
         },
         {
           "command": "exasol.showViewDDL",
@@ -327,7 +346,7 @@
         },
         {
           "command": "exasol.copyQualifiedName",
-          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == schema)",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == schema || viewItem == virtual-table || viewItem == virtual-schema)",
           "group": "inline@1"
         },
         {
@@ -414,6 +433,14 @@
         },
         {
           "command": "exasol.describeTable",
+          "when": "false"
+        },
+        {
+          "command": "exasol.refreshVirtualSchema",
+          "when": "false"
+        },
+        {
+          "command": "exasol.explainPushdown",
           "when": "false"
         },
         {

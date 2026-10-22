@@ -161,6 +161,27 @@ suite('ExasolCompletionProvider - lazy column fetch', () => {
         assert.ok(!schemaItems.includes(''));
     });
 
+    test('schema and table queries exclude virtual objects, which are merged separately', async () => {
+        const seenSql: string[] = [];
+        const driver = makeDriver((sql: string) => {
+            seenSql.push(sql);
+            if (sql.includes('exa_sql_keywords')) {
+                return createRawResult(['KEYWORD'], [['SELECT']]);
+            }
+            return createRawResult(['TABLE_SCHEMA', 'TABLE_NAME'], []);
+        });
+        const { manager } = makeManager(driver);
+        const provider = new ExasolCompletionProvider(manager as unknown as ConnectionManager);
+
+        const sql = 'select * from ';
+        await provider.provideCompletionItems(makeDocument(sql), makePosition(0, sql.length), {} as vscode.CancellationToken, {} as vscode.CompletionContext);
+
+        const schemasSql = seenSql.find(q => q.includes('SYS.EXA_SCHEMAS'));
+        assert.ok(schemasSql?.includes('SCHEMA_IS_VIRTUAL = FALSE'), `Got: ${schemasSql}`);
+        const tablesSql = seenSql.find(q => q.includes('SYS.EXA_ALL_TABLES'));
+        assert.ok(tablesSql?.includes('TABLE_IS_VIRTUAL = FALSE'), `Got: ${tablesSql}`);
+    });
+
     test('columnsCache stays under soft cap when many tables are queried', async () => {
         const driver = makeDriver((sql: string) => {
             if (sql.includes('exa_sql_keywords')) {

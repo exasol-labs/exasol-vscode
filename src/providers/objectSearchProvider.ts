@@ -77,6 +77,7 @@ export class ObjectSearchProvider {
                 SELECT TABLE_SCHEMA, TABLE_NAME, 'table' AS OBJECT_TYPE
                 FROM SYS.EXA_ALL_TABLES
                 WHERE TABLE_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
+                AND TABLE_IS_VIRTUAL = FALSE
                 UNION ALL
                 SELECT VIEW_SCHEMA, VIEW_NAME, 'view'
                 FROM SYS.EXA_ALL_VIEWS

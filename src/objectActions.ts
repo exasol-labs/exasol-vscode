@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { QueryExecutor, captureBaselineStatementIdentity } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
-import { getColumnsFromResult, getRowsFromResult, rawQuery, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier } from './utils';
+import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, escapeSqlString, escapeSqlIdentifier } from './utils';
 import { isExecutionPlanEnabled } from './settings';
 
 export class ObjectActions {
@@ -229,6 +229,60 @@ export class ObjectActions {
             vscode.window.showInformationMessage(`Table structure: ${schemaName}.${tableName}`);
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to describe table: ${error}`);
+        }
+    }
+
+    /** Returns true when the refresh succeeded, so the caller can reload the tree node. */
+    async refreshVirtualSchema(connection: StoredConnection, schemaName: string, tableName?: string): Promise<boolean> {
+        const target = tableName ? `${schemaName}.${tableName}` : schemaName;
+        try {
+            const tablesClause = tableName ? ` TABLES "${escapeSqlIdentifier(tableName)}"` : '';
+            const query = `ALTER VIRTUAL SCHEMA "${escapeSqlIdentifier(schemaName)}" REFRESH${tablesClause}`;
+            await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connection.id);
+                // Raw responses carry SQL errors as status, not as a throw.
+                getRowsFromResult(await rawExecute(driver, query));
+            }, connection.id);
+            vscode.window.setStatusBarMessage(`Exasol: Refreshed virtual schema metadata for ${target}`, 3000);
+            return true;
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to refresh virtual schema: ${error}`);
+            return false;
+        }
+    }
+
+    async explainPushdown(connection: StoredConnection, schemaName: string, tableName: string) {
+        try {
+            const query = `EXPLAIN VIRTUAL SELECT * FROM "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(tableName)}" LIMIT 10`;
+            const queryResult = await this.connectionManager.executeWithRetry(async () => {
+                const driver = await this.connectionManager.getDriver(connection.id);
+
+                const startTime = Date.now();
+                const result = await rawQuery(driver, query);
+                const executionTime = Date.now() - startTime;
+
+                // PUSHDOWN_JSON contains the virtual schema properties in clear text,
+                // credentials included, so it must never reach the results panel.
+                const columnsMeta = getColumnsFromResult(result).filter(col => col.name !== 'PUSHDOWN_JSON');
+                const rows = getRowsFromResult(result);
+                for (const row of rows) {
+                    delete row.PUSHDOWN_JSON;
+                }
+                const columns = columnsMeta.map(extractColumnName);
+                const columnMetadata = extractColumnMetadata(columnsMeta);
+
+                return {
+                    columns,
+                    columnMetadata,
+                    rows,
+                    rowCount: rows.length,
+                    executionTime
+                };
+            }, connection.id);
+
+            ResultsPanel.show(queryResult, query);
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to explain pushdown: ${error}`);
         }
     }
 }

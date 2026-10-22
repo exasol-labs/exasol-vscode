@@ -99,7 +99,9 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
         test('returns virtual columns for a virtual table', async () => {
             const driver = {
                 async query(sql: string) {
-                    if (sql.includes('EXA_ALL_VIRTUAL_COLUMNS')) {
+                    if (sql.includes('EXA_ALL_COLUMNS')) {
+                        assert.ok(!sql.includes('EXA_ALL_VIRTUAL_COLUMNS'), 'EXA_ALL_VIRTUAL_COLUMNS has no type or position columns');
+                        assert.ok(sql.includes('ORDER BY COLUMN_ORDINAL_POSITION'), 'columns should keep table order');
                         assert.ok(sql.includes("'VS_S3'"), 'query should filter by virtual schema');
                         assert.ok(sql.includes("'BUCKET_DATA'"), 'query should filter by table name');
                         return createRawResult(
@@ -145,7 +147,8 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
         test('virtual schemas appear sorted alongside regular schemas at root level', async () => {
             const driver = {
                 async query(sql: string) {
-                    if (sql.includes('EXA_SCHEMAS') && !sql.includes('VIRTUAL')) {
+                    if (sql.includes('SYS.EXA_SCHEMAS')) {
+                        assert.ok(sql.includes('SCHEMA_IS_VIRTUAL = FALSE'), 'regular schema query must exclude virtual schemas');
                         return createRawResult(
                             ['SCHEMA_NAME', 'TABLE_COUNT', 'VIEW_COUNT'],
                             [
@@ -187,7 +190,8 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
         test('virtual schema failure does not block regular schemas', async () => {
             const driver = {
                 async query(sql: string) {
-                    if (sql.includes('EXA_SCHEMAS') && !sql.includes('VIRTUAL')) {
+                    if (sql.includes('SYS.EXA_SCHEMAS')) {
+                        assert.ok(sql.includes('SCHEMA_IS_VIRTUAL = FALSE'), 'regular schema query must exclude virtual schemas');
                         return createRawResult(
                             ['SCHEMA_NAME', 'TABLE_COUNT', 'VIEW_COUNT'],
                             [
@@ -259,7 +263,7 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
         test('expands virtual table to show virtual columns', async () => {
             const driver = {
                 async query(sql: string) {
-                    if (sql.includes('EXA_ALL_VIRTUAL_COLUMNS')) {
+                    if (sql.includes('EXA_ALL_COLUMNS')) {
                         return createRawResult(
                             ['COLUMN_NAME', 'COLUMN_TYPE'],
                             [

@@ -18,6 +18,7 @@ interface ObjectActionsVscodeMock {
         showInformationMessage: (msg: string) => Promise<undefined>;
         showErrorMessage: (msg: string) => Promise<undefined>;
         showWarningMessage: (msg: string) => Promise<undefined>;
+        setStatusBarMessage: (msg: string, timeout: number) => { dispose: () => void };
         showTextDocument: (doc: unknown) => Promise<undefined>;
         withProgress: <T>(options: unknown, task: () => Promise<T>) => Promise<T>;
         activeTextEditor: { document: { languageId: string } } | undefined;
@@ -37,6 +38,7 @@ function buildWindowMock(): ObjectActionsVscodeMock['window'] {
         showInformationMessage: () => Promise.resolve(undefined),
         showErrorMessage: () => Promise.resolve(undefined),
         showWarningMessage: () => Promise.resolve(undefined),
+        setStatusBarMessage: () => ({ dispose: () => {} }),
         showTextDocument: () => Promise.resolve(undefined),
         withProgress: (_opts, task) => task(),
         activeTextEditor: undefined,
@@ -83,7 +85,7 @@ registerExtensionMock();
 const { ObjectActions } = require('../../objectActions') as typeof import('../../objectActions');
 const { ResultsPanel } = require('../../panels/resultsPanel') as typeof import('../../panels/resultsPanel');
 
-import { createRawResult, createEmptyRawResult, MockConnectionManager, TEST_CONNECTION, asConnectionManager, type MockDriver } from '../helpers/mockConnectionManager';
+import { createRawResult, createEmptyRawResult, createRawErrorResult, MockConnectionManager, TEST_CONNECTION, asConnectionManager, type MockDriver } from '../helpers/mockConnectionManager';
 
 /** The rows shape createRawResult accepts, derived rather than re-declared
  * since mockConnectionManager.ts keeps its RawCell type private. */
@@ -367,6 +369,132 @@ suite('ObjectActions.previewTableData: baseline statement identity capture', () 
         assert.strictEqual(result.sessionId, undefined);
         assert.strictEqual(result.baselineStmtId, undefined);
         assert.strictEqual(result.rowCount, 1, 'the preview query itself must still succeed');
+    });
+});
+
+suite('ObjectActions virtual schema actions', () => {
+
+    let savedWindow: ObjectActionsVscodeMock['window'];
+    let savedWorkspace: ObjectActionsVscodeMock['workspace'];
+    let errorMessages: string[];
+
+    setup(() => {
+        savedWindow = extendedVscodeMock.window;
+        savedWorkspace = extendedVscodeMock.workspace;
+        errorMessages = [];
+        extendedVscodeMock.window = {
+            ...buildWindowMock(),
+            showErrorMessage: (msg: string) => {
+                errorMessages.push(msg);
+                return Promise.resolve(undefined);
+            },
+        };
+        extendedVscodeMock.workspace = buildWorkspaceMock();
+    });
+
+    teardown(() => {
+        extendedVscodeMock.window = savedWindow;
+        extendedVscodeMock.workspace = savedWorkspace;
+    });
+
+    /** ObjectActions whose driver records every SQL string and answers with `respond`. */
+    function makeObjectActions(respond: (sql: string) => ReturnType<MockDriver['query']>): {
+        oa: InstanceType<typeof ObjectActions>;
+        capturedSql: string[];
+    } {
+        const capturedSql: string[] = [];
+        const handler = (sql: string) => {
+            capturedSql.push(sql);
+            return respond(sql);
+        };
+        const mockCM = new MockConnectionManager({ query: handler, execute: handler });
+        // ObjectActions never reads queryExecutor or extensionUri; same rationale as above.
+        const mockQE = {} as unknown as QueryExecutor;
+        const mockUri = { fsPath: '/mock' } as unknown as vscode.Uri;
+        return { oa: new ObjectActions(asConnectionManager(mockCM), mockQE, mockUri), capturedSql };
+    }
+
+    async function explainAndCapture(
+        oa: InstanceType<typeof ObjectActions>,
+        schemaName: string,
+        tableName: string
+    ): Promise<{ result: QueryResult; query: string }> {
+        let captured: { result: QueryResult; query: string } | undefined;
+        const originalShow = ResultsPanel.show;
+        ResultsPanel.show = (result: QueryResult, query: string) => { captured = { result, query }; };
+        try {
+            await oa.explainPushdown(TEST_CONNECTION, schemaName, tableName);
+        } finally {
+            ResultsPanel.show = originalShow;
+        }
+        assert.ok(captured, 'ResultsPanel.show must have been called');
+        return captured;
+    }
+
+    test('explainPushdown runs plain EXPLAIN VIRTUAL with escaped identifiers', async () => {
+        const { oa, capturedSql } = makeObjectActions(async () =>
+            createRawResult(['PUSHDOWN_ID', 'PUSHDOWN_SQL'], [[1, 'SELECT 1']]));
+
+        const { query } = await explainAndCapture(oa, 'a"b', 'T');
+
+        assert.strictEqual(capturedSql.length, 1);
+        assert.strictEqual(capturedSql[0], 'EXPLAIN VIRTUAL SELECT * FROM "a""b"."T" LIMIT 10');
+        assert.strictEqual(query, capturedSql[0]);
+    });
+
+    test('explainPushdown never passes PUSHDOWN_JSON to the results panel', async () => {
+        const { oa } = makeObjectActions(async () => createRawResult(
+            ['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_JSON', 'PUSHDOWN_INVOLVED_TABLES'],
+            [[1, 'SELECT * FROM T', '{"schemaMetadataInfo":{"properties":{"SECRET_PASSWORD":"hunter2"}}}', 'T']]
+        ));
+
+        const { result } = await explainAndCapture(oa, 'VS', 'T');
+
+        assert.deepStrictEqual(result.columns, ['PUSHDOWN_ID', 'PUSHDOWN_SQL', 'PUSHDOWN_INVOLVED_TABLES']);
+        assert.ok(!result.columnMetadata?.some(col => col.name === 'PUSHDOWN_JSON'));
+        assert.strictEqual(result.rowCount, 1);
+        assert.strictEqual(result.rows[0].PUSHDOWN_SQL, 'SELECT * FROM T');
+        assert.ok(!JSON.stringify(result.rows).includes('hunter2'), 'rows must not contain the schema properties');
+        assert.ok(!JSON.stringify(result).includes('PUSHDOWN_JSON'));
+    });
+
+    test('explainPushdown shows the database error text', async () => {
+        const { oa } = makeObjectActions(async () => createRawErrorResult('42000', 'object VS.T not found'));
+
+        await oa.explainPushdown(TEST_CONNECTION, 'VS', 'T');
+
+        assert.strictEqual(errorMessages.length, 1);
+        assert.ok(errorMessages[0].startsWith('Failed to explain pushdown: '));
+        assert.ok(errorMessages[0].includes('object VS.T not found'));
+    });
+
+    test('refreshVirtualSchema refreshes the whole schema with an escaped identifier', async () => {
+        const { oa, capturedSql } = makeObjectActions(async () => createEmptyRawResult([]));
+
+        const ok = await oa.refreshVirtualSchema(TEST_CONNECTION, 'a"b');
+
+        assert.strictEqual(ok, true);
+        assert.deepStrictEqual(capturedSql, ['ALTER VIRTUAL SCHEMA "a""b" REFRESH']);
+        assert.strictEqual(errorMessages.length, 0);
+    });
+
+    test('refreshVirtualSchema refreshes a single table with escaped identifiers', async () => {
+        const { oa, capturedSql } = makeObjectActions(async () => createEmptyRawResult([]));
+
+        const ok = await oa.refreshVirtualSchema(TEST_CONNECTION, 'VS', 't"x');
+
+        assert.strictEqual(ok, true);
+        assert.deepStrictEqual(capturedSql, ['ALTER VIRTUAL SCHEMA "VS" REFRESH TABLES "t""x"']);
+    });
+
+    test('refreshVirtualSchema passes the database error text through unchanged', async () => {
+        const text = 'insufficient privileges for altering virtual schema VS';
+        const { oa } = makeObjectActions(async () => createRawErrorResult('42500', text));
+
+        const ok = await oa.refreshVirtualSchema(TEST_CONNECTION, 'VS');
+
+        assert.strictEqual(ok, false);
+        assert.deepStrictEqual(errorMessages, [`Failed to refresh virtual schema: Error: SQL Error [42500]: ${text}`]);
     });
 });
 

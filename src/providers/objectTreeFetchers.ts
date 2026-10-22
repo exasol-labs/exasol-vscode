@@ -102,6 +102,7 @@ export async function fetchSchemas(
                         GROUP BY VIEW_SCHEMA
                     ) v ON s.SCHEMA_NAME = v.VIEW_SCHEMA
                     WHERE s.SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
+                    AND s.SCHEMA_IS_VIRTUAL = FALSE
                     ORDER BY s.SCHEMA_NAME
                 `);
                 const rows = getRowsFromResult<{
@@ -124,6 +125,7 @@ export async function fetchSchemas(
                     SELECT SCHEMA_NAME
                     FROM SYS.EXA_SCHEMAS
                     WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
+                    AND SCHEMA_IS_VIRTUAL = FALSE
                     ORDER BY SCHEMA_NAME
                 `);
                 const rows = getRowsFromResult<{ SCHEMA_NAME: string }>(result);
@@ -162,6 +164,7 @@ export async function fetchTables(
                             TABLE_ROW_COUNT
                         FROM SYS.EXA_ALL_TABLES
                         WHERE TABLE_SCHEMA = '${escapeSqlString(schemaName)}'
+                        AND TABLE_IS_VIRTUAL = FALSE
                         ORDER BY TABLE_NAME
                     `,
                     map: rows => rows.map(row => ({
@@ -178,6 +181,7 @@ export async function fetchTables(
                         SELECT TABLE_NAME
                         FROM SYS.EXA_ALL_TABLES
                         WHERE TABLE_SCHEMA = '${escapeSqlString(schemaName)}'
+                        AND TABLE_IS_VIRTUAL = FALSE
                         ORDER BY TABLE_NAME
                     `,
                     map: mapTableNames,
@@ -192,6 +196,7 @@ export async function fetchTables(
                         FROM SYS.EXA_ALL_OBJECTS
                         WHERE OBJECT_SCHEMA = '${escapeSqlString(schemaName)}'
                         AND OBJECT_TYPE = 'TABLE'
+                        AND OBJECT_IS_VIRTUAL = FALSE
                         ORDER BY OBJECT_NAME
                     `,
                     map: mapTableNames,
@@ -302,8 +307,7 @@ export async function fetchViews(
                         WHERE COLUMN_SCHEMA = '${escapeSqlString(schemaName)}'
                         AND (
                             COLUMN_OBJECT_TYPE IS NULL OR
-                            COLUMN_OBJECT_TYPE = 'VIEW' OR
-                            COLUMN_OBJECT_TYPE = 'VIRTUAL TABLE'
+                            COLUMN_OBJECT_TYPE = 'VIEW'
                         )
                         ORDER BY COLUMN_TABLE
                     `,
@@ -691,7 +695,7 @@ export async function fetchVirtualColumns(
             const driver = await connectionManager.getDriver(connection.id, 'background');
             const result = await rawQuery(driver, `
                 SELECT COLUMN_NAME, COLUMN_TYPE
-                FROM SYS.EXA_ALL_VIRTUAL_COLUMNS
+                FROM SYS.EXA_ALL_COLUMNS
                 WHERE COLUMN_SCHEMA = '${escapeSqlString(virtualSchemaName)}'
                 AND COLUMN_TABLE = '${escapeSqlString(tableName)}'
                 ORDER BY COLUMN_ORDINAL_POSITION
