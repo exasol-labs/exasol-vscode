@@ -160,8 +160,8 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
             // Parse CTEs from the CURRENT statement only (CTEs are statement-scoped).
             const currentStmt = findStatementAtCursor(queryText, position.line);
             const ctes: CteDefinition[] = currentStmt ? parseCtes(currentStmt.text) : [];
-            const cteByUpper = new Map<string, CteDefinition>();
-            for (const c of ctes) { cteByUpper.set(c.name.toUpperCase(), c); }
+            const cteByName = new Map<string, CteDefinition>();
+            for (const c of ctes) { cteByName.set(c.name, c); }
 
             const log = getOutputChannel();
 
@@ -213,14 +213,14 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                 // CTE alias indirection: alias parsed -> table name -> matches a CTE.
                 const aliasTarget = aliases.get(prefixName);
                 if (aliasTarget && !aliasTarget.schema) {
-                    const cte = cteByUpper.get(aliasTarget.table.toUpperCase());
+                    const cte = cteByName.get(aliasTarget.table);
                     if (cte && cte.columns.length > 0) {
                         log?.appendLine(`[completion] '${prefix}' -> CTE ${cte.name} (${cte.columns.length} cols)`);
                         return this.getColumnCompletions(cte.columns);
                     }
                 }
                 // Direct CTE reference: `cte_name.|`
-                const directCte = cteByUpper.get(prefixName);
+                const directCte = cteByName.get(prefixName);
                 if (directCte && directCte.columns.length > 0) {
                     log?.appendLine(`[completion] '${prefix}' -> CTE ${directCte.name} (${directCte.columns.length} cols)`);
                     return this.getColumnCompletions(directCte.columns);
@@ -475,9 +475,8 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
             const cols = await this.getColumnsForTable(connectionId, obj.schema, obj.name);
             if (!cols) { continue; }
             for (const c of cols) {
-                const k = c.toUpperCase();
-                if (seen.has(k)) { continue; }
-                seen.add(k);
+                if (seen.has(c)) { continue; }
+                seen.add(c);
                 out.push(c);
             }
         }

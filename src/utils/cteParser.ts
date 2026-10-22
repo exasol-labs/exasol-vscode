@@ -14,10 +14,11 @@
  * Inline derived tables (`FROM (SELECT ...) AS sq`) are NOT handled here.
  */
 
-import { stripCommentsPreservingStrings } from './sql';
+import { normalizeIdentifier, stripCommentsPreservingStrings } from './sql';
 import { parseSelectListAliases } from './selectAliases';
 
 export interface CteDefinition {
+    /** Name as the database stores it (see normalizeIdentifier); compare with ===. */
     name: string;
     columns: string[];
 }
@@ -42,6 +43,7 @@ export function parseCtes(statementText: string): CteDefinition[] {
         // Parse a CTE name
         const nameTok = readIdentifier(text, i);
         if (!nameTok) { break; }
+        const name = normalizeIdentifier(text.slice(i, nameTok.end));
         i = nameTok.end;
         i = skipSpaces(text, i);
 
@@ -68,7 +70,7 @@ export function parseCtes(statementText: string): CteDefinition[] {
         i = bodyClose + 1;
 
         const columns = explicitCols ?? deriveColumnsFromBody(body);
-        ctes.push({ name: nameTok.name, columns });
+        ctes.push({ name, columns });
 
         i = skipSpaces(text, i);
         // Either a comma (next CTE) or end of CTE list (next is a top-level

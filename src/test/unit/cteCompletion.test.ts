@@ -59,7 +59,7 @@ WHERE t.col
 LIMIT 100`;
         const ctes = parseCtes(stmt);
         assert.strictEqual(ctes.length, 1);
-        assert.strictEqual(ctes[0].name, 'test');
+        assert.strictEqual(ctes[0].name, 'TEST');
         assert.deepStrictEqual(ctes[0].columns, ['col_a', 'col_b']);
     });
 
@@ -67,7 +67,7 @@ LIMIT 100`;
         const stmt = `WITH RECURSIVE foo AS (SELECT a, b FROM bar) SELECT * FROM foo`;
         const ctes = parseCtes(stmt);
         assert.strictEqual(ctes.length, 1);
-        assert.strictEqual(ctes[0].name, 'foo');
+        assert.strictEqual(ctes[0].name, 'FOO');
         assert.deepStrictEqual(ctes[0].columns, ['a', 'b']);
     });
 
@@ -84,7 +84,7 @@ LIMIT 100`;
             b AS (SELECT three FROM t2)
             SELECT * FROM a JOIN b ON a.one = b.three`;
         const ctes = parseCtes(stmt);
-        assert.deepStrictEqual(ctes.map((c: CteDefinition) => c.name), ['a', 'b']);
+        assert.deepStrictEqual(ctes.map((c: CteDefinition) => c.name), ['A', 'B']);
         assert.deepStrictEqual(ctes[0].columns, ['one', 'two']);
         assert.deepStrictEqual(ctes[1].columns, ['three']);
     });
@@ -119,6 +119,11 @@ LIMIT 100`;
         const ctes = parseCtes(stmt);
         assert.strictEqual(ctes[0].name, 'MyCte');
         assert.deepStrictEqual(ctes[0].columns, ['A', 'B']);
+    });
+
+    test('CTE names are normalized like other identifiers', () => {
+        const stmt = `WITH "cte x" AS (SELECT 1 AS a), "a""b" AS (SELECT 2 AS b), MixedCase AS (SELECT 3 AS c) SELECT 1`;
+        assert.deepStrictEqual(parseCtes(stmt).map((c: CteDefinition) => c.name), ['cte x', 'a"b', 'MIXEDCASE']);
     });
 
     test('comments inside the WITH clause are ignored', () => {
@@ -196,6 +201,47 @@ SELECT test. FROM test;`;
         const labels = items.map((i) => i.label);
         assert.ok(!labels.includes('a'));
         assert.ok(!labels.includes('b'));
+    });
+
+    test('quoted lowercase CTE name resolves through an alias', async () => {
+        const driver = metadataOnlyDriver();
+        const provider = new ExasolCompletionProvider(makeManager(driver) as unknown as ConnectionManager);
+
+        const sql = `WITH "cte x" AS (SELECT a, b FROM t)
+SELECT c. FROM "cte x" c`;
+        const doc = makeDocument(sql);
+        const pos = makePosition(1, 'SELECT c.'.length);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
+        assert.deepStrictEqual(items.map((i) => i.label), ['a', 'b']);
+    });
+
+    test('unquoted CTE name matches a reference written in another case', async () => {
+        const driver = metadataOnlyDriver();
+        const provider = new ExasolCompletionProvider(makeManager(driver) as unknown as ConnectionManager);
+
+        const sql = `WITH my_cte AS (SELECT a, b FROM t)
+SELECT c., MY_CTE. FROM My_Cte c`;
+        const doc = makeDocument(sql);
+        const aliasItems = await provider.provideCompletionItems(
+            doc, makePosition(1, 'SELECT c.'.length), {} as vscode.CancellationToken, {} as vscode.CompletionContext
+        );
+        assert.deepStrictEqual(aliasItems.map((i) => i.label), ['a', 'b']);
+        const directItems = await provider.provideCompletionItems(
+            doc, makePosition(1, 'SELECT c., MY_CTE.'.length), {} as vscode.CancellationToken, {} as vscode.CompletionContext
+        );
+        assert.deepStrictEqual(directItems.map((i) => i.label), ['a', 'b']);
+    });
+
+    test('quoted lowercase CTE name does not match an unquoted reference', async () => {
+        const driver = metadataOnlyDriver();
+        const provider = new ExasolCompletionProvider(makeManager(driver) as unknown as ConnectionManager);
+
+        const sql = `WITH "cte" AS (SELECT a, b FROM t)
+SELECT c. FROM cte c`;
+        const doc = makeDocument(sql);
+        const pos = makePosition(1, 'SELECT c.'.length);
+        const items = await provider.provideCompletionItems(doc, pos, {} as vscode.CancellationToken, {} as vscode.CompletionContext);
+        assert.deepStrictEqual(items, []);
     });
 
     test('SELECT * body falls through (no CTE columns to suggest)', async () => {

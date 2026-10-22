@@ -125,6 +125,13 @@ where local.`;
         );
     });
 
+    test('alias de-duplication follows identifier case rules', () => {
+        assert.deepStrictEqual(
+            parseSelectListAliases('SELECT a AS x, b AS X, c AS "x", d AS "X" FROM t'),
+            [{ name: 'x', quoted: false }, { name: 'x', quoted: true }]
+        );
+    });
+
     test('no SELECT keyword returns empty', () => {
         assert.deepStrictEqual(names('DELETE FROM t WHERE id = 1'), []);
     });

@@ -175,7 +175,7 @@ function aliasesFromListText(list: string | undefined): SelectAlias[] {
         if (!item) { continue; }
         const alias = extractAliasFromItem(item);
         if (!alias) { continue; }
-        const key = alias.name.toUpperCase();
+        const key = alias.quoted ? alias.name : alias.name.toUpperCase();
         if (seen.has(key)) { continue; }
         seen.add(key);
         out.push(alias);
