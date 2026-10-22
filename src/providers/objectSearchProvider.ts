@@ -344,26 +344,31 @@ export class ObjectSearchProvider {
     ): Promise<ObjectTreeItem | undefined> {
         const outputChannel = getOutputChannel();
 
-        if (treeType === 'system-table') {
-            const systemSchemasFolder = rootNodes.find(
-                node => node instanceof ObjectTreeItem && node.type === 'system-schemas-folder'
+        const special = treeType === 'system-table'
+            ? { folder: 'system-schemas-folder', schema: 'system-schema' }
+            : treeType === 'virtual-table'
+                ? { folder: 'virtual-schemas-folder', schema: 'virtual-schema' }
+                : undefined;
+        if (special) {
+            const folder = rootNodes.find(
+                node => node instanceof ObjectTreeItem && node.type === special.folder
             ) as ObjectTreeItem | undefined;
 
-            if (!systemSchemasFolder) {
+            if (!folder) {
                 return undefined;
             }
 
-            const systemSchemas = await this.objectTreeProvider.getChildren(systemSchemasFolder);
-            return systemSchemas.find(
+            const schemas = await this.objectTreeProvider.getChildren(folder);
+            return schemas.find(
                 node => node instanceof ObjectTreeItem &&
-                    node.type === 'system-schema' &&
+                    node.type === special.schema &&
                     node.schemaName === schemaName
             ) as ObjectTreeItem | undefined;
         }
 
         const direct = rootNodes.find(
             node => node instanceof ObjectTreeItem &&
-                (node.type === 'schema' || node.type === 'virtual-schema') &&
+                node.type === 'schema' &&
                 node.schemaName === schemaName
         ) as ObjectTreeItem | undefined;
         if (direct) {
@@ -384,7 +389,7 @@ export class ObjectSearchProvider {
                 const groupChildren = await this.objectTreeProvider.getChildren(group);
                 const match = groupChildren.find(
                     node => node instanceof ObjectTreeItem &&
-                        (node.type === 'schema' || node.type === 'virtual-schema') &&
+                        node.type === 'schema' &&
                         node.schemaName === schemaName
                 ) as ObjectTreeItem | undefined;
                 if (match) {

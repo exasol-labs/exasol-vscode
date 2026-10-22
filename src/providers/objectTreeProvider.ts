@@ -133,41 +133,12 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             // Directly show schemas without the connection node
             try {
                 outputChannel?.appendLine(`📂 Objects view: Fetching schemas for active connection '${activeConnection.name}'`);
-                const [schemas, virtualSchemas] = await Promise.all([
-                    fetchSchemas(this.connectionManager, activeConnection),
-                    fetchVirtualSchemas(this.connectionManager, activeConnection)
-                ]);
-                outputChannel?.appendLine(`📂 Objects view: Found ${schemas.length} schemas, ${virtualSchemas.length} virtual schemas`);
+                const schemas = await fetchSchemas(this.connectionManager, activeConnection);
+                outputChannel?.appendLine(`📂 Objects view: Found ${schemas.length} schemas`);
 
                 const cfg = vscode.workspace.getConfiguration('exasol');
                 const groupingEnabled = cfg.get<boolean>('schemaGrouping.enabled', false);
                 const delimiter = cfg.get<string>('schemaGrouping.delimiter', '_');
-
-                const virtualSchemaNodes: ObjectNode[] = virtualSchemas.map(vs => {
-                    const id = `${activeConnection.id}:${vs.name}:virtual-schema`;
-                    const item = new ObjectTreeItem({
-                        label: vs.name,
-                        id,
-                        collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
-                        type: 'virtual-schema',
-                        connection: activeConnection,
-                        schemaName: vs.name
-                    });
-                    if (vs.adapterName) {
-                        item.description = `via ${vs.adapterName}`;
-                    }
-                    if (vs.lastRefresh || vs.lastRefreshBy) {
-                        const parts: string[] = [];
-                        if (vs.lastRefresh) {
-                            parts.push(`Last refresh: ${vs.lastRefresh}`);
-                        }
-                        if (vs.lastRefreshBy) {
-                            parts.push(`Refreshed by: ${vs.lastRefreshBy}`);
-                        }
-                        item.tooltip = parts.join('\n');
-                    }
-                    return item;
-                });
 
                 const allNodes: ObjectNode[] = [];
 
@@ -185,7 +156,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                             viewCount: schema.viewCount
                         });
                     });
-                    allNodes.push(...schemaNodes, ...virtualSchemaNodes);
+                    allNodes.push(...schemaNodes);
                     allNodes.sort((a, b) => {
                         const labelA = (a as ObjectTreeItem).label as string;
                         const labelB = (b as ObjectTreeItem).label as string;
@@ -231,12 +202,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                             groupedSchemas: members
                         }));
 
-                    allNodes.push(...groupNodes, ...virtualSchemaNodes);
-                    allNodes.sort((a, b) => {
-                        const labelA = (a as ObjectTreeItem).label as string;
-                        const labelB = (b as ObjectTreeItem).label as string;
-                        return labelA.localeCompare(labelB);
-                    });
+                    allNodes.push(...groupNodes);
 
                     if (ungrouped.length > 0) {
                         allNodes.push(new ObjectTreeItem({
@@ -249,6 +215,14 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                         }));
                     }
                 }
+
+                allNodes.push(new ObjectTreeItem({
+                    label: 'Virtual Schemas',
+                    id: `${activeConnection.id}:virtual-schemas-folder`,
+                    collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                    type: 'virtual-schemas-folder',
+                    connection: activeConnection
+                }));
 
                 allNodes.push(new ObjectTreeItem({
                     label: 'Connections',
@@ -653,6 +627,36 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     parent: element
                 })
             ];
+        }
+
+        if (element.type === 'virtual-schemas-folder') {
+            const virtualSchemas = await fetchVirtualSchemas(this.connectionManager, element.connection!);
+            outputChannel?.appendLine(`Objects view: Found ${virtualSchemas.length} virtual schemas`);
+            return virtualSchemas.map(vs => {
+                const item = new ObjectTreeItem({
+                    label: vs.name,
+                    id: `${element.connection!.id}:${vs.name}:virtual-schema`,
+                    collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                    type: 'virtual-schema',
+                    connection: element.connection,
+                    schemaName: vs.name,
+                    parent: element
+                });
+                if (vs.adapterName) {
+                    item.description = `via ${vs.adapterName}`;
+                }
+                if (vs.lastRefresh || vs.lastRefreshBy) {
+                    const parts: string[] = [];
+                    if (vs.lastRefresh) {
+                        parts.push(`Last refresh: ${vs.lastRefresh}`);
+                    }
+                    if (vs.lastRefreshBy) {
+                        parts.push(`Refreshed by: ${vs.lastRefreshBy}`);
+                    }
+                    item.tooltip = parts.join('\n');
+                }
+                return item;
+            });
         }
 
         if (element.type === 'db-connections-folder') {

@@ -12,6 +12,9 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - System tables in the Objects view now support Preview Table, Describe Table, Generate SELECT Statement, and Copy Name, and clicking a system table opens Describe. Describe Table and Generate SELECT Statement read the columns of system tables from `EXA_SYS_COLUMNS`. System schemas support Copy Name. Both can be dragged into the editor as their qualified name
 - A Connections folder in the Objects view lists the connections from `EXA_ALL_CONNECTIONS`, with the creation time and comment in the tooltip. The address and the user are never shown. Copy Name and drag give the quoted name. Show Connection DDL opens `CREATE OR REPLACE CONNECTION` and `COMMENT ON CONNECTION`, with the address and user from `EXA_DBA_CONNECTIONS` and a placeholder for the password. Without the `SELECT ANY DICTIONARY` privilege, address and user are placeholders too. Generate IMPORT Statement and Generate EXPORT Statement insert a template for a cloud CSV file, an Exasol database, or a JDBC source that uses the connection
 
+### Changed
+- Virtual schemas are now listed in a Virtual Schemas folder in the Objects view, next to the Connections and System Schemas folders. Before, they were listed between the schemas and the schema groups ([#81](https://github.com/exasol-labs/exasol-vscode/issues/81))
+
 ### Fixed
 - Expanding a virtual table now lists its columns with their data types; before, the list was empty ([#81](https://github.com/exasol-labs/exasol-vscode/issues/81))
 - Virtual schemas and virtual tables are no longer listed twice in the Objects view

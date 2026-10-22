@@ -144,8 +144,8 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
         });
     });
 
-    suite('getChildren merges virtual schemas with regular schemas', () => {
-        test('virtual schemas appear sorted alongside regular schemas at root level', async () => {
+    suite('getChildren lists virtual schemas in the Virtual Schemas folder', () => {
+        test('the root lists regular schemas; virtual schemas are inside the folder', async () => {
             const driver = {
                 async query(sql: string) {
                     if (sql.includes('SYS.EXA_SCHEMAS')) {
@@ -173,19 +173,15 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             const manager = new MockConnectionManager(driver, connection);
             const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            // The root always appends a trailing "System Schemas" folder node
-            // (see objectTreeProvider.ts), unrelated to the schema/virtual-schema
-            // ordering under test here, so it's filtered out before asserting.
-            const children = (await provider.getChildren())
-                .filter(c => (c as ObjectTreeItem).type !== 'system-schemas-folder');
+            const roots = await provider.getChildren();
+            assert.deepStrictEqual(roots.map(c => c.label), ['ALPHA', 'GAMMA', 'Virtual Schemas', 'Connections', 'System Schemas']);
+            assert.deepStrictEqual(roots.slice(0, 2).map(c => (c as ObjectTreeItem).type), ['schema', 'schema']);
 
-            assert.strictEqual(children.length, 3, 'Should have 3 items total');
-            assert.strictEqual(children[0].label, 'ALPHA');
-            assert.strictEqual((children[0] as ObjectTreeItem).type, 'schema');
-            assert.strictEqual(children[1].label, 'BETA_VS');
-            assert.strictEqual((children[1] as ObjectTreeItem).type, 'virtual-schema');
-            assert.strictEqual(children[2].label, 'GAMMA');
-            assert.strictEqual((children[2] as ObjectTreeItem).type, 'schema');
+            const children = await provider.getChildren(roots[2]);
+            assert.strictEqual(children.length, 1);
+            assert.strictEqual(children[0].label, 'BETA_VS');
+            assert.strictEqual((children[0] as ObjectTreeItem).type, 'virtual-schema');
+            assert.strictEqual(children[0].description, 'via S3_ADAPTER');
         });
 
         test('virtual schema failure does not block regular schemas', async () => {
@@ -210,14 +206,9 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             const manager = new MockConnectionManager(driver, connection);
             const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            // See the comment in the previous test: filter out the always-present
-            // trailing "System Schemas" folder node before counting schema nodes.
-            const children = (await provider.getChildren())
-                .filter(c => (c as ObjectTreeItem).type !== 'system-schemas-folder');
-
-            assert.strictEqual(children.length, 1, 'Regular schemas should still load');
-            assert.strictEqual(children[0].label, 'MY_SCHEMA');
-            assert.strictEqual((children[0] as ObjectTreeItem).type, 'schema');
+            const roots = await provider.getChildren();
+            assert.deepStrictEqual(roots.map(c => c.label), ['MY_SCHEMA', 'Virtual Schemas', 'Connections', 'System Schemas']);
+            assert.deepStrictEqual(await provider.getChildren(roots[1]), [], 'a failed listing gives an empty folder');
         });
     });
 

@@ -19,7 +19,7 @@ function getLabelText(item: ObjectNode | undefined): string {
 suite('ObjectTreeProvider, System Schemas', () => {
 
     suite('System Schemas folder at root level', () => {
-        test('appears after user and virtual schemas', async () => {
+        test('appears last, after the user schemas and the other folders', async () => {
             const mockDriver = {
                 query: async (sql: string) => {
                     if (sql.includes('EXA_SCHEMAS')) {

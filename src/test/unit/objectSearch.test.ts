@@ -381,6 +381,34 @@ suite('ObjectSearchProvider', () => {
         }, 'Should pass correct reveal options');
     });
 
+    test('a virtual table is revealed inside the Virtual Schemas folder', async () => {
+        const revealed: ObjectTreeItemInstance[] = [];
+        mockTreeView.reveal = async node => { revealed.push(node); };
+        const driver: MockDriver = {
+            query: async (sql: string) => sql.includes('EXA_ALL_VIRTUAL_SCHEMAS')
+                ? createRawResult(['SCHEMA_NAME'], [['VS_SCHEMA']])
+                : mockDriver.query(sql)
+        };
+        const cm = new MockConnectionManager(driver);
+        searchProvider = new ObjectSearchProvider(
+            cm as unknown as ConnectionManager,
+            new ObjectTreeProvider(cm as unknown as ConnectionManager),
+            mockTreeView as unknown as ObjectTreeView
+        );
+        await searchProvider.showSearch();
+
+        const virtualItem = mockQuickPick.items.find(i => i.label.includes('REMOTE_TABLE'));
+        assert.ok(virtualItem, 'Should find REMOTE_TABLE');
+        mockQuickPick.selectedItems = [virtualItem];
+        assert.ok(mockQuickPick._acceptCallback, 'Accept callback should be registered');
+        await mockQuickPick._acceptCallback();
+
+        assert.strictEqual(revealed.length, 1);
+        assert.strictEqual(revealed[0].type, 'virtual-table');
+        assert.strictEqual(revealed[0].parent?.type, 'virtual-schema');
+        assert.strictEqual(revealed[0].parent?.parent?.type, 'virtual-schemas-folder');
+    });
+
     test('QuickPick items have correct icon for each type', async () => {
         await searchProvider.showSearch();
 

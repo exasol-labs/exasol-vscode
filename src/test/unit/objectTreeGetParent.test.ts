@@ -303,17 +303,20 @@ suite('ObjectTreeProvider, getParent() extended node types', () => {
         provider = new ObjectTreeProvider(mockCM as unknown as ConnectionManager);
     });
 
-    test('virtual-schema has null parent', async () => {
+    test('virtual-schema parent is the Virtual Schemas folder, which has null parent', async () => {
         const rootChildren = await provider.getChildren();
-        const vs = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'VS_ORACLE');
+        const folder = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'Virtual Schemas');
+        assert.ok(folder, 'Should find the Virtual Schemas folder');
+        assert.strictEqual(provider.getParent(folder), null, 'Virtual Schemas folder parent should be null');
+        const vs = (await provider.getChildren(folder)).find((c: ObjectNode) => getLabelText(c) === 'VS_ORACLE');
         assert.ok(vs, 'Should find VS_ORACLE');
-        const parent = provider.getParent(vs);
-        assert.strictEqual(parent, null, 'Virtual-schema parent should be null');
+        assert.strictEqual(provider.getParent(vs), folder, 'Virtual-schema parent should be the folder');
     });
 
     test('virtual-table parent is virtual-schema', async () => {
         const rootChildren = await provider.getChildren();
-        const vs = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'VS_ORACLE');
+        const folder = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'Virtual Schemas');
+        const vs = (await provider.getChildren(folder)).find((c: ObjectNode) => getLabelText(c) === 'VS_ORACLE');
         const vsTables = await provider.getChildren(vs);
         const remoteTable = vsTables.find((c: ObjectNode) => getLabelText(c) === 'REMOTE_TABLE');
         assert.ok(remoteTable, 'Should find REMOTE_TABLE');

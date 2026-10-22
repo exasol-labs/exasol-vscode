@@ -613,7 +613,7 @@ export async function refreshVirtualSchemaAndReload(
     if (await targets.objectActions.refreshVirtualSchema(connection, schemaName, tableName)) {
         targets.completionProvider.clearCache(connection.id);
         // Both refresh forms update the schema's LAST_REFRESH, which the
-        // root-level node shows in its tooltip. Stable node ids keep the
+        // virtual schema node shows in its tooltip. Stable node ids keep the
         // expansion state, so expanded nodes reload their children.
         targets.objectTreeProvider.refresh();
     }

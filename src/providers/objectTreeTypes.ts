@@ -5,6 +5,7 @@ export type ObjectTreeItemType =
     | 'views-folder'
     | 'view'
     | 'column'
+    | 'virtual-schemas-folder'
     | 'virtual-schema'
     | 'virtual-table'
     | 'udfs-folder'
@@ -53,6 +54,8 @@ export function getNodeTypeConfig(
             return { icon: 'eye', contextValue: 'view' };
         case 'column':
             return { icon: '', contextValue: 'column' };
+        case 'virtual-schemas-folder':
+            return { icon: 'cloud', contextValue: 'virtual-schemas-folder' };
         case 'virtual-schema':
             return { icon: 'remote', contextValue: 'virtual-schema' };
         case 'virtual-table':
@@ -86,9 +89,9 @@ export function getNodeTypeConfig(
         case 'system-table':
             return { icon: 'table', contextValue: 'system-table' };
         case 'db-connections-folder':
-            return { icon: 'folder', contextValue: 'db-connections-folder' };
+            return { icon: 'plug', contextValue: 'db-connections-folder' };
         case 'db-connection':
-            return { icon: 'plug', contextValue: 'db-connection' };
+            return { icon: 'link', contextValue: 'db-connection' };
         default:
             return undefined;
     }

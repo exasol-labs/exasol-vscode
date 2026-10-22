@@ -23,7 +23,7 @@ For Cursor and other VS Code-compatible editors that use the Open VSX Registry, 
 - **Query execution** — full file or selection, cancellable, automatic LIMIT, multi-statement support
 - **Separate result tabs** — toggle via Command Palette to view each statement's result in its own tab
 - **IntelliSense** — context-aware completions for keywords, functions, tables, views, and columns
-- **Object explorer** — browse schemas, tables, views, columns, scripts, functions, virtual schemas, constraints, indices, system tables, and connections
+- **Object explorer** — browse schemas, tables, views, columns, scripts, functions, virtual schemas (in their own folder), constraints, indices, system tables, and connections
 - **Object actions** — right-click to preview data, show DDL, generate SELECT, describe table; virtual tables support preview, describe, generate SELECT, metadata refresh, and explain pushdown; UDF scripts support open source and generate call; adapter scripts support open source; system tables support preview, describe, and generate SELECT; connections support show DDL and generate IMPORT and EXPORT templates
 - **Results viewer** — sortable, filterable grid with CSV export and cell inspection
 - **Local file transfer** — CSV and Parquet imports through the driver, plus direct table/query-to-CSV export

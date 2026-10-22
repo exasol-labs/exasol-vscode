@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import type * as vscode from 'vscode';
-import { registerVscodeMock, registerExtensionMock } from '../helpers/vscodeMock';
+import { registerVscodeMock, registerExtensionMock, vscodeMock } from '../helpers/vscodeMock';
 
 registerVscodeMock();
 registerExtensionMock();
@@ -32,6 +32,77 @@ function makeVirtualTableItem(): InstanceType<typeof ObjectTreeItem> {
         tableInfo: { name: 'T' }
     });
 }
+
+function labelOf(node: ObjectNode): string {
+    return typeof node.label === 'string' ? node.label : node.label?.label ?? '';
+}
+
+/** One schema VS_REAL (a "VS" group with grouping on) and one virtual schema VS_PY. */
+function makeVirtualSchemaProvider(queries: string[] = []): InstanceType<typeof ObjectTreeProvider> {
+    return new ObjectTreeProvider(asConnectionManager(new MockConnectionManager({
+        query: async (sql: string) => {
+            queries.push(sql);
+            if (sql.includes('EXA_ALL_VIRTUAL_SCHEMAS')) {
+                return createRawResult(
+                    ['SCHEMA_NAME', 'ADAPTER_SCRIPT_SCHEMA', 'ADAPTER_SCRIPT_NAME', 'LAST_REFRESH', 'LAST_REFRESH_BY'],
+                    [['VS_PY', 'VS_SRC', 'PYADAPTER', null, null]]
+                );
+            }
+            if (sql.includes('EXA_SCHEMAS')) {
+                return createRawResult(['SCHEMA_NAME', 'TABLE_COUNT', 'VIEW_COUNT'], [['VS_REAL', 1, 0]]);
+            }
+            return createEmptyRawResult(['DUMMY']);
+        }
+    })));
+}
+
+suite('ObjectTreeProvider, Virtual Schemas folder', () => {
+    let savedWorkspace: typeof vscodeMock.workspace;
+
+    setup(() => {
+        savedWorkspace = vscodeMock.workspace;
+    });
+
+    teardown(() => {
+        vscodeMock.workspace = savedWorkspace;
+    });
+
+    test('the root lists schemas, then Virtual Schemas, Connections and System Schemas, and lists virtual schemas only on expand', async () => {
+        const queries: string[] = [];
+        const provider = makeVirtualSchemaProvider(queries);
+
+        const roots = await provider.getChildren();
+
+        assert.deepStrictEqual(roots.map(labelOf), ['VS_REAL', 'Virtual Schemas', 'Connections', 'System Schemas']);
+        assert.ok(!queries.some(q => q.includes('EXA_ALL_VIRTUAL_SCHEMAS')), 'the root must not list virtual schemas');
+        const folder = roots[1] as InstanceType<typeof ObjectTreeItem>;
+        assert.strictEqual(folder.id, 'conn-1:virtual-schemas-folder');
+        assert.strictEqual(folder.contextValue, 'virtual-schemas-folder');
+
+        const children = await provider.getChildren(folder) as Array<InstanceType<typeof ObjectTreeItem>>;
+        assert.deepStrictEqual(children.map(labelOf), ['VS_PY']);
+        assert.strictEqual(children[0].id, 'conn-1:VS_PY:virtual-schema');
+        assert.strictEqual(children[0].description, 'via PYADAPTER');
+        assert.strictEqual(children[0].parent, folder);
+    });
+
+    test('with schema grouping on, a virtual schema never lands in a schema group', async () => {
+        vscodeMock.workspace = {
+            ...savedWorkspace,
+            getConfiguration: () => ({
+                get: (key: string, fallback?: unknown) => key === 'schemaGrouping.enabled' ? true : key === 'schemaGrouping.delimiter' ? '_' : fallback
+            })
+        } as typeof vscodeMock.workspace;
+        const provider = makeVirtualSchemaProvider();
+
+        const roots = await provider.getChildren();
+
+        assert.deepStrictEqual(roots.map(labelOf), ['VS', 'Virtual Schemas', 'Connections', 'System Schemas']);
+        const group = await provider.getChildren(roots[0]);
+        assert.deepStrictEqual(group.map(labelOf), ['VS_REAL']);
+        assert.deepStrictEqual((await provider.getChildren(roots[1])).map(labelOf), ['VS_PY']);
+    });
+});
 
 suite('ObjectTreeProvider, virtual schema nodes', () => {
 
@@ -82,7 +153,9 @@ suite('ObjectTreeProvider, virtual schema nodes', () => {
         })));
         const findVirtualSchema = async () => {
             const roots = await provider.getChildren();
-            const node = roots.find(n => n instanceof ObjectTreeItem && n.type === 'virtual-schema');
+            const folder = roots.find(n => n instanceof ObjectTreeItem && n.type === 'virtual-schemas-folder');
+            assert.ok(folder, 'Virtual Schemas folder must be listed');
+            const node = (await provider.getChildren(folder)).find(n => n instanceof ObjectTreeItem && n.type === 'virtual-schema');
             assert.ok(node, 'virtual schema node must be listed');
             return node;
         };
