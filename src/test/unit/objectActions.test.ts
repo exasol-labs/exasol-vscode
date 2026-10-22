@@ -888,6 +888,17 @@ suite('ObjectActions.generateScriptCall', () => {
         return new ObjectActions(asConnectionManager(mockCM), mockQE, mockUri);
     }
 
+    function activeSqlEditor(inserted: string[]): ObjectActionsVscodeMock['window']['activeTextEditor'] {
+        return {
+            document: { languageId: 'exasol-sql' },
+            selection: { active: 'cursor' },
+            edit: async (cb: (builder: { insert: (pos: unknown, text: string) => void }) => void) => {
+                cb({ insert: (_pos, text) => inserted.push(text) });
+                return true;
+            },
+        } as ObjectActionsVscodeMock['window']['activeTextEditor'];
+    }
+
     test('opens the call in a new document when no SQL editor is active', async () => {
         const oa = makeObjectActions([['CREATE PYTHON3 SET SCRIPT "PYSETR" ("v" DECIMAL(18,0)) RETURNS DECIMAL(18,0) AS\nx', 'SET']]);
 
@@ -896,25 +907,27 @@ suite('ObjectActions.generateScriptCall', () => {
         assert.deepStrictEqual(opened, ['SELECT "VS_SRC"."PYSETR"("v")\nFROM <table>;']);
     });
 
-    test('inserts the call at the cursor of the active SQL editor', async () => {
+    test('opens the call in a new document, never in the active SQL editor', async () => {
         const inserted: string[] = [];
-        extendedVscodeMock.window = {
-            ...buildWindowMock(),
-            activeTextEditor: {
-                document: { languageId: 'exasol-sql' },
-                selection: { active: 'cursor' },
-                edit: async (cb: (builder: { insert: (pos: unknown, text: string) => void }) => void) => {
-                    cb({ insert: (_pos, text) => inserted.push(text) });
-                    return true;
-                },
-            } as ObjectActionsVscodeMock['window']['activeTextEditor'],
-        };
+        extendedVscodeMock.window = { ...buildWindowMock(), activeTextEditor: activeSqlEditor(inserted) };
         const oa = makeObjectActions([['CREATE PYTHON3 SCALAR SCRIPT "PYVER" () RETURNS VARCHAR(200) UTF8 AS\nx', 'SCALAR']]);
 
         await oa.generateScriptCall(TEST_CONNECTION, 'VS_SRC', 'PYVER');
 
-        assert.deepStrictEqual(inserted, ['SELECT "VS_SRC"."PYVER"();']);
-        assert.deepStrictEqual(opened, []);
+        assert.deepStrictEqual(opened, ['SELECT "VS_SRC"."PYVER"();']);
+        assert.deepStrictEqual(inserted, []);
+    });
+
+    test('Generate SELECT opens a new document, never the active SQL editor', async () => {
+        const inserted: string[] = [];
+        extendedVscodeMock.window = { ...buildWindowMock(), activeTextEditor: activeSqlEditor(inserted) };
+        const mockCM = new MockConnectionManager({ query: async () => createRawResult(['COLUMN_NAME'], [['ID'], ['NAME']]) });
+        const oa = new ObjectActions(asConnectionManager(mockCM), {} as unknown as QueryExecutor, { fsPath: '/mock' } as unknown as vscode.Uri);
+
+        await oa.generateSelectStatement(TEST_CONNECTION, 'MY_SCHEMA', 'MY_TABLE');
+
+        assert.deepStrictEqual(opened, ['SELECT\n    "ID",\n    "NAME"\nFROM "MY_SCHEMA"."MY_TABLE"\nLIMIT 100;']);
+        assert.deepStrictEqual(inserted, []);
     });
 });
 

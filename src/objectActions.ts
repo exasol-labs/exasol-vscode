@@ -169,7 +169,7 @@ export class ObjectActions {
 
             const selectStatement = `SELECT\n${columns}\nFROM "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(tableName)}"\nLIMIT 100;`;
 
-            await insertIntoSqlEditor(selectStatement);
+            await openSqlDocument(selectStatement);
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to generate SELECT statement: ${error}`);
         }
@@ -208,7 +208,7 @@ export class ObjectActions {
         try {
             const script = await this.fetchScript(connection, schemaName, scriptName);
             if (script) {
-                await insertIntoSqlEditor(buildScriptCall(script.SCRIPT_TEXT, schemaName, scriptName, script.SCRIPT_INPUT_TYPE));
+                await openSqlDocument(buildScriptCall(script.SCRIPT_TEXT, schemaName, scriptName, script.SCRIPT_INPUT_TYPE));
             }
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to generate script call: ${error}`);
@@ -476,19 +476,6 @@ export function buildTransferTemplate(direction: TransferDirection, connectionNa
 async function openSqlDocument(content: string): Promise<void> {
     const doc = await vscode.workspace.openTextDocument({ content, language: 'exasol-sql' });
     await vscode.window.showTextDocument(doc);
-}
-
-/** Inserts at the cursor of the active SQL editor, or opens a new Exasol SQL document. */
-async function insertIntoSqlEditor(text: string): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
-    if (editor && (editor.document.languageId === 'sql' || editor.document.languageId === 'exasol-sql')) {
-        const position = editor.selection.active;
-        await editor.edit(editBuilder => {
-            editBuilder.insert(position, text);
-        });
-    } else {
-        await openSqlDocument(text);
-    }
 }
 
 /** A quoted identifier, with "" standing for one double quote inside it. */
