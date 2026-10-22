@@ -469,7 +469,7 @@ export function buildTransferTemplate(direction: TransferDirection, connectionNa
         direction === 'IMPORT' ? 'IMPORT INTO my_schema.my_table' : 'EXPORT my_schema.my_table',
         `${clause} CSV ${at} FILE '<path/file.csv>';`,
         `-- Other ${direction === 'IMPORT' ? 'sources' : 'destinations'}, replace the ${clause} line:`,
-        ...alternatives.map(line => `-- ${line}`)
+        ...alternatives.map(line => `-- ${line};`)
     ].join('\n');
 }
 

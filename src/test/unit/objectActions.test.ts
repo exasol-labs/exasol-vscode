@@ -1143,14 +1143,14 @@ suite('buildTransferTemplate', () => {
             'IMPORT INTO my_schema.my_table',
             'FROM CSV AT "C" FILE \'<path/file.csv>\';',
             '-- Other sources, replace the FROM line:',
-            '-- FROM FBV AT "C" FILE \'<path/file.fbv>\'',
-            '-- FROM PARQUET AT "C" FILE \'<path/file.parquet>\'',
-            '-- FROM EXA AT "C" TABLE remote_schema.remote_table',
-            '-- FROM EXA AT "C" STATEMENT \'<SELECT ...>\'',
-            '-- FROM ORA AT "C" TABLE remote_schema.remote_table',
-            '-- FROM ORA AT "C" STATEMENT \'<SELECT ...>\'',
-            '-- FROM JDBC AT "C" TABLE remote_schema.remote_table',
-            '-- FROM JDBC AT "C" STATEMENT \'<SELECT ...>\''
+            '-- FROM FBV AT "C" FILE \'<path/file.fbv>\';',
+            '-- FROM PARQUET AT "C" FILE \'<path/file.parquet>\';',
+            '-- FROM EXA AT "C" TABLE remote_schema.remote_table;',
+            '-- FROM EXA AT "C" STATEMENT \'<SELECT ...>\';',
+            '-- FROM ORA AT "C" TABLE remote_schema.remote_table;',
+            '-- FROM ORA AT "C" STATEMENT \'<SELECT ...>\';',
+            '-- FROM JDBC AT "C" TABLE remote_schema.remote_table;',
+            '-- FROM JDBC AT "C" STATEMENT \'<SELECT ...>\';'
         ].join('\n'));
     });
 
@@ -1159,13 +1159,13 @@ suite('buildTransferTemplate', () => {
             'EXPORT my_schema.my_table',
             'INTO CSV AT "C" FILE \'<path/file.csv>\';',
             '-- Other destinations, replace the INTO line:',
-            '-- INTO FBV AT "C" FILE \'<path/file.fbv>\'',
-            '-- INTO EXA AT "C" TABLE remote_schema.remote_table',
-            '-- INTO EXA AT "C" STATEMENT \'<INSERT ... VALUES (?, ?)>\'',
-            '-- INTO ORA AT "C" TABLE remote_schema.remote_table',
-            '-- INTO ORA AT "C" STATEMENT \'<INSERT ... VALUES (?, ?)>\'',
-            '-- INTO JDBC AT "C" TABLE remote_schema.remote_table',
-            '-- INTO JDBC AT "C" STATEMENT \'<INSERT ... VALUES (?, ?)>\''
+            '-- INTO FBV AT "C" FILE \'<path/file.fbv>\';',
+            '-- INTO EXA AT "C" TABLE remote_schema.remote_table;',
+            '-- INTO EXA AT "C" STATEMENT \'<INSERT ... VALUES (?, ?)>\';',
+            '-- INTO ORA AT "C" TABLE remote_schema.remote_table;',
+            '-- INTO ORA AT "C" STATEMENT \'<INSERT ... VALUES (?, ?)>\';',
+            '-- INTO JDBC AT "C" TABLE remote_schema.remote_table;',
+            '-- INTO JDBC AT "C" STATEMENT \'<INSERT ... VALUES (?, ?)>\';'
         ].join('\n'));
     });
 
