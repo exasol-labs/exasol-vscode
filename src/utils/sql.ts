@@ -576,14 +576,12 @@ export function findStatementRanges(text: string): Array<{ start: number; end: n
         // The statement starts on the line of its first content. Lines that
         // hold only whitespace and comments before it are skipped.
         const startLine = offsetToLine(lineOffsets, content);
-        const endLine = offsetToLine(lineOffsets, last);
 
-        // When the start and end lines coincide (e.g. two statements on one line,
-        // or all leading content was consumed by the prev semicolon on the same
-        // line), use searchFrom rather than the line start so the range begins
-        // after the previous terminator rather than at column 0 of the shared line.
+        // When the statement starts on the line where the previous one ends,
+        // use searchFrom rather than the line start so the range begins after
+        // the previous terminator rather than at column 0 of the shared line.
         let start: number;
-        if (startLine === endLine && searchFrom > lineOffsets[startLine]) {
+        if (searchFrom > lineOffsets[startLine]) {
             // Skip any whitespace between the previous semicolon and this statement.
             let ws = searchFrom;
             while (ws < last && (text[ws] === ' ' || text[ws] === '\t')) {
