@@ -247,6 +247,26 @@ suite('splitIntoStatements: script and function definitions', () => {
         );
     });
 
+    test('after an unfinished function, scripts still end at their / line and later functions are split at ;', () => {
+        const doc = 'CREATE FUNCTION f RETURN INT IS BEGIN\n x := 1;\nCREATE LUA SCRIPT s AS\n a = 1;\n/\n'
+            + 'CREATE FUNCTION g RETURN INT IS BEGIN\n y := 2;\nSELECT 1;';
+        assert.deepStrictEqual(splitIntoStatements(doc), [
+            'CREATE FUNCTION f RETURN INT IS BEGIN\n x := 1;',
+            'CREATE LUA SCRIPT s AS\n a = 1;',
+            'CREATE FUNCTION g RETURN INT IS BEGIN\n y := 2;',
+            'SELECT 1;'
+        ]);
+    });
+
+    test('many unfinished functions are split in linear time', () => {
+        const text = 'CREATE FUNCTION f RETURN INT IS BEGIN\nv := 1;\nv := 2;\n'.repeat(3000) + 'v := 1;\n'.repeat(130000);
+        const started = performance.now();
+        const ends = findStatementEnds(text);
+        const elapsed = performance.now() - started;
+        assert.strictEqual(ends.length, 3000 * 2 + 130000);
+        assert.ok(elapsed < 1000, `took ${elapsed.toFixed(0)} ms`);
+    });
+
     test('a / line inside an open function body does not end the function', () => {
         const fnText = 'CREATE FUNCTION f(a DECIMAL, b DECIMAL) RETURN DECIMAL IS\nBEGIN\n RETURN a\n/\n b;\nEND f;';
         assert.deepStrictEqual(splitIntoStatements(`${fnText}\nSELECT 1;`), [fnText, 'SELECT 1;']);

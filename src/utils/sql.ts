@@ -351,7 +351,11 @@ export function isScriptOrFunctionDefinition(sql: string): boolean {
  *     `CASE`, do not end it.
  * A script without such a `/` line, and a function that does not end before
  * the end of the text, are split at `;` like any other text, so the
- * statements after them stay separate.
+ * statements after them stay separate. After a function that does not end,
+ * later functions are split at `;` too: a later function could only end at
+ * an `END` that the first one skipped as the end of an open `CASE`, and
+ * scanning each of them to the end of the text again would take time
+ * proportional to their number times the length of the text.
  * A `/` line between statements ends an empty statement; everywhere else
  * (for example a division inside a SELECT) it is ordinary text.
  *
@@ -366,8 +370,8 @@ export function findStatementEnds(text: string): number[] {
     let statementEmpty = true;
     let functionBody: FunctionBody = FunctionBody.NONE;
     let functionStart = -1;
-    // A definition starting here did not end: it is scanned as ordinary statements.
-    let plainStart = -1;
+    // A function did not end: from its start on, functions are scanned as ordinary statements.
+    let functionsPlain = false;
     let caseDepth = 0;
 
     for (;;) {
@@ -407,9 +411,10 @@ export function findStatementEnds(text: string): number[] {
                 }
                 if (statementEmpty) {
                     statementEmpty = false;
-                    const kind = start === plainStart || i - start !== 6 || text.slice(start, i).toUpperCase() !== 'CREATE'
+                    const definition = i - start !== 6 || text.slice(start, i).toUpperCase() !== 'CREATE'
                         ? undefined
                         : definitionKind(readWords(text, start, 6));
+                    const kind = definition === 'function' && functionsPlain ? undefined : definition;
                     if (kind === 'script') {
                         // The body is not SQL: skip it up to the next `/` line, if one
                         // comes before the next definition that starts a line.
@@ -451,7 +456,7 @@ export function findStatementEnds(text: string): number[] {
             return ends;
         }
         // The function did not end: scan it again from its start, split at `;`.
-        plainStart = functionStart;
+        functionsPlain = true;
         i = functionStart;
         statementEmpty = true;
         functionBody = FunctionBody.NONE;
