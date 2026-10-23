@@ -137,6 +137,12 @@ suite('ExasolCodeLensProvider: CodeLens count', () => {
         assert.strictEqual(lensCount('/* a; b */ SELECT 1;'), 1);
     });
 
+    test('quoted identifiers holding ;, -- or /*: one CodeLens per statement', () => {
+        assert.strictEqual(lensCount('SELECT 1 AS "a;b"; SELECT 2;'), 2);
+        assert.strictEqual(lensCount('SELECT 1 AS "a--b";\nSELECT 2;'), 2);
+        assert.strictEqual(lensCount('SELECT 1 AS "a/*b";\nSELECT 2;'), 2);
+    });
+
     test('empty input: 0 CodeLenses', () => {
         assert.strictEqual(lensCount(''), 0);
     });
@@ -265,6 +271,39 @@ suite('ExasolCodeLensProvider: execution-argument range', () => {
         // Second lens covers " SELECT 2;" or "SELECT 2;"; must include the second semicolon
         assert.ok(exec2.trimEnd().endsWith('SELECT 2;'),
             `second exec must end at second ;; got: ${JSON.stringify(exec2)}`);
+    });
+
+    test('two statements on one line: each execute range holds only its own statement', () => {
+        const text = 'SELECT 1; SELECT 2;';
+        const out = lenses(text);
+        assert.deepStrictEqual(
+            out.map(l => getTextInRange(text, l.command!.arguments![1] as MockRange)),
+            ['SELECT 1;', 'SELECT 2;']
+        );
+        assert.deepStrictEqual(out.map(l => l.range.startLine), [0, 0]);
+    });
+
+    test('statement that starts on the line of the previous one and spans lines: execute range starts after the previous ;', () => {
+        for (const eol of ['\n', '\r\n']) {
+            const text = ['SELECT 1; SELECT a', 'FROM t;', 'SELECT 3;'].join(eol);
+            const out = lenses(text);
+            assert.deepStrictEqual(
+                out.map(l => getTextInRange(text, l.command!.arguments![1] as MockRange)),
+                ['SELECT 1;', `SELECT a${eol}FROM t;`, 'SELECT 3;'],
+                `eol ${JSON.stringify(eol)}`
+            );
+            assert.deepStrictEqual(out.map(l => l.range.startLine), [0, 0, 2]);
+        }
+    });
+
+    test('CRLF: two statements on one line, execute ranges hold only their own statement', () => {
+        const text = 'SELECT 0;\r\nSELECT 1; SELECT 2;\r\n';
+        const out = lenses(text);
+        assert.deepStrictEqual(
+            out.map(l => getTextInRange(text, l.command!.arguments![1] as MockRange)),
+            ['SELECT 0;', 'SELECT 1;', 'SELECT 2;']
+        );
+        assert.deepStrictEqual(out.map(l => l.range.startLine), [0, 1, 1]);
     });
 
     test('multi-line statement with no embedded comments: execute range covers all lines including semicolon', () => {

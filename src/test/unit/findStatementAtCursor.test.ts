@@ -9,7 +9,7 @@ SELECT * FROM table2;
 
 SELECT * FROM table3;`;
 
-        const result = findStatementAtCursor(documentText, 0);
+        const result = findStatementAtCursor(documentText, 0, 0);
         assert.ok(result);
         assert.strictEqual(result.text, 'SELECT * FROM table1;');
         assert.strictEqual(result.range.start, 0);
@@ -23,7 +23,7 @@ SELECT * FROM table2;
 
 SELECT * FROM table3;`;
 
-        const result = findStatementAtCursor(documentText, 2);
+        const result = findStatementAtCursor(documentText, 2, 0);
         assert.ok(result);
         assert.strictEqual(result.text, 'SELECT * FROM table2;');
         assert.strictEqual(result.range.start, 2);
@@ -37,7 +37,7 @@ SELECT * FROM table2;
 
 SELECT * FROM table3;`;
 
-        const result = findStatementAtCursor(documentText, 4);
+        const result = findStatementAtCursor(documentText, 4, 0);
         assert.ok(result);
         assert.strictEqual(result.text, 'SELECT * FROM table3;');
         assert.strictEqual(result.range.start, 4);
@@ -53,7 +53,7 @@ WHERE condition = 1;
 
 SELECT * FROM table2;`;
 
-        const result = findStatementAtCursor(documentText, 2);
+        const result = findStatementAtCursor(documentText, 2, 0);
         assert.ok(result);
         assert.strictEqual(result.text.trim(), 'SELECT\n    column1,\n    column2\nFROM table1\nWHERE condition = 1;');
         assert.strictEqual(result.range.start, 0);
@@ -69,7 +69,7 @@ WHERE condition = 1;`;
 
         // Test cursor on each line
         for (let line = 0; line <= 4; line++) {
-            const result = findStatementAtCursor(documentText, line);
+            const result = findStatementAtCursor(documentText, line, 0);
             assert.ok(result, `Should find statement at line ${line}`);
             assert.strictEqual(result.range.start, 0);
             assert.strictEqual(result.range.end, 4);
@@ -84,7 +84,7 @@ SELECT * FROM table1;
 
 SELECT * FROM table2;`;
 
-        const result = findStatementAtCursor(documentText, 1);
+        const result = findStatementAtCursor(documentText, 1, 0);
         assert.ok(result);
         assert.strictEqual(result.text, 'SELECT * FROM table1;');
     });
@@ -92,7 +92,7 @@ SELECT * FROM table2;`;
     test('should handle statement without trailing semicolon', () => {
         const documentText = `SELECT * FROM table1`;
 
-        const result = findStatementAtCursor(documentText, 0);
+        const result = findStatementAtCursor(documentText, 0, 0);
         assert.ok(result);
         assert.strictEqual(result.text, 'SELECT * FROM table1');
         assert.strictEqual(result.range.start, 0);
@@ -103,7 +103,7 @@ SELECT * FROM table2;`;
         const documentText = `-- This is a comment
 SELECT * FROM table1;`;
 
-        const result = findStatementAtCursor(documentText, 0);
+        const result = findStatementAtCursor(documentText, 0, 0);
         assert.strictEqual(result, undefined);
     });
 
@@ -112,7 +112,7 @@ SELECT * FROM table1;`;
 
 SELECT * FROM table2;`;
 
-        const result = findStatementAtCursor(documentText, 1);
+        const result = findStatementAtCursor(documentText, 1, 0);
         assert.strictEqual(result, undefined);
     });
 
@@ -132,17 +132,17 @@ SET status = 'active'
 WHERE user_id = 5`;
 
         // First statement (lines 1-3)
-        let result = findStatementAtCursor(documentText, 2);
+        let result = findStatementAtCursor(documentText, 2, 0);
         assert.ok(result);
         assert.ok(result.text.includes('SELECT col1, col2'));
 
         // Second statement (lines 6-7)
-        result = findStatementAtCursor(documentText, 7);
+        result = findStatementAtCursor(documentText, 7, 0);
         assert.ok(result);
         assert.ok(result.text.includes('INSERT INTO table2'));
 
         // Third statement (lines 10-12)
-        result = findStatementAtCursor(documentText, 11);
+        result = findStatementAtCursor(documentText, 11, 0);
         assert.ok(result);
         assert.ok(result.text.includes('UPDATE table3'));
     });
@@ -154,7 +154,7 @@ AND name = 'test';
 SELECT * FROM table2;`;
 
         // First statement should include both lines (not terminated by semicolon in comment)
-        const result = findStatementAtCursor(documentText, 0);
+        const result = findStatementAtCursor(documentText, 0, 0);
         assert.ok(result);
         assert.ok(result.text.includes('WHERE id = 1'));
         assert.ok(result.text.includes('AND name'));
@@ -166,7 +166,7 @@ SELECT * FROM table2;`;
         const documentText = `SELECT * FROM table1 WHERE id = 1 -- Comment;   
 AND name = 'test';`;
 
-        const result = findStatementAtCursor(documentText, 0);
+        const result = findStatementAtCursor(documentText, 0, 0);
         assert.ok(result);
         assert.ok(result.text.includes('WHERE id = 1'));
         assert.ok(result.text.includes('AND name'));
@@ -183,7 +183,7 @@ FROM table1; -- final comment;
 SELECT * FROM table2;`;
 
         // First statement (lines 0-3)
-        const result1 = findStatementAtCursor(documentText, 1);
+        const result1 = findStatementAtCursor(documentText, 1, 0);
         assert.ok(result1);
         assert.ok(result1.text.includes('column1'));
         assert.ok(result1.text.includes('FROM table1;'));
@@ -191,7 +191,7 @@ SELECT * FROM table2;`;
         assert.strictEqual(result1.range.end, 3);
 
         // Second statement
-        const result2 = findStatementAtCursor(documentText, 5);
+        const result2 = findStatementAtCursor(documentText, 5, 0);
         assert.ok(result2);
         assert.ok(result2.text.includes('table2'));
     });
@@ -201,7 +201,7 @@ SELECT * FROM table2;`;
 SELECT * FROM table2;`;
 
         // First statement should end at line 0
-        const result1 = findStatementAtCursor(documentText, 0);
+        const result1 = findStatementAtCursor(documentText, 0, 0);
         assert.ok(result1);
         assert.ok(result1.text.includes('table1'));
         assert.ok(result1.text.includes('-- This is the end'));
@@ -209,7 +209,7 @@ SELECT * FROM table2;`;
         assert.strictEqual(result1.range.end, 0);
 
         // Second statement should be separate
-        const result2 = findStatementAtCursor(documentText, 1);
+        const result2 = findStatementAtCursor(documentText, 1, 0);
         assert.ok(result2);
         assert.ok(result2.text.includes('table2'));
         assert.strictEqual(result2.range.start, 1);
@@ -222,7 +222,7 @@ with semicolon; inside */ WHERE id = 1;
 SELECT * FROM table2;`;
 
         // First statement should include the multi-line comment and WHERE clause
-        const result1 = findStatementAtCursor(documentText, 0);
+        const result1 = findStatementAtCursor(documentText, 0, 0);
         assert.ok(result1);
         assert.ok(result1.text.includes('/* comment'));
         assert.ok(result1.text.includes('WHERE id = 1;'));
@@ -235,7 +235,7 @@ SELECT * FROM table2;`;
 
 SELECT * FROM table2;`;
 
-        const result1 = findStatementAtCursor(documentText, 0);
+        const result1 = findStatementAtCursor(documentText, 0, 0);
         assert.ok(result1);
         assert.ok(result1.text.includes('/* comment; */'));
         assert.ok(result1.text.includes('WHERE id = 1;'));
@@ -245,12 +245,34 @@ SELECT * FROM table2;`;
         const documentText = `SELECT * FROM table1 /* block comment; */ WHERE id = 1 -- line comment;
 AND name = 'test';`;
 
-        const result = findStatementAtCursor(documentText, 0);
+        const result = findStatementAtCursor(documentText, 0, 0);
         assert.ok(result);
         assert.ok(result.text.includes('/* block comment; */'));
         assert.ok(result.text.includes('-- line comment;'));
         assert.ok(result.text.includes('AND name'));
         assert.strictEqual(result.range.start, 0);
         assert.strictEqual(result.range.end, 1);
+    });
+
+    suite('sql to run', () => {
+        test('a script at the cursor runs whole, without being split at its semicolons', () => {
+            const documentText = 'SELECT 1;\nCREATE LUA SCRIPT s AS\n a = 1;\n b = 2;\n/\nSELECT 2;';
+            for (const line of [1, 2, 3, 4]) {
+                const result = findStatementAtCursor(documentText, line, 0);
+                assert.ok(result);
+                assert.strictEqual(result.sql, 'CREATE LUA SCRIPT s AS\n a = 1;\n b = 2;', `line ${line}`);
+            }
+        });
+
+        test('a statement closed by a semicolon runs trimmed, with the comment after it', () => {
+            const documentText = 'SELECT 1;\n  SELECT 2; -- note  \nSELECT 3';
+            assert.strictEqual(findStatementAtCursor(documentText, 1, 4)?.sql, 'SELECT 2; -- note');
+            assert.strictEqual(findStatementAtCursor(documentText, 2, 0)?.sql, 'SELECT 3');
+        });
+
+        test('a script body keeps its end as written', () => {
+            const documentText = 'CREATE LUA SCRIPT s AS\n  a = 1;  \n/\n';
+            assert.strictEqual(findStatementAtCursor(documentText, 1, 0)?.sql, 'CREATE LUA SCRIPT s AS\n  a = 1;  ');
+        });
     });
 });

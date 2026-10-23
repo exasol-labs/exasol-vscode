@@ -18,7 +18,7 @@ registerExtensionMock();
 // Load after the vscode mock is configured.
 const { QueryExecutor } = require('../../queryExecutor') as typeof import('../../queryExecutor');
 
-import { createEmptyRawResult, TEST_CONNECTION } from '../helpers/mockConnectionManager';
+import { createEmptyRawResult, createRawErrorResult, TEST_CONNECTION } from '../helpers/mockConnectionManager';
 
 interface DriverCalls {
     importFromCsvFile: unknown[][];
@@ -44,7 +44,7 @@ interface FakeQueryExecutorDriver {
  * every call to importFromCsvFile / execute / query. The fake executeWithRetry
  * just invokes the supplied fn so routing logic runs unchanged.
  */
-function makeExecutor(): { qe: InstanceType<typeof QueryExecutor>; calls: DriverCalls } {
+function makeExecutor(failExecute = false): { qe: InstanceType<typeof QueryExecutor>; calls: DriverCalls } {
     const calls: DriverCalls = { importFromCsvFile: [], importFromParquetFile: [], execute: [], query: [], retryOptions: [] };
 
     const fakeDriver = {
@@ -59,7 +59,7 @@ function makeExecutor(): { qe: InstanceType<typeof QueryExecutor>; calls: Driver
         // rawExecute -> driver.execute(sql, undefined, undefined, 'raw')
         execute: async (...args: unknown[]) => {
             calls.execute.push(args);
-            return createEmptyRawResult([]);
+            return failExecute ? createRawErrorResult('42000', 'boom') : createEmptyRawResult([]);
         },
         // rawQuery -> driver.query(sql, undefined, undefined, 'raw')
         query: async (...args: unknown[]) => {
@@ -161,5 +161,67 @@ suite('QueryExecutor.execute routing: local Parquet import interception', () => 
 
         const options = calls.retryOptions.find(value => value && typeof value === 'object' && 'retryOnConnectionError' in value);
         assert.strictEqual((options as { retryOnConnectionError: boolean }).retryOnConnectionError, true);
+    });
+});
+
+suite('QueryExecutor.execute: statement text sent to the database', () => {
+    setup(() => {
+        (vscodeMock as unknown as QueryExecutorVscodeMock).workspace = {
+            getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback })
+        };
+    });
+
+    test('a CREATE FUNCTION keeps the final ; after END', async () => {
+        const { qe, calls } = makeExecutor();
+        const sql = 'CREATE OR REPLACE FUNCTION s.f(p DECIMAL) RETURN DECIMAL IS\nBEGIN\n  RETURN p;\nEND f;';
+        await qe.execute(`\n  ${sql}`);
+        assert.strictEqual(calls.execute.length, 1);
+        assert.strictEqual(calls.execute[0][0], sql);
+    });
+
+    test('a Lua script keeps the final ; and trailing whitespace of its body', async () => {
+        const { qe, calls } = makeExecutor();
+        const sql = 'CREATE OR REPLACE LUA SCRIPT s.x() AS\nlocal x = 1;  ';
+        await qe.execute(sql);
+        assert.strictEqual(calls.execute.length, 1);
+        assert.strictEqual(calls.execute[0][0], sql);
+    });
+
+    test('other statements still lose the trailing ; and whitespace', async () => {
+        const { qe, calls } = makeExecutor();
+        await qe.execute('  CREATE TABLE t (a INT);;  \n');
+        await qe.execute('SELECT 1;');
+        assert.strictEqual(calls.execute[0][0], 'CREATE TABLE t (a INT)');
+        // The last query() call is the SELECT; the ones before it capture the plan identity.
+        assert.strictEqual(calls.query[calls.query.length - 1][0], 'SELECT 1 LIMIT 10000');
+    });
+});
+
+suite('QueryExecutor.execute: SQL_PREPROCESSOR_SCRIPT changes', () => {
+    setup(() => {
+        (vscodeMock as unknown as QueryExecutorVscodeMock).workspace = {
+            getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback })
+        };
+    });
+
+    async function firesFor(sql: string, failExecute = false): Promise<number> {
+        const { qe } = makeExecutor(failExecute);
+        let fired = 0;
+        qe.onDidSetPreprocessorScript(() => { fired++; });
+        await qe.execute(sql).catch(() => undefined);
+        return fired;
+    }
+
+    test('a successful ALTER SESSION or ALTER SYSTEM SET SQL_PREPROCESSOR_SCRIPT fires the event', async () => {
+        assert.strictEqual(await firesFor('ALTER SESSION SET SQL_PREPROCESSOR_SCRIPT = VS_PP.MY_PP;'), 1);
+        assert.strictEqual(await firesFor('alter session set sql_preprocessor_script = null'), 1);
+        assert.strictEqual(await firesFor('-- switch it\n/* on */ ALTER\n  SESSION SET SQL_PREPROCESSOR_SCRIPT=VS_PP.MY_PP'), 1);
+        assert.strictEqual(await firesFor('ALTER SYSTEM SET SQL_PREPROCESSOR_SCRIPT = VS_PP.MY_PP'), 1);
+    });
+
+    test('other statements and a failed ALTER SESSION do not fire the event', async () => {
+        assert.strictEqual(await firesFor("ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD'"), 0);
+        assert.strictEqual(await firesFor("SELECT 'ALTER SESSION SET SQL_PREPROCESSOR_SCRIPT = X'"), 0);
+        assert.strictEqual(await firesFor('ALTER SESSION SET SQL_PREPROCESSOR_SCRIPT = VS_PP.MISSING', true), 0);
     });
 });

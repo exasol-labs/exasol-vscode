@@ -85,6 +85,55 @@ where local.`;
         assert.deepStrictEqual(names('SELECT coalesce(a, b), c.id FROM t'), ['id']);
     });
 
+    test('alias without AS', () => {
+        assert.deepStrictEqual(
+            names(`SELECT 1 one, x two, t.y "Three", coalesce(a, b) four, CASE WHEN p THEN 1 END five, 2.5E3 six FROM t`),
+            ['one', 'two', 'Three', 'four', 'five', 'six']
+        );
+    });
+
+    test('operator, keyword or literal at the end is not an alias without AS', () => {
+        assert.deepStrictEqual(
+            names(`SELECT a + b, -c, NOT d, e IS NULL, f IS NOT NULL, INTERVAL '1' DAY TO SECOND, 'x' 'y', x OVER w FROM t`),
+            []
+        );
+    });
+
+    test('REGEXP_LIKE pattern is not an alias without AS', () => {
+        assert.deepStrictEqual(names(`SELECT x REGEXP_LIKE pat, y NOT REGEXP_LIKE pat, z FROM t`), ['z']);
+    });
+
+    test('DISTINCT or ALL before the first item is not part of it', () => {
+        assert.deepStrictEqual(names('SELECT DISTINCT x, y b FROM t'), ['x', 'b']);
+        assert.deepStrictEqual(names('select all t.x a FROM t'), ['a']);
+        assert.deepStrictEqual(names('SELECT all_x, distinct_y FROM t'), ['all_x', 'distinct_y']);
+    });
+
+    test('DISTINCT with a parenthesized column', () => {
+        assert.deepStrictEqual(names('SELECT DISTINCT(a), b FROM t'), ['a', 'b']);
+        assert.deepStrictEqual(names('SELECT DISTINCT ( t."My Col" ) FROM t'), ['My Col']);
+        assert.deepStrictEqual(names('SELECT DISTINCT(a) x FROM t'), ['x']);
+        assert.deepStrictEqual(names('SELECT DISTINCT(a + 1) FROM t'), []);
+    });
+
+    test('IS [NOT] DISTINCT FROM does not end the SELECT list', () => {
+        assert.deepStrictEqual(names('SELECT a IS DISTINCT FROM b AS x, c d FROM t'), ['x', 'd']);
+        const stmt = 'SELECT a IS NOT DISTINCT\n  FROM b x, c d FROM t WHERE LOCAL.';
+        assert.deepStrictEqual(parseEnclosingSelectListAliases(stmt, stmt.length).map(a => a.name), ['x', 'd']);
+    });
+
+    test('a long run of spaces inside an item is parsed in linear time', () => {
+        const stmt = 'SELECT DISTINCT(' + ' '.repeat(100000) + '"';
+        const started = performance.now();
+        assert.deepStrictEqual(parseEnclosingSelectListAliases(stmt, stmt.length), []);
+        const elapsed = performance.now() - started;
+        assert.ok(elapsed < 200, `took ${elapsed.toFixed(0)} ms`);
+    });
+
+    test('unclosed quoted alias without AS is skipped', () => {
+        assert.deepStrictEqual(names('SELECT 1 "open FROM t'), []);
+    });
+
     test('CASE expression without AS is skipped', () => {
         assert.deepStrictEqual(
             names("SELECT CASE WHEN x > 0 THEN 'a' ELSE 'b' END, id FROM t"),
@@ -125,6 +174,13 @@ where local.`;
         );
     });
 
+    test('alias de-duplication follows identifier case rules', () => {
+        assert.deepStrictEqual(
+            parseSelectListAliases('SELECT a AS x, b AS X, c AS "x", d AS "X" FROM t'),
+            [{ name: 'x', quoted: false }, { name: 'x', quoted: true }]
+        );
+    });
+
     test('no SELECT keyword returns empty', () => {
         assert.deepStrictEqual(names('DELETE FROM t WHERE id = 1'), []);
     });
@@ -148,7 +204,7 @@ suite('LOCAL.<alias>: current-statement scoping', () => {
 
 SELECT two AS b, three AS c FROM t2;`;
         // Cursor on line 2 (the "SELECT two..." line)
-        const stmt = findStatementAtCursor(doc, 2);
+        const stmt = findStatementAtCursor(doc, 2, 0);
         assert.ok(stmt);
         assert.deepStrictEqual(names(stmt!.text), ['b', 'c']);
     });
@@ -157,7 +213,7 @@ SELECT two AS b, three AS c FROM t2;`;
         const doc = `SELECT one AS a FROM t1;
 
 SELECT two AS b FROM t2;`;
-        const stmt = findStatementAtCursor(doc, 0);
+        const stmt = findStatementAtCursor(doc, 0, 0);
         assert.ok(stmt);
         assert.deepStrictEqual(names(stmt!.text), ['a']);
     });
@@ -168,6 +224,11 @@ function encNames(stmt: string, cursor: number): string[] {
 }
 
 suite('parseEnclosingSelectListAliases', () => {
+    test('comments before the cursor do not shift it', () => {
+        const stmt = 'SELECT o AS oo FROM (SELECT a AS aa /* a comment longer than the rest */ FROM t WHERE local.HERE) s';
+        assert.deepStrictEqual(encNames(stmt, stmt.indexOf('HERE')), ['aa']);
+    });
+
     test('bug-report fixture: cursor inside CTE body reads INNER SELECT list', () => {
         const stmt = `WITH test AS (
   SELECT b.col_a AS m1, b.col_b FROM SCHEMA_A.TABLE_X AS b

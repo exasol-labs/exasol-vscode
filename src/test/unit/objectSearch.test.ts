@@ -98,6 +98,9 @@ registerVscodeMock();
 registerExtensionMock();
 
 const { ObjectSearchProvider } = require('../../providers/objectSearchProvider') as typeof import('../../providers/objectSearchProvider');
+// The extension mock objectSearchProvider bound to at load time; a later
+// registerExtensionMock() in another file replaces the cached module.
+const extensionMock = require('../../extension') as { getOutputChannel: () => unknown };
 const { ObjectTreeProvider, ObjectTreeItem } = require('../../providers/objectTreeProvider') as typeof import('../../providers/objectTreeProvider');
 
 import { createRawResult, createEmptyRawResult, MockConnectionManager } from '../helpers/mockConnectionManager';
@@ -268,6 +271,20 @@ suite('ObjectSearchProvider', () => {
         assert.ok(colItem, 'Should find ID column item');
     });
 
+    test('regular table query excludes virtual tables, which are fetched separately', async () => {
+        const seenSql: string[] = [];
+        const baseQuery = mockDriver.query;
+        mockDriver.query = async (sql: string) => {
+            seenSql.push(sql);
+            return baseQuery(sql);
+        };
+
+        await searchProvider.showSearch();
+
+        const tablesSql = seenSql.find(sql => sql.includes('EXA_ALL_TABLES') && sql.includes('UNION'));
+        assert.ok(tablesSql?.includes('TABLE_IS_VIRTUAL = FALSE'), `Got: ${tablesSql}`);
+    });
+
     test('sets busy true initially then false after loading', async () => {
         await searchProvider.showSearch();
 
@@ -298,6 +315,38 @@ suite('ObjectSearchProvider', () => {
 
         const hideCall = windowCalls.find(c => c.method === 'quickPick.hide');
         assert.ok(hideCall, 'Should hide QuickPick on error');
+    });
+
+    test('a failed optional query logs the database error text', async () => {
+        const lines: string[] = [];
+        const originalChannel = extensionMock.getOutputChannel;
+        extensionMock.getOutputChannel = () => ({ appendLine: (line: string) => lines.push(line) });
+        const partialDriver: MockDriver = {
+            query: async (sql: string) => {
+                if (sql.includes('EXA_ALL_TABLES')) {
+                    return createEmptyRawResult(['TABLE_SCHEMA', 'TABLE_NAME', 'OBJECT_TYPE']);
+                }
+                throw new Error('insufficient privileges for ' + sql.match(/SYS\.(\w+)/)?.[1]);
+            }
+        };
+        const partialSearch = new ObjectSearchProvider(
+            new MockConnectionManager(partialDriver) as unknown as ConnectionManager,
+            objectTreeProvider,
+            mockTreeView as unknown as ObjectTreeView
+        );
+        try {
+            await partialSearch.showSearch();
+        } finally {
+            extensionMock.getOutputChannel = originalChannel;
+        }
+
+        assert.deepStrictEqual(lines, [
+            'Object search: Failed to fetch scripts: insufficient privileges for EXA_ALL_SCRIPTS',
+            'Object search: Failed to fetch functions: insufficient privileges for EXA_ALL_FUNCTIONS',
+            'Object search: Failed to fetch virtual tables: insufficient privileges for EXA_ALL_VIRTUAL_TABLES',
+            'Object search: Failed to fetch system tables: insufficient privileges for EXA_SYSCAT',
+            'Object search: Failed to fetch columns: insufficient privileges for EXA_ALL_COLUMNS'
+        ]);
     });
 
     test('onDidAccept calls treeView.reveal with the selected item', async () => {
@@ -365,6 +414,211 @@ suite('ObjectSearchProvider', () => {
             focus: true,
             expand: true
         }, 'Should pass correct reveal options');
+    });
+
+    test('a virtual table is revealed inside the Virtual Schemas folder', async () => {
+        const revealed: ObjectTreeItemInstance[] = [];
+        mockTreeView.reveal = async node => { revealed.push(node); };
+        const driver: MockDriver = {
+            query: async (sql: string) => sql.includes('EXA_ALL_VIRTUAL_SCHEMAS')
+                ? createRawResult(['SCHEMA_NAME'], [['VS_SCHEMA']])
+                : mockDriver.query(sql)
+        };
+        const cm = new MockConnectionManager(driver);
+        searchProvider = new ObjectSearchProvider(
+            cm as unknown as ConnectionManager,
+            new ObjectTreeProvider(cm as unknown as ConnectionManager),
+            mockTreeView as unknown as ObjectTreeView
+        );
+        await searchProvider.showSearch();
+
+        const virtualItem = mockQuickPick.items.find(i => i.label.includes('REMOTE_TABLE'));
+        assert.ok(virtualItem, 'Should find REMOTE_TABLE');
+        mockQuickPick.selectedItems = [virtualItem];
+        assert.ok(mockQuickPick._acceptCallback, 'Accept callback should be registered');
+        await mockQuickPick._acceptCallback();
+
+        assert.strictEqual(revealed.length, 1);
+        assert.strictEqual(revealed[0].type, 'virtual-table');
+        assert.strictEqual(revealed[0].parent?.type, 'virtual-schema');
+        assert.strictEqual(revealed[0].parent?.parent?.type, 'virtual-schemas-folder');
+    });
+
+    test('a virtual table column is revealed inside the Virtual Schemas folder', async () => {
+        const revealed: ObjectTreeItemInstance[] = [];
+        mockTreeView.reveal = async node => { revealed.push(node); };
+        const driver: MockDriver = {
+            query: async (sql: string) => {
+                if (sql.includes('EXA_ALL_VIRTUAL_SCHEMAS')) {
+                    return createRawResult(['SCHEMA_NAME'], [['VS_SCHEMA']]);
+                }
+                if (sql.includes('EXA_ALL_COLUMNS') && sql.includes('COLUMN_TYPE')) {
+                    return createRawResult(['COLUMN_NAME', 'COLUMN_TYPE', 'COLUMN_IS_NULLABLE'], [['REMOTE_COL', 'VARCHAR(10)', true]]);
+                }
+                if (sql.includes('EXA_ALL_COLUMNS')) {
+                    return createRawResult(['COLUMN_SCHEMA', 'COLUMN_TABLE', 'COLUMN_NAME'], [['VS_SCHEMA', 'REMOTE_TABLE', 'REMOTE_COL']]);
+                }
+                return mockDriver.query(sql);
+            }
+        };
+        const cm = new MockConnectionManager(driver);
+        searchProvider = new ObjectSearchProvider(
+            cm as unknown as ConnectionManager,
+            new ObjectTreeProvider(cm as unknown as ConnectionManager),
+            mockTreeView as unknown as ObjectTreeView
+        );
+        await searchProvider.showSearch();
+
+        const columnItem = mockQuickPick.items.find(i => i.label.includes('REMOTE_COL'));
+        assert.ok(columnItem, 'Should find REMOTE_COL');
+        mockQuickPick.selectedItems = [columnItem];
+        assert.ok(mockQuickPick._acceptCallback, 'Accept callback should be registered');
+        await mockQuickPick._acceptCallback();
+
+        assert.strictEqual(revealed.length, 1);
+        assert.strictEqual(revealed[0].type, 'column');
+        assert.strictEqual(revealed[0].columnInfo?.name, 'REMOTE_COL');
+        assert.strictEqual(revealed[0].parent?.type, 'virtual-table');
+        assert.strictEqual(revealed[0].parent?.parent?.type, 'virtual-schema');
+        assert.strictEqual(revealed[0].parent?.parent?.parent?.type, 'virtual-schemas-folder');
+    });
+
+    suite('a column hit is revealed under its own table', () => {
+        function node(type: ObjectTreeItemInstance['type'], label: string, schemaName: string, parent?: ObjectTreeItemInstance): ObjectTreeItemInstance {
+            return new ObjectTreeItem({
+                label,
+                id: `${schemaName}:${parent?.id ?? ''}:${label}:${type}`,
+                collapsibleState: 0 as vscode.TreeItemCollapsibleState,
+                type,
+                schemaName,
+                tableInfo: type === 'column' ? undefined : { name: label },
+                columnInfo: type === 'column' ? { name: label, type: 'DECIMAL(18,0)', nullable: true } : undefined,
+                parent
+            });
+        }
+
+        // Two containers in one schema that both hold a column named ID.
+        async function revealSecondId(columnRows: string[][], tree: Map<ObjectNode | undefined, ObjectTreeItemInstance[]>): Promise<ObjectTreeItemInstance[]> {
+            const revealed: ObjectTreeItemInstance[] = [];
+            mockTreeView.reveal = async revealedNode => { revealed.push(revealedNode); };
+            const baseQuery = mockDriver.query;
+            mockDriver.query = async (sql: string) => sql.includes('EXA_ALL_COLUMNS')
+                ? createRawResult(['COLUMN_SCHEMA', 'COLUMN_TABLE', 'COLUMN_NAME'], columnRows)
+                : baseQuery(sql);
+            objectTreeProvider.getChildren = async (element?: ObjectNode) => tree.get(element) ?? [];
+
+            await searchProvider.showSearch();
+            const [, second] = mockQuickPick.items.filter(i => i.detail === 'Column');
+            assert.ok(second, 'Should list two ID columns');
+            mockQuickPick.selectedItems = [second];
+            assert.ok(mockQuickPick._acceptCallback, 'Accept callback should be registered');
+            await mockQuickPick._acceptCallback();
+            return revealed;
+        }
+
+        test('regular tables', async () => {
+            const schema = node('schema', 'MY_SCHEMA', 'MY_SCHEMA');
+            const folder = node('tables-folder', 'Tables', 'MY_SCHEMA', schema);
+            const first = node('table', 'FIRST', 'MY_SCHEMA', folder);
+            const second = node('table', 'SECOND', 'MY_SCHEMA', folder);
+            const secondId = node('column', 'ID', 'MY_SCHEMA', second);
+            const tree = new Map<ObjectNode | undefined, ObjectTreeItemInstance[]>([
+                [undefined, [schema]],
+                [schema, [folder]],
+                [folder, [first, second]],
+                [first, [node('column', 'ID', 'MY_SCHEMA', first)]],
+                [second, [secondId]]
+            ]);
+
+            const revealed = await revealSecondId([['MY_SCHEMA', 'FIRST', 'ID'], ['MY_SCHEMA', 'SECOND', 'ID']], tree);
+
+            assert.deepStrictEqual(revealed, [secondId]);
+        });
+
+        test('views', async () => {
+            const schema = node('schema', 'MY_SCHEMA', 'MY_SCHEMA');
+            const tables = node('tables-folder', 'Tables', 'MY_SCHEMA', schema);
+            const views = node('views-folder', 'Views', 'MY_SCHEMA', schema);
+            const table = node('table', 'BASE', 'MY_SCHEMA', tables);
+            const view = node('view', 'V_BASE', 'MY_SCHEMA', views);
+            const viewId = node('column', 'ID', 'MY_SCHEMA', view);
+            const tree = new Map<ObjectNode | undefined, ObjectTreeItemInstance[]>([
+                [undefined, [schema]],
+                [schema, [tables, views]],
+                [tables, [table]],
+                [views, [view]],
+                [table, [node('column', 'ID', 'MY_SCHEMA', table)]],
+                [view, [viewId]]
+            ]);
+
+            const revealed = await revealSecondId([['MY_SCHEMA', 'BASE', 'ID'], ['MY_SCHEMA', 'V_BASE', 'ID']], tree);
+
+            assert.deepStrictEqual(revealed, [viewId]);
+        });
+
+        test('virtual tables', async () => {
+            const folder = node('virtual-schemas-folder', 'Virtual Schemas', '');
+            const schema = node('virtual-schema', 'VS_SCHEMA', 'VS_SCHEMA', folder);
+            const first = node('virtual-table', 'FIRST', 'VS_SCHEMA', schema);
+            const second = node('virtual-table', 'SECOND', 'VS_SCHEMA', schema);
+            const secondId = node('column', 'ID', 'VS_SCHEMA', second);
+            const tree = new Map<ObjectNode | undefined, ObjectTreeItemInstance[]>([
+                [undefined, [folder]],
+                [folder, [schema]],
+                [schema, [first, second]],
+                [first, [node('column', 'ID', 'VS_SCHEMA', first)]],
+                [second, [secondId]]
+            ]);
+
+            const revealed = await revealSecondId([['VS_SCHEMA', 'FIRST', 'ID'], ['VS_SCHEMA', 'SECOND', 'ID']], tree);
+
+            assert.deepStrictEqual(revealed, [secondId]);
+        });
+    });
+
+    // EXA_ALL_SCRIPTS.SCRIPT_TYPE decides the folder, as in the tree (docker, 2026-10-23).
+    for (const [scriptType, folderType] of [
+        ['UDF', 'udfs-folder'],
+        ['SCRIPTING', 'procedures-folder'],
+        ['ADAPTER', 'adapters-folder'],
+        ['PREPROCESSOR', 'preprocessors-folder'],
+    ] as const) {
+        test(`a ${scriptType} script is revealed in the ${folderType}`, async () => {
+            const revealed: ObjectTreeItemInstance[] = [];
+            mockTreeView.reveal = async node => { revealed.push(node); };
+            const baseQuery = mockDriver.query;
+            mockDriver.query = async (sql: string) => sql.includes('EXA_ALL_SCRIPTS')
+                ? createRawResult(['SCRIPT_SCHEMA', 'SCRIPT_NAME', 'SCRIPT_TYPE'], [['MY_SCHEMA', 'MY_SCRIPT', scriptType]])
+                : baseQuery(sql);
+            const item = (type: ObjectTreeItemInstance['type'], label: string) => new ObjectTreeItem({
+                label, id: `${label}:${type}`, collapsibleState: 0 as vscode.TreeItemCollapsibleState, type, schemaName: 'MY_SCHEMA'
+            });
+            const schema = item('schema', 'MY_SCHEMA');
+            const folders = (['udfs-folder', 'procedures-folder', 'adapters-folder', 'preprocessors-folder'] as const).map(type => item(type, type));
+            const folder = folders.find(f => f.type === folderType);
+            const script = item('script', 'MY_SCRIPT');
+            objectTreeProvider.getChildren = async (element?: ObjectNode) => {
+                if (!element) { return [schema]; }
+                if (element === schema) { return folders; }
+                return element === folder ? [script] : [];
+            };
+
+            await searchProvider.showSearch();
+            const scriptItem = mockQuickPick.items.find(i => i.label.includes('MY_SCRIPT'));
+            assert.ok(scriptItem, 'Should find MY_SCRIPT');
+            mockQuickPick.selectedItems = [scriptItem];
+            assert.ok(mockQuickPick._acceptCallback, 'Accept callback should be registered');
+            await mockQuickPick._acceptCallback();
+
+            assert.deepStrictEqual(revealed, [script]);
+        });
+    }
+
+    test('a column hit shows its schema and table as the description', async () => {
+        await searchProvider.showSearch();
+
+        const colItem = mockQuickPick.items.find(i => i.detail === 'Column');
+        assert.strictEqual(colItem?.description, 'MY_SCHEMA.USERS');
     });
 
     test('QuickPick items have correct icon for each type', async () => {

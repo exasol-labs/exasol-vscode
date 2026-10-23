@@ -13,7 +13,7 @@ registerExtensionMock();
 // completionProvider.ts imports `vscode` at module scope, so it must stay a
 // deferred require() issued AFTER the mocks above are registered. A static
 // import would resolve 'vscode' before require.cache is patched.
-const { resolvePrefixCompletions } = require('../../providers/completionProvider') as typeof import('../../providers/completionProvider');
+const { parseAliases, resolvePrefixCompletions } = require('../../providers/completionProvider') as typeof import('../../providers/completionProvider');
 
 function objs(): DatabaseObject[] {
     return [
@@ -64,5 +64,37 @@ suite('resolvePrefixCompletions', () => {
         const aliases = new Map<string, AliasTarget>([['X', { schema: 'B', table: 'T' }]]);
         const r = resolvePrefixCompletions(objects, aliases, 'x');
         assert.deepStrictEqual(r, { kind: 'columns', schema: 'B', table: 'T' });
+    });
+    test('a quoted alias target matches only the object with that exact name', () => {
+        const objects: DatabaseObject[] = [
+            { schema: 'S', name: 'T', type: 'table' },
+            { schema: 'S', name: 't', type: 'table' },
+        ];
+        const quoted = new Map<string, AliasTarget>([['X', { schema: 'S', table: 't' }]]);
+        assert.deepStrictEqual(resolvePrefixCompletions(objects, quoted, 'x'), { kind: 'columns', schema: 'S', table: 't' });
+        const unquoted = new Map<string, AliasTarget>([['X', { schema: 'S', table: 'T' }]]);
+        assert.deepStrictEqual(resolvePrefixCompletions(objects, unquoted, 'x'), { kind: 'columns', schema: 'S', table: 'T' });
+    });
+
+    test('a quoted prefix is compared as written', () => {
+        const objects: DatabaseObject[] = [
+            { schema: 'S', name: 'T', type: 'table' },
+            { schema: 'S', name: 'lower v', type: 'table' },
+        ];
+        assert.deepStrictEqual(resolvePrefixCompletions(objects, new Map(), '"lower v"'), { kind: 'columns', schema: 'S', table: 'lower v' });
+        assert.deepStrictEqual(resolvePrefixCompletions(objects, new Map(), '"t"'), { kind: 'none' });
+        assert.strictEqual(resolvePrefixCompletions(objects, new Map(), '"S"').kind, 'schemaObjects');
+    });
+
+    test('alias of the second comma-joined table resolves to its columns', () => {
+        const objects: DatabaseObject[] = [
+            { schema: 'S', name: 'A', type: 'table' },
+            { schema: 'S', name: 'B', type: 'table' },
+            { schema: 's', name: 'b c', type: 'table' }
+        ];
+        const r = resolvePrefixCompletions(objects, parseAliases('SELECT y. FROM s.a x, s.b y'), 'y');
+        assert.deepStrictEqual(r, { kind: 'columns', schema: 'S', table: 'B' });
+        const quoted = resolvePrefixCompletions(objects, parseAliases('SELECT "y". FROM s.a AS x, "s"."b c" AS "y"'), '"y"');
+        assert.deepStrictEqual(quoted, { kind: 'columns', schema: 's', table: 'b c' });
     });
 });

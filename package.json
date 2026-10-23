@@ -3,7 +3,7 @@
   "displayName": "Exasol",
   "icon": "resources/exasol-icon.png",
   "description": "Feature-rich Exasol database extension for Visual Studio Code with IntelliSense, object browser, query execution, and more",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "publisher": "exasol",
   "license": "MIT",
   "repository": {
@@ -117,23 +117,55 @@
       },
       {
         "command": "exasol.previewTable",
-        "title": "Preview Table (100 rows)"
+        "title": "Preview Data (100 rows)"
       },
       {
         "command": "exasol.showTableDDL",
-        "title": "Show Table DDL"
+        "title": "Show DDL"
       },
       {
         "command": "exasol.showViewDDL",
-        "title": "Show View DDL"
+        "title": "Show DDL"
       },
       {
         "command": "exasol.generateSelect",
-        "title": "Generate SELECT Statement"
+        "title": "Generate SELECT"
       },
       {
         "command": "exasol.describeTable",
-        "title": "Describe Table"
+        "title": "Describe"
+      },
+      {
+        "command": "exasol.refreshVirtualSchema",
+        "title": "Refresh Metadata"
+      },
+      {
+        "command": "exasol.explainPushdown",
+        "title": "Explain Pushdown"
+      },
+      {
+        "command": "exasol.openScriptSource",
+        "title": "Show DDL"
+      },
+      {
+        "command": "exasol.generateScriptCall",
+        "title": "Generate Call"
+      },
+      {
+        "command": "exasol.showConnectionDDL",
+        "title": "Show DDL"
+      },
+      {
+        "command": "exasol.generateImport",
+        "title": "Generate IMPORT"
+      },
+      {
+        "command": "exasol.generateExport",
+        "title": "Generate EXPORT"
+      },
+      {
+        "command": "exasol.openFunctionSource",
+        "title": "Show DDL"
       },
       {
         "command": "exasol.setSchema",
@@ -168,10 +200,6 @@
         "command": "exasol.reconnectConnection",
         "title": "Exasol: Reconnect",
         "icon": "$(debug-restart)"
-      },
-      {
-        "command": "exasol.openObject",
-        "title": "Open Object"
       },
       {
         "command": "exasol.copyQualifiedName",
@@ -297,18 +325,28 @@
         },
         {
           "command": "exasol.previewTable",
-          "when": "view == exasol.objects && viewItem == table",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == virtual-table || viewItem == system-table)",
           "group": "exasol@2"
         },
         {
           "command": "exasol.describeTable",
-          "when": "view == exasol.objects && viewItem == table",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == virtual-table || viewItem == system-table)",
           "group": "exasol@3"
         },
         {
           "command": "exasol.generateSelect",
-          "when": "view == exasol.objects && viewItem == table",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == virtual-table || viewItem == system-table)",
           "group": "exasol@4"
+        },
+        {
+          "command": "exasol.refreshVirtualSchema",
+          "when": "view == exasol.objects && (viewItem == virtual-schema || viewItem == virtual-table)",
+          "group": "exasol@1"
+        },
+        {
+          "command": "exasol.explainPushdown",
+          "when": "view == exasol.objects && viewItem == virtual-table",
+          "group": "exasol@5"
         },
         {
           "command": "exasol.showViewDDL",
@@ -323,11 +361,41 @@
         {
           "command": "exasol.generateSelect",
           "when": "view == exasol.objects && viewItem == view",
+          "group": "exasol@4"
+        },
+        {
+          "command": "exasol.openScriptSource",
+          "when": "view == exasol.objects && (viewItem == script || viewItem == script-udf || viewItem == script-adapter || viewItem == script-preprocessor)",
+          "group": "exasol@1"
+        },
+        {
+          "command": "exasol.openFunctionSource",
+          "when": "view == exasol.objects && viewItem == function",
+          "group": "exasol@1"
+        },
+        {
+          "command": "exasol.generateScriptCall",
+          "when": "view == exasol.objects && viewItem == script-udf",
+          "group": "exasol@2"
+        },
+        {
+          "command": "exasol.showConnectionDDL",
+          "when": "view == exasol.objects && viewItem == db-connection",
+          "group": "exasol@1"
+        },
+        {
+          "command": "exasol.generateImport",
+          "when": "view == exasol.objects && viewItem == db-connection",
+          "group": "exasol@2"
+        },
+        {
+          "command": "exasol.generateExport",
+          "when": "view == exasol.objects && viewItem == db-connection",
           "group": "exasol@3"
         },
         {
           "command": "exasol.copyQualifiedName",
-          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == schema)",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == schema || viewItem == virtual-table || viewItem == virtual-schema || viewItem == script-udf || viewItem == script-adapter || viewItem == script-preprocessor || viewItem == system-schema || viewItem == system-table || viewItem == db-connection)",
           "group": "inline@1"
         },
         {
@@ -417,6 +485,38 @@
           "when": "false"
         },
         {
+          "command": "exasol.refreshVirtualSchema",
+          "when": "false"
+        },
+        {
+          "command": "exasol.explainPushdown",
+          "when": "false"
+        },
+        {
+          "command": "exasol.openScriptSource",
+          "when": "false"
+        },
+        {
+          "command": "exasol.generateScriptCall",
+          "when": "false"
+        },
+        {
+          "command": "exasol.showConnectionDDL",
+          "when": "false"
+        },
+        {
+          "command": "exasol.generateImport",
+          "when": "false"
+        },
+        {
+          "command": "exasol.generateExport",
+          "when": "false"
+        },
+        {
+          "command": "exasol.openFunctionSource",
+          "when": "false"
+        },
+        {
           "command": "exasol.setSchema",
           "when": "false"
         },
@@ -426,6 +526,18 @@
         },
         {
           "command": "exasol.deleteConnection",
+          "when": "false"
+        },
+        {
+          "command": "exasol.renameConnection",
+          "when": "false"
+        },
+        {
+          "command": "exasol.setActiveConnection",
+          "when": "false"
+        },
+        {
+          "command": "exasol.copyQualifiedName",
           "when": "false"
         },
         {
@@ -439,7 +551,8 @@
           "command": "exasol.disconnectConnection"
         },
         {
-          "command": "exasol.reconnectConnection"
+          "command": "exasol.reconnectConnection",
+          "when": "false"
         },
         {
           "command": "exasol.newSqlFile"
@@ -603,16 +716,15 @@
     "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.59.4",
     "@typescript-eslint/parser": "^8.59.4",
-    "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
-    "@vscode/vsce": "^3.9.1",
+    "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.0",
     "eslint": "^10.4.0",
     "glob": "^13.0.0",
     "hyparquet-writer": "^0.16.9",
     "jsdom": "^29.1.1",
     "mocha": "^11.7.1",
-    "ovsx": "^0.10.12",
+    "ovsx": "^1.3.0",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.4"

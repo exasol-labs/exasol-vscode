@@ -163,11 +163,16 @@ export function getColumnsFromResult(
     return firstResult.resultSet?.columns ?? [];
 }
 
-export function executeWithoutResult(
+/** Run a statement and throw the database error when it fails. */
+export async function executeWithoutResult(
     driver: ExasolDriver,
     sql: string
 ): Promise<SQLResponse<SQLQueriesResponse>> {
-    return rawQuery(driver, sql);
+    const result = await rawQuery(driver, sql);
+    if (result.status === 'error') {
+        throwSqlError(result);
+    }
+    return result;
 }
 
 export interface ColumnMetadata {

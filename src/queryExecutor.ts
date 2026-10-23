@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { ExasolDriver } from '@exasol/exasol-driver-ts';
 import { ConnectionManager } from './connectionManager';
-import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, ColumnMetadata, SqlRow, stripCommentsPreservingStrings, safeFetch } from './utils';
+import { getColumnsFromResult, getRowsFromResult, rawQuery, rawExecute, extractColumnMetadata, extractColumnName, ColumnMetadata, SqlRow, stripCommentsPreservingStrings, safeFetch, isScriptOrFunctionDefinition } from './utils';
 import { parseLocalCsvImport, parseLocalParquetImport, resolveImportPath } from './localCsvImport';
 import { getOutputChannel } from './extension';
 import { isExecutionPlanEnabled } from './settings';
@@ -58,8 +58,14 @@ export async function captureBaselineStatementIdentity(driver: ExasolDriver): Pr
     }, {}, getOutputChannel());
 }
 
+/** ALTER SESSION or ALTER SYSTEM SET SQL_PREPROCESSOR_SCRIPT, after comments are removed. */
+const SET_PREPROCESSOR_SCRIPT = /^\s*ALTER\s+(?:SESSION|SYSTEM)\s+SET\s+SQL_PREPROCESSOR_SCRIPT\b/i;
+
 export class QueryExecutor {
     private currentCancellationToken: vscode.CancellationTokenSource | undefined;
+    private readonly setPreprocessorScriptEmitter = new vscode.EventEmitter<void>();
+    /** Fires after a statement that sets SQL_PREPROCESSOR_SCRIPT ran successfully. */
+    readonly onDidSetPreprocessorScript = this.setPreprocessorScriptEmitter.event;
 
     constructor(private connectionManager: ConnectionManager) {}
 
@@ -79,8 +85,12 @@ export class QueryExecutor {
         const maxRows = config.get<number>('maxResultRows', 10000);
         const queryTimeoutMs = config.get<number>('queryTimeout', 300) * 1000;
 
-        // Clean the query - remove trailing semicolons and trim
-        let finalQuery = query.trim().replace(/;+\s*$/, '').trim();
+        // Remove trailing semicolons and whitespace, so that a LIMIT can be
+        // appended to a SELECT. Script and function definitions are sent as
+        // written, because the database stores their text as sent.
+        let finalQuery = isScriptOrFunctionDefinition(query)
+            ? query.trimStart()
+            : query.trim().replace(/;+\s*$/, '').trim();
 
         // Intercept local file imports: raw SQL cannot stream a local file over the
         // WebSocket protocol, so route them through the driver's programmatic import.
@@ -174,7 +184,7 @@ export class QueryExecutor {
         // the identity-capture query and any time spent queued behind another
         // in-flight operation on the same connection.
         const isResultSet = this.isResultSetQuery(finalQuery);
-        return await this.connectionManager.executeWithRetry(async () => {
+        const result = await this.connectionManager.executeWithRetry(async () => {
             const driver = await this.connectionManager.getDriver();
             const shouldCapturePlanIdentity = isExecutionPlanEnabled()
                 && (this.connectionManager.isExecutionPlanAvailable?.(activeConnection.id) ?? true);
@@ -235,6 +245,10 @@ export class QueryExecutor {
             retryOnConnectionError: isResultSet,
             ...(cancellationToken ? { cancellationToken } : {})
         });
+        if (SET_PREPROCESSOR_SCRIPT.test(stripCommentsPreservingStrings(finalQuery))) {
+            this.setPreprocessorScriptEmitter.fire();
+        }
+        return result;
     }
 
     setCancellationToken(token: vscode.CancellationTokenSource) {

@@ -9,9 +9,7 @@
  *   expr AS "Quoted"       -> Quoted (quotes stripped)
  *   table.column           -> column (Exasol resolves LOCAL.column for this)
  *   bare_column            -> bare_column
- *
- * Intentionally NOT supported (false-positive prone, omitted by design):
- *   expr alias             (bare alias without AS)
+ *   expr alias             -> alias (no AS; see extractImplicitAlias)
  *
  * Skipped entries: `*`, `table.*`.
  *
@@ -19,7 +17,7 @@
  * only, respecting paren depth and string/identifier quoting.
  */
 
-import { stripCommentsPreservingStrings } from './sql';
+import { stripCommentsPreservingPositions, stripCommentsPreservingStrings } from './sql';
 
 export interface SelectAlias {
     /** Alias name as written (unquoted form of the identifier). */
@@ -74,7 +72,7 @@ export function findEnclosingSelectListText(
     statementText: string,
     cursorOffsetInStatement: number
 ): string | undefined {
-    const text = stripCommentsPreservingStrings(statementText);
+    const text = stripCommentsPreservingPositions(statementText);
     const upper = text.toUpperCase();
     const cursor = clamp(cursorOffsetInStatement, 0, text.length);
 
@@ -130,17 +128,15 @@ export interface EnclosingSelectRange {
  * Locate the full lexical range of the SELECT clause enclosing
  * `cursorOffsetInStatement`. Returns undefined when no enclosing SELECT exists.
  *
- * Offsets are into the comment-stripped view (`text`); callers should also
- * translate their cursor through stripCommentsPreservingStrings if they need
- * to compare. In practice, stripping replaces comments with whitespace so the
- * cursor offset is identical between raw and stripped views; this matches the
- * function's contract elsewhere.
+ * Offsets are into the comment-stripped view (`text`), which has the same
+ * length as the statement: comments are replaced by spaces, so offsets into
+ * the statement, such as the cursor, are valid in it.
  */
 export function findEnclosingSelectRange(
     statementText: string,
     cursorOffsetInStatement: number
 ): EnclosingSelectRange | undefined {
-    const text = stripCommentsPreservingStrings(statementText);
+    const text = stripCommentsPreservingPositions(statementText);
     const upper = text.toUpperCase();
     const cursor = clamp(cursorOffsetInStatement, 0, text.length);
 
@@ -167,7 +163,12 @@ export function findEnclosingSelectRange(
 
 function aliasesFromListText(list: string | undefined): SelectAlias[] {
     if (list === undefined) { return []; }
-    const items = splitTopLevelCommas(list);
+    // `SELECT DISTINCT x` and `SELECT ALL x`: the set quantifier is not part of
+    // the first item. In `SELECT DISTINCT(t.x)` the parentheses only wrap the column.
+    const ident = '(?:"(?:[^"]|"")+"|\\w+)';
+    const items = splitTopLevelCommas(list
+        .replace(new RegExp(`^\\s*DISTINCT\\s*\\(\\s*(${ident}(?:\\s*\\.\\s*${ident})?)\\s*\\)`, 'i'), ' $1')
+        .replace(/^\s*(DISTINCT|ALL)\b/i, ''));
     const out: SelectAlias[] = [];
     const seen = new Set<string>();
     for (const raw of items) {
@@ -175,7 +176,7 @@ function aliasesFromListText(list: string | undefined): SelectAlias[] {
         if (!item) { continue; }
         const alias = extractAliasFromItem(item);
         if (!alias) { continue; }
-        const key = alias.name.toUpperCase();
+        const key = alias.quoted ? alias.name : alias.name.toUpperCase();
         if (seen.has(key)) { continue; }
         seen.add(key);
         out.push(alias);
@@ -338,7 +339,7 @@ function findKeywordAt(upper: string, original: string, kw: string, from: number
         if (ch === '"') { i = skipDoubleQuoted(original, i); continue; }
         if (ch === '(') { depth++; i++; continue; }
         if (ch === ')') { depth--; i++; continue; }
-        if (depth === wantedDepth && matchesKeywordAt(upper, kw, i)) {
+        if (depth === wantedDepth && matchesClauseKeywordAt(upper, kw, i)) {
             return i;
         }
         i++;
@@ -360,10 +361,26 @@ function findKeywordWithin(upper: string, original: string, kw: string, from: nu
         if (ch === '"') { i = skipDoubleQuoted(original, i); continue; }
         if (ch === '(') { depth++; i++; continue; }
         if (ch === ')') { if (depth > 0) { depth--; } else { return -1; } i++; continue; }
-        if (depth === 0 && matchesKeywordAt(upper, kw, i)) { return i; }
+        if (depth === 0 && matchesClauseKeywordAt(upper, kw, i)) { return i; }
         i++;
     }
     return -1;
+}
+
+/** `kw` at `i`, unless it is the FROM of `IS [NOT] DISTINCT FROM`. */
+function matchesClauseKeywordAt(upper: string, kw: string, i: number): boolean {
+    return matchesKeywordAt(upper, kw, i) && !(kw === 'FROM' && isDistinctPredicateFrom(upper, i));
+}
+
+/**
+ * True when the FROM at `i` of comment-free `upper` follows DISTINCT, as in
+ * `a IS [NOT] DISTINCT FROM b`, where it is part of a predicate and does not
+ * start a FROM clause.
+ */
+export function isDistinctPredicateFrom(upper: string, i: number): boolean {
+    let j = i;
+    while (j > 0 && /\s/.test(upper[j - 1])) { j--; }
+    return j >= 8 && upper.slice(j - 8, j) === 'DISTINCT' && !isIdentChar(upper[j - 9]);
 }
 
 function matchesKeywordAt(upper: string, kw: string, i: number): boolean {
@@ -433,18 +450,129 @@ function splitTopLevelCommas(text: string): string[] {
  *   3. Else, if the item is a simple `[table.]column` reference (the trailing
  *      token is a bare identifier and what precedes it is empty, a dot, or a
  *      qualifier), use the trailing identifier as the alias.
- *   4. Else give up (covers expressions without explicit AS; intentionally
- *      ignored to avoid false positives).
+ *   4. Else, if the item is `expr alias` without AS, use the alias.
+ *   5. Else give up (expressions without an alias).
  */
 function extractAliasFromItem(item: string): SelectAlias | undefined {
-    const trimmed = item.replace(/\s+$/, '');
+    const trimmed = item.trimEnd();
     if (!trimmed) { return undefined; }
     if (trimmed === '*' || /(^|[\s.])\*$/.test(trimmed)) { return undefined; }
 
     const asAlias = extractAsAlias(trimmed);
     if (asAlias) { return asAlias; }
 
-    return extractTrailingColumnAlias(trimmed);
+    return extractTrailingColumnAlias(trimmed) ?? extractImplicitAlias(trimmed);
+}
+
+/**
+ * Keywords that are never an implicit alias: operators, clause starts, and
+ * words that end an expression, such as `END`, `NULL` or the `DAY` of
+ * `INTERVAL '1' DAY`. Exasol reserves all of them, so an unquoted alias
+ * cannot be one of them.
+ */
+const NON_ALIAS_KEYWORDS = new Set([
+    'AND', 'OR', 'NOT', 'IS', 'IN', 'LIKE', 'REGEXP_LIKE', 'BETWEEN', 'ESCAPE', 'DISTINCT', 'ALL',
+    'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'NULL', 'TRUE', 'FALSE', 'UNKNOWN',
+    'PRIOR', 'CONNECT_BY_ROOT', 'OVER', 'AS', 'TO',
+    'YEAR', 'MONTH', 'DAY', 'HOUR', 'MINUTE', 'SECOND',
+    'SELECT', 'FROM', 'WHERE', 'GROUP', 'HAVING', 'QUALIFY', 'ORDER', 'LIMIT',
+    'UNION', 'INTERSECT', 'EXCEPT', 'MINUS', 'INTO', 'CONNECT', 'START', 'PREFERRING',
+    'JOIN', 'ON', 'WITH'
+]);
+
+/** Keywords of NON_ALIAS_KEYWORDS that can end the expression before an alias. */
+const EXPRESSION_END_KEYWORDS = new Set([
+    'END', 'NULL', 'TRUE', 'FALSE', 'UNKNOWN', 'YEAR', 'MONTH', 'DAY', 'HOUR', 'MINUTE', 'SECOND'
+]);
+
+type ItemToken =
+    | { kind: 'word'; text: string }
+    | { kind: 'quoted'; name: string }
+    | { kind: 'value' }
+    | { kind: 'operator' };
+
+/**
+ * `expr alias` without AS: the last token is a bare or quoted identifier that
+ * is not a keyword, and the token before it ends an expression (identifier,
+ * literal, closing paren, or a keyword such as `END`). So `1 a`, `x b`,
+ * `f(x) y` and `CASE ... END total` have an alias, while `a + b`, `NOT x`,
+ * `x IS NULL` and `INTERVAL '1' DAY` do not.
+ */
+function extractImplicitAlias(item: string): SelectAlias | undefined {
+    const tokens = tokenizeItem(item);
+    if (!tokens || tokens.length < 2) { return undefined; }
+    const last = tokens[tokens.length - 1];
+    const prev = tokens[tokens.length - 2];
+    if (prev.kind === 'operator') { return undefined; }
+    if (prev.kind === 'word') {
+        const upper = prev.text.toUpperCase();
+        if (NON_ALIAS_KEYWORDS.has(upper) && !EXPRESSION_END_KEYWORDS.has(upper)) { return undefined; }
+    }
+    if (last.kind === 'quoted') { return last.name ? { name: last.name, quoted: true } : undefined; }
+    if (last.kind === 'word' && !NON_ALIAS_KEYWORDS.has(last.text.toUpperCase())) {
+        return { name: last.text, quoted: false };
+    }
+    return undefined;
+}
+
+/**
+ * Split one SELECT-list item into top-level tokens. A parenthesized group,
+ * a string literal and a number are each one `value` token. Returns
+ * undefined for an unclosed quoted identifier or paren. An unclosed string
+ * runs to the end of the item, so it is the last token and never an alias.
+ */
+function tokenizeItem(item: string): ItemToken[] | undefined {
+    const tokens: ItemToken[] = [];
+    const len = item.length;
+    let i = 0;
+    while (i < len) {
+        const ch = item[i];
+        if (/\s/.test(ch)) { i++; continue; }
+        if (ch === "'") {
+            tokens.push({ kind: 'value' });
+            i = skipSingleQuoted(item, i);
+        } else if (ch === '"') {
+            const close = findClosingDoubleQuote(item, i);
+            if (close < 0) { return undefined; }
+            tokens.push({ kind: 'quoted', name: item.slice(i + 1, close).replace(/""/g, '"') });
+            i = close + 1;
+        } else if (ch === '(') {
+            const end = skipParenGroup(item, i);
+            if (end < 0) { return undefined; }
+            tokens.push({ kind: 'value' });
+            i = end;
+        } else if (/[A-Za-z_]/.test(ch)) {
+            const start = i;
+            while (i < len && isIdentChar(item[i])) { i++; }
+            tokens.push({ kind: 'word', text: item.slice(start, i) });
+        } else if (/[0-9]/.test(ch)) {
+            const m = /^[0-9]+(\.[0-9]*)?(E[+-]?[0-9]+)?/i.exec(item.slice(i));
+            tokens.push({ kind: 'value' });
+            i += m ? m[0].length : 1;
+        } else {
+            tokens.push({ kind: 'operator' });
+            i++;
+        }
+    }
+    return tokens;
+}
+
+/** Index after the `)` that closes the `(` at `openIdx`, or -1 when unclosed. */
+function skipParenGroup(text: string, openIdx: number): number {
+    let depth = 0;
+    let i = openIdx;
+    while (i < text.length) {
+        const ch = text[i];
+        if (ch === "'") { i = skipSingleQuoted(text, i); continue; }
+        if (ch === '"') { i = skipDoubleQuoted(text, i); continue; }
+        if (ch === '(') { depth++; }
+        if (ch === ')') {
+            depth--;
+            if (depth === 0) { return i + 1; }
+        }
+        i++;
+    }
+    return -1;
 }
 
 /**

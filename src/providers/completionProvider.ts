@@ -2,9 +2,13 @@ import * as vscode from 'vscode';
 import { ConnectionManager, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
 import {
+    columnsViewFor,
+    escapeSqlIdentifier,
     escapeSqlString,
     findStatementAtCursor,
+    findStatementEnds,
     getRowsFromResult,
+    normalizeIdentifier,
     offsetAtLineCharacter,
     parseCtes,
     parseEnclosingSelectListAliases,
@@ -12,7 +16,7 @@ import {
     safeFetch
 } from '../utils';
 import type { CteDefinition, SelectAlias } from '../utils';
-import { classifyContext } from '../utils/completionContext';
+import { classifyContext, findTableReferences } from '../utils/completionContext';
 import type { CompletionContext, ContextKind } from '../utils/completionContext';
 
 export interface DatabaseObject {
@@ -46,27 +50,23 @@ export function resolvePrefixCompletions(
     aliases: Map<string, AliasTarget>,
     prefix: string
 ): PrefixResolution {
-    const prefixUpper = prefix.toUpperCase();
+    const name = normalizeIdentifier(prefix);
 
-    if (aliases.has(prefixUpper)) {
-        const target = aliases.get(prefixUpper)!;
-        const tableUpper = target.table.toUpperCase();
-        const schemaUpper = target.schema?.toUpperCase();
-        const obj = objects.find(o =>
-            o.name === tableUpper && (!schemaUpper || o.schema === schemaUpper)
-        );
+    const target = aliases.get(name);
+    if (target) {
+        const obj = objects.find(o => o.name === target.table && (!target.schema || o.schema === target.schema));
         if (obj) {
             return { kind: 'columns', schema: obj.schema, table: obj.name };
         }
         return { kind: 'empty' };
     }
 
-    const schemaObjects = objects.filter(obj => obj.schema === prefixUpper);
+    const schemaObjects = objects.filter(obj => obj.schema === name);
     if (schemaObjects.length > 0) {
         return { kind: 'schemaObjects', objects: schemaObjects };
     }
 
-    const obj = objects.find(o => o.name === prefixUpper);
+    const obj = objects.find(o => o.name === name);
     if (obj) {
         return { kind: 'columns', schema: obj.schema, table: obj.name };
     }
@@ -76,34 +76,99 @@ export function resolvePrefixCompletions(
 
 // Exported for unit testing. Handles every combination of quoted/unquoted
 // schema and table in FROM/JOIN clauses: schema.table, "schema".table,
-// schema."table", "schema"."table". Captures contain the unquoted identifier
-// text only; callers must compare case-insensitively (Exasol normalises to upper).
+// schema."table", "schema"."table", and quoted or unquoted aliases. Keys,
+// schema and table are the names the database stores (see
+// normalizeIdentifier), so callers compare them with ===. The tables after a
+// comma in a FROM list, as in `FROM a x, b y`, get their aliases too.
 export function parseAliases(queryText: string): Map<string, AliasTarget> {
     const aliases = new Map<string, AliasTarget>();
-
-    const ident = '(?:"([^"]+)"|(\\w+))';
-    const tableAliasPattern = new RegExp(
-        `(?:from|(?:(?:inner|left|right|full|cross)\\s+)?(?:outer\\s+)?join)\\s+` +
-        `(?:${ident}\\s*\\.\\s*)?${ident}\\s+(?:as\\s+)?(\\w+)\\b`,
-        'gi'
-    );
-
-    const STOP = new Set(['ON', 'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS',
-        'OUTER', 'ORDER', 'GROUP', 'HAVING', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT']);
-
-    let match: RegExpExecArray | null;
-    while ((match = tableAliasPattern.exec(queryText)) !== null) {
-        const schema = match[1] ?? match[2];
-        const table = match[3] ?? match[4];
-        const alias = match[5];
-        if (!table || !alias) { continue; }
-        const aliasUpper = alias.toUpperCase();
-        if (STOP.has(aliasUpper)) { continue; }
-        if (aliasUpper === table.toUpperCase()) { continue; }
-        aliases.set(aliasUpper, schema ? { schema, table } : { table });
+    for (const { schema, table, alias } of findTableReferences(queryText)) {
+        if (alias === undefined || alias === table) { continue; }
+        aliases.set(alias, schema ? { schema, table } : { table });
     }
-
     return aliases;
+}
+
+/**
+ * Range of a quoted identifier the user is typing: from its opening `"` to
+ * its closing `"` on the same line, or for an unfinished name to the end of
+ * the word at the cursor, plus a closing `"` right after it, such as the one
+ * added by auto-closing. Undefined when the cursor is not inside a
+ * quoted identifier opened on the same line, so a line without `"` before
+ * the cursor returns early, without scanning the document. Only the current
+ * statement is scanned, so a quote in an earlier statement, such as an
+ * apostrophe in a script body, does not count. The word pattern of the
+ * language excludes `"` and spaces, so the default range of a completion
+ * would leave the opening quote and earlier words in place.
+ */
+function openingQuoteRange(document: vscode.TextDocument, position: vscode.Position): vscode.Range | undefined {
+    const line = document.lineAt(position).text;
+    if (!line.slice(0, position.character).includes('"')) { return undefined; }
+    const text = document.getText();
+    const cursor = offsetAtLineCharacter(text, position.line, position.character);
+    const statementStart = (findStatementEnds(text.slice(0, cursor)).pop() ?? -1) + 1;
+    const statement = text.slice(statementStart, cursor);
+    const quoteInStatement = quotedIdentifierStart(statement);
+    const quoteIdx = quoteInStatement === undefined ? undefined : statementStart + quoteInStatement;
+    const lineStart = cursor - position.character;
+    if (quoteIdx === undefined || quoteIdx < lineStart) { return undefined; }
+    const wordEnd = Math.max(document.getWordRangeAtPosition(position)?.end.character ?? 0, position.character);
+    const end = closingQuoteEnd(line, position.character) ?? (line[wordEnd] === '"' ? wordEnd + 1 : wordEnd);
+    return new vscode.Range(position.line, quoteIdx - lineStart, position.line, end);
+}
+
+/**
+ * Index after the `"` that closes the quoted identifier containing `from`, or
+ * undefined when the line has none. A doubled quote is an escaped quote. The
+ * rest of the line must have balanced quotes, so the opening quote of a later
+ * name does not close an unfinished one.
+ */
+function closingQuoteEnd(line: string, from: number): number | undefined {
+    for (let i = line.indexOf('"', from); i !== -1; i = line.indexOf('"', i + 2)) {
+        if (line[i + 1] !== '"') {
+            return quotedIdentifierStart(line.slice(i + 1)) === undefined ? i + 1 : undefined;
+        }
+    }
+    return undefined;
+}
+
+/** True when the quoted identifier in `range` ends with its closing quote. */
+function isClosedQuote(line: string, range: vscode.Range): boolean {
+    const quoted = line.slice(range.start.character, range.end.character);
+    return quotedIdentifierStart(quoted) === undefined;
+}
+
+/**
+ * Index of the `"` that opens the quoted identifier still open at the end of
+ * `text`, or undefined when the end is outside one. Skips strings, `--` and
+ * block comments; a doubled quote inside a string or quoted identifier is an
+ * escaped quote, not its end.
+ */
+function quotedIdentifierStart(text: string): number | undefined {
+    const len = text.length;
+    let i = 0;
+    while (i < len) {
+        const ch = text[i];
+        if (ch === '"' || ch === "'") {
+            const start = i++;
+            for (;;) {
+                if (i >= len) { return ch === '"' ? start : undefined; }
+                if (text[i++] !== ch) { continue; }
+                if (i < len && text[i] === ch) { i++; } else { break; }
+            }
+        } else if (ch === '-' && text[i + 1] === '-') {
+            const eol = text.indexOf('\n', i);
+            if (eol < 0) { return undefined; }
+            i = eol + 1;
+        } else if (ch === '/' && text[i + 1] === '*') {
+            const close = text.indexOf('*/', i + 2);
+            if (close < 0) { return undefined; }
+            i = close + 2;
+        } else {
+            i++;
+        }
+    }
+    return undefined;
 }
 
 export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
@@ -119,6 +184,8 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
     private reservedKeywords: Set<string> = new Set();
     private reservedKeywordsLoaded = false;
     private readonly CACHE_TTL = 300000; // 5 minutes
+    /** Stored name of each item built by nameItem. */
+    private readonly storedNames = new WeakMap<vscode.CompletionItem, string>();
 
     constructor(private connectionManager: ConnectionManager) {}
 
@@ -127,6 +194,16 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         position: vscode.Position,
         _token: vscode.CancellationToken,
         _context: vscode.CompletionContext
+    ): Promise<vscode.CompletionItem[]> {
+        const quoteRange = openingQuoteRange(document, position);
+        const items = await this.collectItems(document, position, quoteRange);
+        return quoteRange ? this.quotedNameItems(items, quoteRange) : items;
+    }
+
+    private async collectItems(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        quoteRange: vscode.Range | undefined
     ): Promise<vscode.CompletionItem[]> {
         const config = vscode.workspace.getConfiguration('exasol');
         if (!config.get<boolean>('autoComplete', true)) {
@@ -140,13 +217,18 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
         const items: vscode.CompletionItem[] = [];
 
-        // Get the text before cursor
-        const linePrefix = document.lineAt(position).text.substring(0, position.character);
-        const wordRange = document.getWordRangeAtPosition(position);
-        const _word = wordRange ? document.getText(wordRange) : '';
+        // Text before the cursor, up to a quoted identifier being typed there,
+        // so that `x."i` completes the columns of `x` like `x.`.
+        const linePrefix = document.lineAt(position).text.substring(0, quoteRange?.start.character ?? position.character);
 
-        // Get the entire query text for alias detection
-        const queryText = document.getText();
+        // Get the entire query text for alias detection. A quoted identifier
+        // opened at the cursor without its closing quote would run to the end
+        // of the statement, so it is parsed as closed after the typed word.
+        let queryText = document.getText();
+        if (quoteRange && !isClosedQuote(document.lineAt(position).text, quoteRange)) {
+            const closeAt = offsetAtLineCharacter(queryText, position.line, quoteRange.end.character);
+            queryText = `${queryText.slice(0, closeAt)}"${queryText.slice(closeAt)}`;
+        }
 
         try {
             // Load reserved keywords if not already loaded
@@ -161,10 +243,10 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
             const aliases = parseAliases(queryText);
 
             // Parse CTEs from the CURRENT statement only (CTEs are statement-scoped).
-            const currentStmt = findStatementAtCursor(queryText, position.line);
+            const currentStmt = findStatementAtCursor(queryText, position.line, position.character);
             const ctes: CteDefinition[] = currentStmt ? parseCtes(currentStmt.text) : [];
-            const cteByUpper = new Map<string, CteDefinition>();
-            for (const c of ctes) { cteByUpper.set(c.name.toUpperCase(), c); }
+            const cteByName = new Map<string, CteDefinition>();
+            for (const c of ctes) { cteByName.set(c.name, c); }
 
             const log = getOutputChannel();
 
@@ -174,12 +256,11 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
             // body is the CTE's inner SELECT, not the outer one).
             const localMatch = linePrefix.match(/\blocal\.\s*$/i);
             if (localMatch) {
-                const stmt = findStatementAtCursor(queryText, position.line);
                 let aliasesList: SelectAlias[] = [];
-                if (stmt) {
+                if (currentStmt) {
                     const docOff = offsetAtLineCharacter(queryText, position.line, position.character);
-                    const cursorInStmt = Math.max(0, docOff - stmt.startOffset);
-                    aliasesList = parseEnclosingSelectListAliases(stmt.text, cursorInStmt);
+                    const cursorInStmt = Math.max(0, docOff - currentStmt.startOffset);
+                    aliasesList = parseEnclosingSelectListAliases(currentStmt.text, cursorInStmt);
                 }
                 if (aliasesList.length === 0) {
                     log?.appendLine(`[completion] LOCAL.: no parseable enclosing SELECT-list aliases; returning empty`);
@@ -189,11 +270,13 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                 return this.getLocalAliasCompletions(aliasesList);
             }
 
-            // schema.table. pattern (highest priority): two qualified identifiers.
-            const schemaTableMatch = linePrefix.match(/(\w+)\.(\w+)\.\s*$/);
+            // schema.table. pattern (highest priority): two qualified identifiers,
+            // each unquoted or quoted.
+            const ident = '("(?:[^"]|"")+"|\\w+)';
+            const schemaTableMatch = linePrefix.match(new RegExp(`${ident}\\.${ident}\\.\\s*$`));
             if (schemaTableMatch) {
-                const schemaName = schemaTableMatch[1].toUpperCase();
-                const tableName = schemaTableMatch[2].toUpperCase();
+                const schemaName = normalizeIdentifier(schemaTableMatch[1]);
+                const tableName = normalizeIdentifier(schemaTableMatch[2]);
                 const obj = objects.find(o => o.schema === schemaName && o.name === tableName);
                 if (obj) {
                     const cols = await this.getColumnsForTable(activeConnection.id, obj.schema, obj.name);
@@ -206,22 +289,22 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
             }
 
             // Single-identifier prefix: alias, schema, or bare table name.
-            const aliasMatch = linePrefix.match(/(\w+)\.\s*$/);
+            const aliasMatch = linePrefix.match(new RegExp(`${ident}\\.\\s*$`));
             if (aliasMatch) {
                 const prefix = aliasMatch[1];
-                const prefixUpper = prefix.toUpperCase();
+                const prefixName = normalizeIdentifier(prefix);
 
                 // CTE alias indirection: alias parsed -> table name -> matches a CTE.
-                const aliasTarget = aliases.get(prefixUpper);
+                const aliasTarget = aliases.get(prefixName);
                 if (aliasTarget && !aliasTarget.schema) {
-                    const cte = cteByUpper.get(aliasTarget.table.toUpperCase());
+                    const cte = cteByName.get(aliasTarget.table);
                     if (cte && cte.columns.length > 0) {
                         log?.appendLine(`[completion] '${prefix}' -> CTE ${cte.name} (${cte.columns.length} cols)`);
                         return this.getColumnCompletions(cte.columns);
                     }
                 }
                 // Direct CTE reference: `cte_name.|`
-                const directCte = cteByUpper.get(prefixUpper);
+                const directCte = cteByName.get(prefixName);
                 if (directCte && directCte.columns.length > 0) {
                     log?.appendLine(`[completion] '${prefix}' -> CTE ${directCte.name} (${directCte.columns.length} cols)`);
                     return this.getColumnCompletions(directCte.columns);
@@ -241,7 +324,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                         return [];
                     }
                     case 'schemaObjects':
-                        return this.getObjectCompletions(resolution.objects, true);
+                        return this.getObjectCompletions(resolution.objects);
                     case 'empty':
                         log?.appendLine(`[completion] alias '${prefix}' parsed but table not in object cache; returning empty`);
                         return [];
@@ -253,10 +336,9 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
             // No prefix-dot context: classify cursor and rank buckets accordingly.
             const docOffsetForCtx = offsetAtLineCharacter(queryText, position.line, position.character);
-            const stmtForCtx = currentStmt ?? findStatementAtCursor(queryText, position.line);
-            const ctxQuery = stmtForCtx?.text ?? queryText;
-            const ctxOffset = stmtForCtx
-                ? Math.max(0, docOffsetForCtx - stmtForCtx.startOffset)
+            const ctxQuery = currentStmt?.text ?? queryText;
+            const ctxOffset = currentStmt
+                ? Math.max(0, docOffsetForCtx - currentStmt.startOffset)
                 : docOffsetForCtx;
             const ctx = classifyContext(ctxQuery, ctxOffset);
             log?.appendLine(`[completion] context=${ctx.kind} fromTables=${ctx.fromTables.length}`);
@@ -297,13 +379,61 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         }
     }
 
-    private quoteIdentifier(identifier: string): string {
-        const upperIdent = identifier.toUpperCase();
-        // Only quote if it's a reserved keyword
-        if (this.reservedKeywords.has(upperIdent)) {
-            return `"${identifier.toLowerCase()}"`;
+    /**
+     * True when the stored name can be written unquoted: a regular identifier
+     * (ASCII letter, then letters, digits or underscores), stored in uppercase,
+     * and not a reserved keyword.
+     */
+    private isRegularName(stored: string): boolean {
+        return /^[A-Z][A-Z0-9_]*$/.test(stored) && !this.reservedKeywords.has(stored);
+    }
+
+    /** Insert text: regular names in lowercase, any other name quoted with its exact case. */
+    private quoteIdentifier(stored: string): string {
+        return this.isRegularName(stored) ? stored.toLowerCase() : `"${escapeSqlIdentifier(stored)}"`;
+    }
+
+    /**
+     * Completion item for a stored name. The label is the insert text, so a
+     * quoted name such as `"id"` and the regular name `ID` (label `id`) look
+     * different. The filter text is the name without quotes, so typing `id`
+     * matches both.
+     */
+    private nameItem(stored: string, kind: vscode.CompletionItemKind): vscode.CompletionItem {
+        const insert = this.quoteIdentifier(stored);
+        const item = new vscode.CompletionItem(insert, kind);
+        item.insertText = insert;
+        item.filterText = this.bareName(stored);
+        this.storedNames.set(item, stored);
+        return item;
+    }
+
+    /**
+     * Items after an opening `"`. Only names can go inside a quoted
+     * identifier, so keywords and functions are dropped. Every name, also a
+     * regular one such as `ID`, is listed and inserted quoted with its exact
+     * case (`"ID"`), because the user started a quoted identifier. The range
+     * starts at the opening quote, so typing `"i` matches `"id"` and accepting
+     * it replaces the quote instead of adding a second one.
+     */
+    private quotedNameItems(items: vscode.CompletionItem[], range: vscode.Range): vscode.CompletionItem[] {
+        const out: vscode.CompletionItem[] = [];
+        for (const item of items) {
+            const stored = this.storedNames.get(item);
+            if (stored === undefined) { continue; }
+            const quoted = `"${escapeSqlIdentifier(stored)}"`;
+            item.label = quoted;
+            item.insertText = quoted;
+            item.filterText = quoted;
+            item.range = range;
+            out.push(item);
         }
-        return identifier.toLowerCase();
+        return out;
+    }
+
+    /** Name without quotes: regular names in lowercase, any other name exactly as stored. */
+    private bareName(stored: string): string {
+        return this.isRegularName(stored) ? stored.toLowerCase() : stored;
     }
 
     private getKeywordCompletions(): vscode.CompletionItem[] {
@@ -396,10 +526,9 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
     private getSchemaCompletions(schemas: string[]): vscode.CompletionItem[] {
         return schemas.filter((s): s is string => typeof s === 'string' && s.length > 0).map(schema => {
-            const item = new vscode.CompletionItem(schema.toLowerCase(), vscode.CompletionItemKind.Module);
+            const item = this.nameItem(schema, vscode.CompletionItemKind.Module);
             item.detail = 'Schema';
-            item.insertText = this.quoteIdentifier(schema);
-            item.sortText = `0_${schema.toLowerCase()}`;
+            item.sortText = `0_${this.bareName(schema)}`;
             return item;
         });
     }
@@ -410,29 +539,26 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         function:       vscode.CompletionItemKind.Function,
     };
 
-    private getObjectCompletions(objects: DatabaseObject[], skipQuoting = false): vscode.CompletionItem[] {
+    private getObjectCompletions(objects: DatabaseObject[]): vscode.CompletionItem[] {
         return objects.filter(o => o && o.name && o.schema).map(obj => {
             const kind = ExasolCompletionProvider.OBJECT_KIND[obj.type] ?? vscode.CompletionItemKind.Class;
 
-            const displayName = obj.name.toLowerCase();
-            const item = new vscode.CompletionItem(displayName, kind);
+            const item = this.nameItem(obj.name, kind);
             const typeLabel = obj.type === 'virtual-table' ? 'virtual table'
                 : obj.type === 'system-table' ? 'system table'
                 : obj.type;
-            item.detail = `${typeLabel} in ${obj.schema.toLowerCase()}`;
-            item.insertText = skipQuoting ? displayName : this.quoteIdentifier(obj.name);
-            item.sortText = `1_${displayName}`;
+            item.detail = `${typeLabel} in ${this.quoteIdentifier(obj.schema)}`;
+            item.sortText = `1_${this.bareName(obj.name)}`;
             return item;
         });
     }
 
     private getLocalAliasCompletions(aliases: SelectAlias[]): vscode.CompletionItem[] {
         return aliases.map((a, idx) => {
-            const displayName = a.name.toLowerCase();
-            const item = new vscode.CompletionItem(displayName, vscode.CompletionItemKind.Field);
+            const stored = a.quoted ? a.name : a.name.toUpperCase();
+            const item = this.nameItem(stored, vscode.CompletionItemKind.Field);
             item.detail = 'SELECT alias';
-            item.insertText = a.quoted ? `"${a.name.replace(/"/g, '""')}"` : this.quoteIdentifier(a.name);
-            item.sortText = ExasolCompletionProvider.sourceOrderSortText(idx, displayName);
+            item.sortText = ExasolCompletionProvider.sourceOrderSortText(idx, this.bareName(stored));
             return item;
         });
     }
@@ -440,17 +566,15 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
     private getColumnCompletions(columns: string[]): vscode.CompletionItem[] {
         const valid = columns.filter((c): c is string => typeof c === 'string' && c.length > 0);
         return valid.map((col, idx) => {
-            const displayName = col.toLowerCase();
-            const item = new vscode.CompletionItem(displayName, vscode.CompletionItemKind.Field);
-            item.insertText = this.quoteIdentifier(col);
-            item.sortText = ExasolCompletionProvider.sourceOrderSortText(idx, displayName);
+            const item = this.nameItem(col, vscode.CompletionItemKind.Field);
+            item.sortText = ExasolCompletionProvider.sourceOrderSortText(idx, this.bareName(col));
             return item;
         });
     }
 
     /** Build a sortText that preserves source order under VS Code's lexical sort. */
-    private static sourceOrderSortText(idx: number, lower: string): string {
-        return `0_${String(idx).padStart(5, '0')}_${lower}`;
+    private static sourceOrderSortText(idx: number, name: string): string {
+        return `0_${String(idx).padStart(5, '0')}_${name}`;
     }
 
     /**
@@ -471,18 +595,13 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         const out: string[] = [];
         const seen = new Set<string>();
         for (const ref of ctx.fromTables) {
-            const tableUp = ref.table.toUpperCase();
-            const schemaUp = ref.schema?.toUpperCase();
-            const obj = objects.find(o =>
-                o.name === tableUp && (!schemaUp || o.schema === schemaUp)
-            );
+            const obj = objects.find(o => o.name === ref.table && (!ref.schema || o.schema === ref.schema));
             if (!obj) { continue; }
             const cols = await this.getColumnsForTable(connectionId, obj.schema, obj.name);
             if (!cols) { continue; }
             for (const c of cols) {
-                const k = c.toUpperCase();
-                if (seen.has(k)) { continue; }
-                seen.add(k);
+                if (seen.has(c)) { continue; }
+                seen.add(c);
                 out.push(c);
             }
         }
@@ -541,11 +660,9 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         if (order.includes('columns') && fromColumns.length > 0) {
             for (let i = 0; i < fromColumns.length; i++) {
                 const col = fromColumns[i];
-                const displayName = col.toLowerCase();
-                const item = new vscode.CompletionItem(displayName, vscode.CompletionItemKind.Field);
+                const item = this.nameItem(col, vscode.CompletionItemKind.Field);
                 item.detail = 'Column';
-                item.insertText = this.quoteIdentifier(col);
-                item.sortText = `${prio('columns')}${String(i).padStart(5, '0')}_${displayName}`;
+                item.sortText = `${prio('columns')}${String(i).padStart(5, '0')}_${this.bareName(col)}`;
                 out.push(item);
             }
         }
@@ -574,14 +691,14 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
         if (order.includes('objects')) {
             for (const item of this.getObjectCompletions(objects)) {
-                item.sortText = `${prio('objects')}${item.label}`;
+                item.sortText = `${prio('objects')}${item.filterText}`;
                 out.push(item);
             }
         }
 
         if (order.includes('schemas')) {
             for (const item of this.getSchemaCompletions(schemas)) {
-                item.sortText = `${prio('schemas')}${item.label}`;
+                item.sortText = `${prio('schemas')}${item.filterText}`;
                 out.push(item);
             }
         }
@@ -605,6 +722,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                     SELECT SCHEMA_NAME
                     FROM SYS.EXA_SCHEMAS
                     WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
+                    AND SCHEMA_IS_VIRTUAL = FALSE
                     ORDER BY SCHEMA_NAME
                 `;
                 const result = await rawQuery(driver, schemasQuery);
@@ -658,6 +776,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
                         'table' AS OBJECT_TYPE
                     FROM SYS.EXA_ALL_TABLES
                     WHERE TABLE_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
+                    AND TABLE_IS_VIRTUAL = FALSE
                     UNION ALL
                     SELECT
                         VIEW_SCHEMA AS TABLE_SCHEMA,
@@ -781,8 +900,9 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
     }
 
     /**
-     * Lazily fetch and cache the columns of a single table. Returns undefined
-     * (without caching) when the underlying query fails, so the next lookup retries.
+     * Lazily fetch and cache the columns of a single table, with schema and
+     * table names as stored in the database. Returns undefined (without
+     * caching) when the underlying query fails, so the next lookup retries.
      */
     private async getColumnsForTable(
         connectionId: string,
@@ -790,7 +910,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         table: string
     ): Promise<string[] | undefined> {
         if (!schema || !table) { return undefined; }
-        const cacheKey = `${connectionId}|${schema.toUpperCase()}.${table.toUpperCase()}`;
+        const cacheKey = `${connectionId}|${JSON.stringify([schema, table])}`;
         const cached = this.columnsCache.get(cacheKey);
         const expiry = this.columnsExpiry.get(cacheKey);
         if (cached && expiry && Date.now() < expiry) {
@@ -801,11 +921,11 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
         try {
             return await this.connectionManager.executeWithRetry(async () => {
                 const driver = await this.connectionManager.getDriver(connectionId, 'background');
-                // EXA_ALL_COLUMNS uses identifiers stored uppercase; escape as string literals.
+                // Names as stored in the database; escape as string literals.
                 const sql =
-                    `SELECT COLUMN_NAME FROM SYS.EXA_ALL_COLUMNS ` +
-                    `WHERE COLUMN_SCHEMA = '${escapeSqlString(schema.toUpperCase())}' ` +
-                    `AND COLUMN_TABLE = '${escapeSqlString(table.toUpperCase())}' ` +
+                    `SELECT COLUMN_NAME FROM ${columnsViewFor(schema)} ` +
+                    `WHERE COLUMN_SCHEMA = '${escapeSqlString(schema)}' ` +
+                    `AND COLUMN_TABLE = '${escapeSqlString(table)}' ` +
                     `ORDER BY COLUMN_ORDINAL_POSITION`;
                 const result = await rawQuery(driver, sql);
                 const rows = getRowsFromResult(result);

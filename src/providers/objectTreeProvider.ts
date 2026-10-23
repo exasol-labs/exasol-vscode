@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from '../connectionManager';
 import { getOutputChannel } from '../extension';
-import { ObjectTreeItemType, getNodeTypeConfig } from './objectTreeTypes';
+import { ObjectTreeItemType, DbConnectionInfo, getNodeTypeConfig } from './objectTreeTypes';
 import {
     fetchSchemas,
     fetchTables,
@@ -20,10 +20,47 @@ import {
     fetchVirtualTables,
     fetchVirtualColumns,
     fetchSystemTables,
-    fetchSystemTableColumns
+    fetchSystemTableColumns,
+    fetchDbConnections,
+    fetchRootFolderCounts,
+    fetchPreprocessorParameter
 } from './objectTreeFetchers';
+import { escapeSqlIdentifier, normalizeIdentifier } from '../utils';
 
 export type ObjectNode = ObjectTreeItem | ObjectMessageItem;
+
+/**
+ * The quoted SQL name of a schema, table, view, column, script or
+ * connection node, including system schemas and tables, as used by drag and
+ * drop and Copy Name; undefined for other node types.
+ */
+export function getQualifiedName(
+    item: Partial<Pick<ObjectTreeItem, 'type' | 'schemaName' | 'tableInfo' | 'columnInfo' | 'scriptInfo' | 'dbConnectionInfo'>>
+): string | undefined {
+    switch (item.type) {
+        case 'schema':
+        case 'virtual-schema':
+        case 'system-schema':
+            return item.schemaName ? `"${escapeSqlIdentifier(item.schemaName)}"` : undefined;
+        case 'table':
+        case 'view':
+        case 'virtual-table':
+        case 'system-table':
+            return item.schemaName && item.tableInfo
+                ? `"${escapeSqlIdentifier(item.schemaName)}"."${escapeSqlIdentifier(item.tableInfo.name)}"`
+                : undefined;
+        case 'column':
+            return item.columnInfo ? `"${escapeSqlIdentifier(item.columnInfo.name)}"` : undefined;
+        case 'script':
+            return item.schemaName && item.scriptInfo
+                ? `"${escapeSqlIdentifier(item.schemaName)}"."${escapeSqlIdentifier(item.scriptInfo.name)}"`
+                : undefined;
+        case 'db-connection':
+            return item.dbConnectionInfo ? `"${escapeSqlIdentifier(item.dbConnectionInfo.name)}"` : undefined;
+        default:
+            return undefined;
+    }
+}
 
 export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, vscode.TreeDragAndDropController<ObjectNode> {
     private readonly onDidChangeTreeDataEmitter = new vscode.EventEmitter<ObjectNode | undefined | null | void>();
@@ -46,7 +83,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
 
         // Get the qualified text for each item
         const texts = items
-            .map(item => this.getQualifiedName(item))
+            .map(getQualifiedName)
             .filter((text): text is string => !!text);
 
         if (texts.length === 0) {
@@ -58,22 +95,6 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
 
         // Set as plain text for drag-and-drop
         dataTransfer.set('text/plain', new vscode.DataTransferItem(dragText));
-    }
-
-    private getQualifiedName(item: ObjectTreeItem): string | undefined {
-        switch (item.type) {
-            case 'schema':
-                return item.schemaName ? `"${item.schemaName}"` : undefined;
-            case 'table':
-            case 'view':
-                return item.schemaName && item.tableInfo
-                    ? `"${item.schemaName}"."${item.tableInfo.name}"`
-                    : undefined;
-            case 'column':
-                return item.columnInfo ? `"${item.columnInfo.name}"` : undefined;
-            default:
-                return undefined;
-        }
     }
 
     // We don't support drop operations
@@ -114,43 +135,20 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             // Directly show schemas without the connection node
             try {
                 outputChannel?.appendLine(`📂 Objects view: Fetching schemas for active connection '${activeConnection.name}'`);
-                const [schemas, virtualSchemas] = await Promise.all([
+                const [schemas, folderCounts] = await Promise.all([
                     fetchSchemas(this.connectionManager, activeConnection),
-                    fetchVirtualSchemas(this.connectionManager, activeConnection)
+                    fetchRootFolderCounts(this.connectionManager, activeConnection)
                 ]);
-                outputChannel?.appendLine(`📂 Objects view: Found ${schemas.length} schemas, ${virtualSchemas.length} virtual schemas`);
+                outputChannel?.appendLine(`📂 Objects view: Found ${schemas.length} schemas`);
 
                 const cfg = vscode.workspace.getConfiguration('exasol');
                 const groupingEnabled = cfg.get<boolean>('schemaGrouping.enabled', false);
                 const delimiter = cfg.get<string>('schemaGrouping.delimiter', '_');
 
-                const virtualSchemaNodes: ObjectNode[] = virtualSchemas.map(vs => {
-                    const id = `${activeConnection.id}:${vs.name}:virtual-schema`;
-                    const item = new ObjectTreeItem({
-                        label: vs.name,
-                        id,
-                        collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
-                        type: 'virtual-schema',
-                        connection: activeConnection,
-                        schemaName: vs.name
-                    });
-                    if (vs.adapterName) {
-                        item.description = `via ${vs.adapterName}`;
-                    }
-                    if (vs.lastRefresh || vs.lastRefreshBy) {
-                        const parts: string[] = [];
-                        if (vs.lastRefresh) {
-                            parts.push(`Last refresh: ${vs.lastRefresh}`);
-                        }
-                        if (vs.lastRefreshBy) {
-                            parts.push(`Refreshed by: ${vs.lastRefreshBy}`);
-                        }
-                        item.tooltip = parts.join('\n');
-                    }
-                    return item;
-                });
-
                 const allNodes: ObjectNode[] = [];
+                if (schemas.length === 0) {
+                    allNodes.push(new ObjectMessageItem('No schemas'));
+                }
 
                 if (!groupingEnabled || !delimiter) {
                     const schemaNodes: ObjectNode[] = schemas.map(schema => {
@@ -166,7 +164,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                             viewCount: schema.viewCount
                         });
                     });
-                    allNodes.push(...schemaNodes, ...virtualSchemaNodes);
+                    allNodes.push(...schemaNodes);
                     allNodes.sort((a, b) => {
                         const labelA = (a as ObjectTreeItem).label as string;
                         const labelB = (b as ObjectTreeItem).label as string;
@@ -212,12 +210,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                             groupedSchemas: members
                         }));
 
-                    allNodes.push(...groupNodes, ...virtualSchemaNodes);
-                    allNodes.sort((a, b) => {
-                        const labelA = (a as ObjectTreeItem).label as string;
-                        const labelB = (b as ObjectTreeItem).label as string;
-                        return labelA.localeCompare(labelB);
-                    });
+                    allNodes.push(...groupNodes);
 
                     if (ungrouped.length > 0) {
                         allNodes.push(new ObjectTreeItem({
@@ -229,6 +222,27 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                             groupedSchemas: ungrouped
                         }));
                     }
+                }
+
+                // Hidden only when the count is 0; an unknown count shows the folder.
+                if (folderCounts.virtualSchemas !== 0) {
+                    allNodes.push(new ObjectTreeItem({
+                        label: 'Virtual Schemas',
+                        id: `${activeConnection.id}:virtual-schemas-folder`,
+                        collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                        type: 'virtual-schemas-folder',
+                        connection: activeConnection
+                    }));
+                }
+
+                if (folderCounts.connections !== 0) {
+                    allNodes.push(new ObjectTreeItem({
+                        label: 'Connections',
+                        id: `${activeConnection.id}:db-connections-folder`,
+                        collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                        type: 'db-connections-folder',
+                        connection: activeConnection
+                    }));
                 }
 
                 allNodes.push(new ObjectTreeItem({
@@ -343,6 +357,20 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 }));
             }
 
+            const preprocessorCount = scriptCounts.get('PREPROCESSOR') ?? 0;
+            if (preprocessorCount > 0) {
+                children.push(new ObjectTreeItem({
+                    label: 'Preprocessors',
+                    id: `${connId}:${schema}:preprocessors-folder`,
+                    collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                    type: 'preprocessors-folder',
+                    connection: element.connection,
+                    schemaName: schema,
+                    itemCount: preprocessorCount,
+                    parent: element
+                }));
+            }
+
             if (functionCount > 0) {
                 children.push(new ObjectTreeItem({
                     label: 'Functions',
@@ -423,6 +451,14 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             return this.getScriptFolderChildren(element, 'ADAPTER');
         }
 
+        if (element.type === 'preprocessors-folder') {
+            const preprocessors = await this.getScriptFolderChildren(element, 'PREPROCESSOR');
+            // The parameter is read on the user session, which can be busy
+            // with a query, so the nodes are shown first and marked after.
+            void this.markActivePreprocessor(element.connection!, preprocessors);
+            return preprocessors;
+        }
+
         if (element.type === 'functions-folder') {
             outputChannel?.appendLine(`Objects view: Fetching functions for '${element.schemaName}'`);
             const functions = await fetchFunctions(this.connectionManager, element.connection!, element.schemaName!);
@@ -460,20 +496,16 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             const indices = await fetchIndices(
                 this.connectionManager, element.connection!, element.schemaName!, element.tableInfo!.name
             );
-            return indices.map(idx => {
-                const item = new ObjectTreeItem({
-                    label: idx.name,
-                    id: `${element.connection!.id}:${element.schemaName}:${element.tableInfo!.name}:${idx.name}:index`,
-                    collapsibleState: vscode.TreeItemCollapsibleState.None,
-                    type: 'index',
-                    connection: element.connection,
-                    schemaName: element.schemaName,
-                    tableInfo: element.tableInfo,
-                    parent: element
-                });
-                item.description = idx.columns;
-                return item;
-            });
+            return indices.map(idx => new ObjectTreeItem({
+                label: idx.description,
+                id: `${element.connection!.id}:${element.schemaName}:${element.tableInfo!.name}:${idx.objectId}:index`,
+                collapsibleState: vscode.TreeItemCollapsibleState.None,
+                type: 'index',
+                connection: element.connection,
+                schemaName: element.schemaName,
+                tableInfo: element.tableInfo,
+                parent: element
+            }));
         }
 
         if (element.type === 'constraint') {
@@ -598,7 +630,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     type: 'column',
                     connection: element.connection,
                     schemaName: element.schemaName,
-                    columnInfo: { name: col.name, type: col.type, nullable: false },
+                    columnInfo: col,
                     parent: element
                 });
             });
@@ -626,6 +658,49 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     parent: element
                 })
             ];
+        }
+
+        if (element.type === 'virtual-schemas-folder') {
+            const virtualSchemas = await fetchVirtualSchemas(this.connectionManager, element.connection!);
+            outputChannel?.appendLine(`Objects view: Found ${virtualSchemas.length} virtual schemas`);
+            return virtualSchemas.map(vs => {
+                const item = new ObjectTreeItem({
+                    label: vs.name,
+                    id: `${element.connection!.id}:${vs.name}:virtual-schema`,
+                    collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                    type: 'virtual-schema',
+                    connection: element.connection,
+                    schemaName: vs.name,
+                    parent: element
+                });
+                if (vs.adapterName) {
+                    item.description = `via ${vs.adapterName}`;
+                }
+                if (vs.lastRefresh || vs.lastRefreshBy) {
+                    const parts: string[] = [];
+                    if (vs.lastRefresh) {
+                        parts.push(`Last refresh: ${vs.lastRefresh}`);
+                    }
+                    if (vs.lastRefreshBy) {
+                        parts.push(`Refreshed by: ${vs.lastRefreshBy}`);
+                    }
+                    item.tooltip = parts.join('\n');
+                }
+                return item;
+            });
+        }
+
+        if (element.type === 'db-connections-folder') {
+            const dbConnections = await fetchDbConnections(this.connectionManager, element.connection!);
+            return dbConnections.map(info => new ObjectTreeItem({
+                label: info.name,
+                id: `${element.connection!.id}:${info.name}:db-connection`,
+                collapsibleState: vscode.TreeItemCollapsibleState.None,
+                type: 'db-connection',
+                connection: element.connection,
+                dbConnectionInfo: info,
+                parent: element
+            }));
         }
 
         if (element.type === 'system-schema') {
@@ -658,7 +733,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     type: 'column',
                     connection: element.connection,
                     schemaName: element.schemaName,
-                    columnInfo: { name: col.name, type: col.type, nullable: false },
+                    columnInfo: { name: col.name, type: col.type, nullable: col.nullable },
                     parent: element
                 });
             });
@@ -667,7 +742,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         return [];
     }
 
-    private async getScriptFolderChildren(element: ObjectTreeItem, scriptType: string): Promise<ObjectNode[]> {
+    private async getScriptFolderChildren(element: ObjectTreeItem, scriptType: string): Promise<ObjectTreeItem[]> {
         const outputChannel = getOutputChannel();
         const scripts = await fetchScripts(this.connectionManager, element.connection!, element.schemaName!, scriptType);
         outputChannel?.appendLine(`Objects view: Found ${scripts.length} ${scriptType} scripts`);
@@ -684,6 +759,46 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         }));
     }
 
+    /**
+     * Marks the preprocessor named by SQL_PREPROCESSOR_SCRIPT: "active" when
+     * it is the session value, "system value" when only the system value
+     * names it.
+     */
+    private async markActivePreprocessor(connection: StoredConnection, nodes: ObjectTreeItem[]): Promise<void> {
+        const parameter = await fetchPreprocessorParameter(this.connectionManager, connection);
+        if (!parameter) {
+            return;
+        }
+        for (const node of nodes) {
+            const script = node.scriptInfo;
+            if (!script) {
+                continue;
+            }
+            let marker: string | undefined;
+            if (namesScript(parameter.sessionValue, node.schemaName, script.name)) {
+                marker = 'active';
+            } else if (namesScript(parameter.systemValue, node.schemaName, script.name)) {
+                marker = 'system value';
+            }
+            if (marker) {
+                node.description = `${script.language}, ${marker}`;
+                node.tooltip = `SQL_PREPROCESSOR_SCRIPT\nSession value: ${parameter.sessionValue ?? 'NULL'}\nSystem value: ${parameter.systemValue ?? 'NULL'}`;
+                this.onDidChangeTreeDataEmitter.fire(node);
+            }
+        }
+    }
+
+}
+
+/**
+ * Whether a schema-qualified script name as Exasol returns it, e.g.
+ * `MY_SCHEMA.MY_PP` or `"my_schema"."a.b"`, names this script.
+ */
+function namesScript(value: string | null, schemaName: string | undefined, scriptName: string): boolean {
+    const parts = value?.match(/^("(?:[^"]|"")*"|[^".]+)\.("(?:[^"]|"")*"|[^".]+)$/s);
+    return !!parts
+        && normalizeIdentifier(parts[1]) === schemaName
+        && normalizeIdentifier(parts[2]) === scriptName;
 }
 
 interface SchemaInfo {
@@ -711,6 +826,7 @@ interface ObjectTreeItemOptions {
     functionInfo?: { name: string };
     parent?: ObjectTreeItem | null;
     groupedSchemas?: SchemaInfo[];
+    dbConnectionInfo?: DbConnectionInfo;
 }
 
 export class ObjectTreeItem extends vscode.TreeItem {
@@ -729,6 +845,7 @@ export class ObjectTreeItem extends vscode.TreeItem {
     public readonly functionInfo?: { name: string };
     public readonly parent: ObjectTreeItem | null;
     public readonly groupedSchemas?: SchemaInfo[];
+    public readonly dbConnectionInfo?: DbConnectionInfo;
 
     constructor(options: ObjectTreeItemOptions) {
         super(options.label, options.collapsibleState);
@@ -748,6 +865,7 @@ export class ObjectTreeItem extends vscode.TreeItem {
         this.functionInfo = options.functionInfo;
         this.parent = options.parent ?? null;
         this.groupedSchemas = options.groupedSchemas;
+        this.dbConnectionInfo = options.dbConnectionInfo;
 
         const config = getNodeTypeConfig(options.type, {
             scriptType: this.scriptType,
@@ -761,22 +879,21 @@ export class ObjectTreeItem extends vscode.TreeItem {
         }
 
         switch (options.type) {
-            case 'schema':
-                if (this.tableCount !== undefined || this.viewCount !== undefined) {
-                    const parts: string[] = [];
-                    if (this.tableCount !== undefined && this.tableCount > 0) {
-                        parts.push(`${this.tableCount} ${this.tableCount === 1 ? 'table' : 'tables'}`);
-                    }
-                    if (this.viewCount !== undefined && this.viewCount > 0) {
-                        parts.push(`${this.viewCount} ${this.viewCount === 1 ? 'view' : 'views'}`);
-                    }
-                    if (parts.length > 0) {
-                        this.description = parts.join(', ');
-                    } else if (this.tableCount === 0 && this.viewCount === 0) {
-                        this.description = 'empty';
-                    }
+            case 'schema': {
+                // Counts include only objects the user can see, so a schema
+                // without visible objects gets no description.
+                const parts: string[] = [];
+                if (this.tableCount !== undefined && this.tableCount > 0) {
+                    parts.push(`${this.tableCount} ${this.tableCount === 1 ? 'table' : 'tables'}`);
+                }
+                if (this.viewCount !== undefined && this.viewCount > 0) {
+                    parts.push(`${this.viewCount} ${this.viewCount === 1 ? 'view' : 'views'}`);
+                }
+                if (parts.length > 0) {
+                    this.description = parts.join(', ');
                 }
                 break;
+            }
             case 'tables-folder':
                 if (this.tableCount !== undefined) {
                     this.description = `${this.tableCount}`;
@@ -786,23 +903,11 @@ export class ObjectTreeItem extends vscode.TreeItem {
                 if (this.tableInfo?.rowCount !== undefined) {
                     this.description = `${this.tableInfo.rowCount.toLocaleString()} rows`;
                 }
-                this.command = {
-                    command: 'exasol.openObject',
-                    title: 'Open Table',
-                    arguments: [this]
-                };
                 break;
             case 'views-folder':
                 if (this.viewCount !== undefined) {
                     this.description = `${this.viewCount}`;
                 }
-                break;
-            case 'view':
-                this.command = {
-                    command: 'exasol.openObject',
-                    title: 'Open View',
-                    arguments: [this]
-                };
                 break;
             case 'column':
                 if (this.columnInfo) {
@@ -816,6 +921,7 @@ export class ObjectTreeItem extends vscode.TreeItem {
                 break;
             case 'udfs-folder':
             case 'procedures-folder':
+            case 'preprocessors-folder':
             case 'functions-folder':
                 if (this.itemCount !== undefined) {
                     this.description = `${this.itemCount}`;
@@ -829,22 +935,25 @@ export class ObjectTreeItem extends vscode.TreeItem {
                         this.description = this.scriptInfo.language;
                     }
                 }
-                this.command = {
-                    command: 'exasol.openScriptSource',
-                    title: 'Open Script Source',
-                    arguments: [this]
-                };
-                break;
-            case 'function':
-                this.command = {
-                    command: 'exasol.openFunctionSource',
-                    title: 'Open Function Source',
-                    arguments: [this]
-                };
                 break;
             case 'constraint':
                 if (this.constraintType) {
                     this.description = this.constraintType;
+                }
+                break;
+            case 'db-connection':
+                // EXA_ALL_CONNECTIONS has no address or user columns.
+                if (this.dbConnectionInfo) {
+                    const parts: string[] = [];
+                    if (this.dbConnectionInfo.created) {
+                        parts.push(`Created: ${this.dbConnectionInfo.created}`);
+                    }
+                    if (this.dbConnectionInfo.comment) {
+                        parts.push(`Comment: ${this.dbConnectionInfo.comment}`);
+                    }
+                    if (parts.length > 0) {
+                        this.tooltip = parts.join('\n');
+                    }
                 }
                 break;
         }

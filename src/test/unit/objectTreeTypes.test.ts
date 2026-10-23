@@ -48,6 +48,18 @@ suite('ObjectTreeItemType and getNodeTypeConfig', () => {
     });
 
     suite('new node types', () => {
+        test('virtual-schemas-folder returns cloud icon', () => {
+            const config = getNodeTypeConfig('virtual-schemas-folder');
+            assert.ok(config, 'virtual-schemas-folder should return a config');
+            assert.strictEqual(config.icon, 'cloud');
+            assert.strictEqual(config.contextValue, 'virtual-schemas-folder');
+        });
+
+        test('db-connections-folder returns plug icon, db-connection returns link icon', () => {
+            assert.deepStrictEqual(getNodeTypeConfig('db-connections-folder'), { icon: 'plug', contextValue: 'db-connections-folder' });
+            assert.deepStrictEqual(getNodeTypeConfig('db-connection'), { icon: 'link', contextValue: 'db-connection' });
+        });
+
         test('virtual-schema returns remote icon', () => {
             const config = getNodeTypeConfig('virtual-schema');
             assert.ok(config, 'virtual-schema should return a config');
@@ -94,7 +106,7 @@ suite('ObjectTreeItemType and getNodeTypeConfig', () => {
             const config = getNodeTypeConfig('script', { scriptType: 'UDF' });
             assert.ok(config, 'script (UDF) should return a config');
             assert.strictEqual(config.icon, 'symbol-method');
-            assert.strictEqual(config.contextValue, 'script');
+            assert.strictEqual(config.contextValue, 'script-udf');
         });
 
         test('script with SCRIPTING type returns symbol-event icon', () => {
@@ -108,7 +120,7 @@ suite('ObjectTreeItemType and getNodeTypeConfig', () => {
             const config = getNodeTypeConfig('script', { scriptType: 'ADAPTER' });
             assert.ok(config, 'script (ADAPTER) should return a config');
             assert.strictEqual(config.icon, 'extensions');
-            assert.strictEqual(config.contextValue, 'script');
+            assert.strictEqual(config.contextValue, 'script-adapter');
         });
 
         test('script with no type defaults to symbol-method icon', () => {
@@ -200,7 +212,7 @@ suite('ObjectTreeItemType and getNodeTypeConfig', () => {
         test('all new types are valid ObjectTreeItemType values', () => {
             const allTypes: ObjectTreeItemType[] = [
                 'schema', 'tables-folder', 'table', 'views-folder', 'view', 'column',
-                'virtual-schema', 'virtual-table',
+                'virtual-schemas-folder', 'virtual-schema', 'virtual-table',
                 'udfs-folder', 'procedures-folder', 'adapters-folder', 'functions-folder',
                 'script', 'function',
                 'constraints-folder', 'indices-folder', 'constraint', 'index',

@@ -1,7 +1,8 @@
 import type { SQLQueriesResponse, SQLResponse } from '@exasol/exasol-driver-ts';
 import { ConnectionManager, StoredConnection, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
-import { getRowsFromResult, escapeSqlString, escapeSqlIdentifier, rawQuery, safeFetch, throwSqlError } from '../utils';
+import type { DbConnectionInfo } from './objectTreeTypes';
+import { getRowsFromResult, escapeSqlString, columnsViewFor, rawQuery, safeFetch, throwSqlError } from '../utils';
 
 // ---------------------------------------------------------------------------
 // Helper utilities
@@ -102,6 +103,7 @@ export async function fetchSchemas(
                         GROUP BY VIEW_SCHEMA
                     ) v ON s.SCHEMA_NAME = v.VIEW_SCHEMA
                     WHERE s.SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
+                    AND s.SCHEMA_IS_VIRTUAL = FALSE
                     ORDER BY s.SCHEMA_NAME
                 `);
                 const rows = getRowsFromResult<{
@@ -124,6 +126,7 @@ export async function fetchSchemas(
                     SELECT SCHEMA_NAME
                     FROM SYS.EXA_SCHEMAS
                     WHERE SCHEMA_NAME NOT IN ('SYS', 'EXA_STATISTICS')
+                    AND SCHEMA_IS_VIRTUAL = FALSE
                     ORDER BY SCHEMA_NAME
                 `);
                 const rows = getRowsFromResult<{ SCHEMA_NAME: string }>(result);
@@ -162,6 +165,7 @@ export async function fetchTables(
                             TABLE_ROW_COUNT
                         FROM SYS.EXA_ALL_TABLES
                         WHERE TABLE_SCHEMA = '${escapeSqlString(schemaName)}'
+                        AND TABLE_IS_VIRTUAL = FALSE
                         ORDER BY TABLE_NAME
                     `,
                     map: rows => rows.map(row => ({
@@ -178,6 +182,7 @@ export async function fetchTables(
                         SELECT TABLE_NAME
                         FROM SYS.EXA_ALL_TABLES
                         WHERE TABLE_SCHEMA = '${escapeSqlString(schemaName)}'
+                        AND TABLE_IS_VIRTUAL = FALSE
                         ORDER BY TABLE_NAME
                     `,
                     map: mapTableNames,
@@ -190,14 +195,19 @@ export async function fetchTables(
                     sql: `
                         SELECT OBJECT_NAME AS TABLE_NAME
                         FROM SYS.EXA_ALL_OBJECTS
-                        WHERE OBJECT_SCHEMA = '${escapeSqlString(schemaName)}'
+                        WHERE ROOT_NAME = '${escapeSqlString(schemaName)}'
+                        AND ROOT_TYPE = 'SCHEMA'
                         AND OBJECT_TYPE = 'TABLE'
+                        AND OBJECT_IS_VIRTUAL = FALSE
                         ORDER BY OBJECT_NAME
                     `,
                     map: mapTableNames,
                     isRecoverable: error =>
                         isColumnMissingError(error, 'EXA_ALL_OBJECTS') ||
-                        isColumnMissingError(error, 'OBJECT_TYPE')
+                        isColumnMissingError(error, 'ROOT_NAME') ||
+                        isColumnMissingError(error, 'ROOT_TYPE') ||
+                        isColumnMissingError(error, 'OBJECT_TYPE') ||
+                        isColumnMissingError(error, 'OBJECT_IS_VIRTUAL')
                 },
                 {
                     description: 'tables from EXA_ALL_COLUMNS fallback',
@@ -265,14 +275,14 @@ export async function fetchViews(
                 {
                     description: 'views from EXA_ALL_VIEWS',
                     sql: `
-                        SELECT TABLE_NAME AS VIEW_NAME
+                        SELECT VIEW_NAME
                         FROM SYS.EXA_ALL_VIEWS
                         WHERE VIEW_SCHEMA = '${escapeSqlString(schemaName)}'
-                        ORDER BY TABLE_NAME
+                        ORDER BY VIEW_NAME
                     `,
                     map: mapViewNames,
                     recoverable: error =>
-                        isColumnMissingError(error, 'TABLE_NAME') ||
+                        isColumnMissingError(error, 'VIEW_NAME') ||
                         isColumnMissingError(error, 'VIEW_SCHEMA') ||
                         isRawDataError(error)
                 },
@@ -282,14 +292,16 @@ export async function fetchViews(
                         SELECT
                             OBJECT_NAME AS VIEW_NAME
                         FROM SYS.EXA_ALL_OBJECTS
-                        WHERE OBJECT_SCHEMA = '${escapeSqlString(schemaName)}'
+                        WHERE ROOT_NAME = '${escapeSqlString(schemaName)}'
+                        AND ROOT_TYPE = 'SCHEMA'
                         AND OBJECT_TYPE = 'VIEW'
                         ORDER BY OBJECT_NAME
                     `,
                     map: mapViewNames,
                     recoverable: error =>
                         isColumnMissingError(error, 'OBJECT_NAME') ||
-                        isColumnMissingError(error, 'OBJECT_SCHEMA') ||
+                        isColumnMissingError(error, 'ROOT_NAME') ||
+                        isColumnMissingError(error, 'ROOT_TYPE') ||
                         isColumnMissingError(error, 'OBJECT_TYPE') ||
                         isRawDataError(error)
                 },
@@ -302,8 +314,7 @@ export async function fetchViews(
                         WHERE COLUMN_SCHEMA = '${escapeSqlString(schemaName)}'
                         AND (
                             COLUMN_OBJECT_TYPE IS NULL OR
-                            COLUMN_OBJECT_TYPE = 'VIEW' OR
-                            COLUMN_OBJECT_TYPE = 'VIRTUAL TABLE'
+                            COLUMN_OBJECT_TYPE = 'VIEW'
                         )
                         ORDER BY COLUMN_TABLE
                     `,
@@ -358,7 +369,7 @@ export async function fetchColumns(
                     COLUMN_NAME,
                     COLUMN_TYPE,
                     COLUMN_IS_NULLABLE
-                FROM SYS.EXA_ALL_COLUMNS
+                FROM ${columnsViewFor(schemaName)}
                 WHERE COLUMN_SCHEMA = '${escapeSqlString(schemaName)}'
                 AND COLUMN_TABLE = '${escapeSqlString(tableName)}'
                 ORDER BY COLUMN_ORDINAL_POSITION
@@ -596,30 +607,34 @@ export async function fetchConstraintColumns(
     [], getOutputChannel());
 }
 
+/**
+ * EXA_ALL_INDICES has no index name and no column list; REMARKS describes the
+ * index, e.g. `LOCAL INDEX (NAME)`.
+ */
 export async function fetchIndices(
     connectionManager: ConnectionManager,
     connection: StoredConnection,
     schemaName: string,
     tableName: string
-): Promise<Array<{ name: string; columns: string }>> {
+): Promise<Array<{ objectId: string; description: string }>> {
     return safeFetch(`Failed to fetch indices for '${schemaName}'.'${tableName}'`, () =>
         connectionManager.executeWithRetry(async () => {
             const driver = await connectionManager.getDriver(connection.id, 'background');
             const result = await rawQuery(driver, `
-                SELECT INDEX_NAME, INDEX_TYPE, INDEX_COLUMNS
+                SELECT INDEX_OBJECT_ID, INDEX_TYPE, REMARKS
                 FROM SYS.EXA_ALL_INDICES
                 WHERE INDEX_SCHEMA = '${escapeSqlString(schemaName)}'
                 AND INDEX_TABLE = '${escapeSqlString(tableName)}'
-                ORDER BY INDEX_NAME
+                ORDER BY REMARKS
             `);
             const rows = getRowsFromResult<{
-                INDEX_NAME?: string;
-                INDEX_TYPE?: string;
-                INDEX_COLUMNS?: string;
+                INDEX_OBJECT_ID: number | string;
+                INDEX_TYPE: string;
+                REMARKS: string | null;
             }>(result);
             return rows.map(row => ({
-                name: row.INDEX_NAME ?? row.INDEX_TYPE ?? 'INDEX',
-                columns: row.INDEX_COLUMNS ?? ''
+                objectId: String(row.INDEX_OBJECT_ID),
+                description: row.REMARKS ?? `${row.INDEX_TYPE} INDEX`
             }));
         }, connection.id, { role: 'background' }),
     [], getOutputChannel());
@@ -685,21 +700,27 @@ export async function fetchVirtualColumns(
     connection: StoredConnection,
     virtualSchemaName: string,
     tableName: string
-): Promise<Array<{ name: string; type: string }>> {
+): Promise<Array<{ name: string; type: string; nullable: boolean | null }>> {
     return safeFetch(`Failed to fetch virtual columns for '${virtualSchemaName}'.'${tableName}'`, () =>
         connectionManager.executeWithRetry(async () => {
             const driver = await connectionManager.getDriver(connection.id, 'background');
             const result = await rawQuery(driver, `
-                SELECT COLUMN_NAME, COLUMN_TYPE
-                FROM SYS.EXA_ALL_VIRTUAL_COLUMNS
+                SELECT COLUMN_NAME, COLUMN_TYPE, COLUMN_IS_NULLABLE
+                FROM SYS.EXA_ALL_COLUMNS
                 WHERE COLUMN_SCHEMA = '${escapeSqlString(virtualSchemaName)}'
                 AND COLUMN_TABLE = '${escapeSqlString(tableName)}'
                 ORDER BY COLUMN_ORDINAL_POSITION
             `);
-            const rows = getRowsFromResult<{ COLUMN_NAME: string; COLUMN_TYPE: string }>(result);
+            const rows = getRowsFromResult<{
+                COLUMN_NAME: string;
+                COLUMN_TYPE: string;
+                COLUMN_IS_NULLABLE: boolean | null;
+            }>(result);
+            // COLUMN_IS_NULLABLE can be null; pass it through as fetchColumns does.
             return rows.map(row => ({
                 name: row.COLUMN_NAME,
-                type: row.COLUMN_TYPE
+                type: row.COLUMN_TYPE,
+                nullable: row.COLUMN_IS_NULLABLE
             }));
         }, connection.id, { role: 'background' }),
     [], getOutputChannel());
@@ -727,23 +748,104 @@ export async function fetchSystemTables(
     [], getOutputChannel());
 }
 
+/** Same as fetchColumns, but logs a failure and returns no columns. */
 export async function fetchSystemTableColumns(
     connectionManager: ConnectionManager,
     connection: StoredConnection,
     schemaName: string,
     tableName: string
-): Promise<Array<{ name: string; type: string }>> {
+): Promise<Array<{ name: string; type: string; nullable: boolean | null }>> {
     return safeFetch(`Failed to fetch system table columns for '${schemaName}'.'${tableName}'`, () =>
+        fetchColumns(connectionManager, connection, schemaName, tableName),
+    [], getOutputChannel());
+}
+
+/** Every user sees all connection names here; address and user need EXA_DBA_CONNECTIONS. */
+export async function fetchDbConnections(
+    connectionManager: ConnectionManager,
+    connection: StoredConnection
+): Promise<DbConnectionInfo[]> {
+    return safeFetch('Failed to fetch connections', () =>
         connectionManager.executeWithRetry(async () => {
             const driver = await connectionManager.getDriver(connection.id, 'background');
             const result = await rawQuery(driver, `
-                DESCRIBE "${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(tableName)}"
+                SELECT CONNECTION_NAME, CREATED, CONNECTION_COMMENT
+                FROM SYS.EXA_ALL_CONNECTIONS
+                ORDER BY CONNECTION_NAME
             `);
-            const rows = getRowsFromResult<{ COLUMN_NAME: string; SQL_TYPE?: string }>(result);
+            const rows = getRowsFromResult<{
+                CONNECTION_NAME: string;
+                CREATED: string | null;
+                CONNECTION_COMMENT: string | null;
+            }>(result);
             return rows.map(row => ({
-                name: row.COLUMN_NAME,
-                type: row.SQL_TYPE ?? 'UNKNOWN'
+                name: row.CONNECTION_NAME,
+                created: row.CREATED ?? undefined,
+                comment: row.CONNECTION_COMMENT ?? undefined
             }));
         }, connection.id, { role: 'background' }),
     [], getOutputChannel());
+}
+
+/**
+ * Entry counts for the Virtual Schemas and Connections root folders; a count
+ * is undefined when the query fails or returns no number.
+ */
+export async function fetchRootFolderCounts(
+    connectionManager: ConnectionManager,
+    connection: StoredConnection
+): Promise<{ virtualSchemas?: number; connections?: number }> {
+    return safeFetch<{ virtualSchemas?: number; connections?: number }>('Failed to fetch virtual schema and connection counts', () =>
+        connectionManager.executeWithRetry(async () => {
+            const driver = await connectionManager.getDriver(connection.id, 'background');
+            const result = await rawQuery(driver, `
+                SELECT
+                    (SELECT COUNT(*) FROM SYS.EXA_ALL_VIRTUAL_SCHEMAS) AS VIRTUAL_SCHEMA_COUNT,
+                    (SELECT COUNT(*) FROM SYS.EXA_ALL_CONNECTIONS) AS CONNECTION_COUNT
+            `);
+            const [row] = getRowsFromResult<{ VIRTUAL_SCHEMA_COUNT?: unknown; CONNECTION_COUNT?: unknown }>(result);
+            return {
+                virtualSchemas: parseRowCount(row?.VIRTUAL_SCHEMA_COUNT),
+                connections: parseRowCount(row?.CONNECTION_COUNT)
+            };
+        }, connection.id, { role: 'background' }),
+    {}, getOutputChannel());
+}
+
+/**
+ * SQL_PREPROCESSOR_SCRIPT as Exasol returns it, e.g. `MY_SCHEMA.MY_PP` or
+ * `"my_schema"."my_pp"`. A session parameter is visible only in its own
+ * session, so this reads the user session, where queries run and where
+ * ALTER SESSION changes it. It waits for a running user query to finish
+ * and has no timeout, because a timeout replaces the driver and so ends the
+ * user session. Undefined when the query fails, when no user session is
+ * open yet (the read does not open a session when none is open), or when
+ * the active connection changed while the read waited for the user session.
+ */
+export async function fetchPreprocessorParameter(
+    connectionManager: ConnectionManager,
+    connection: StoredConnection
+): Promise<{ sessionValue: string | null; systemValue: string | null } | undefined> {
+    const userSessionOpen = () => connectionManager.getActiveConnection()?.id === connection.id
+        && connectionManager.hasDriver(connection.id, 'user');
+    // Checked before waiting, so a closed session never queues on the user
+    // session, and again inside, for a connection switch while queued.
+    if (!userSessionOpen()) {
+        return undefined;
+    }
+    return safeFetch('Failed to fetch SQL_PREPROCESSOR_SCRIPT', () =>
+        connectionManager.executeWithRetry(async () => {
+            if (!userSessionOpen()) {
+                return undefined;
+            }
+            const driver = await connectionManager.getDriver(connection.id, 'user');
+            const result = await rawQuery(driver, `
+                SELECT SESSION_VALUE, SYSTEM_VALUE
+                FROM SYS.EXA_PARAMETERS
+                WHERE PARAMETER_NAME = 'SQL_PREPROCESSOR_SCRIPT'
+            `);
+            const [row] = getRowsFromResult<{ SESSION_VALUE: string | null; SYSTEM_VALUE: string | null }>(result);
+            return row ? { sessionValue: row.SESSION_VALUE ?? null, systemValue: row.SYSTEM_VALUE ?? null } : undefined;
+        }, connection.id, { role: 'user' }),
+    undefined, getOutputChannel());
 }

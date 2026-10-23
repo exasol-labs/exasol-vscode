@@ -305,6 +305,11 @@ export class ConnectionManager {
         return this.connections.get(this.activeConnection);
     }
 
+    /** Whether a driver for this role is open, so a caller can use its session without opening one. */
+    hasDriver(connectionId: string, role: DriverRole): boolean {
+        return this.drivers.get(connectionId)?.has(role) ?? false;
+    }
+
     async getDriver(connectionId?: string, role: DriverRole = 'user'): Promise<ExasolDriver> {
         const id = connectionId || this.activeConnection;
 

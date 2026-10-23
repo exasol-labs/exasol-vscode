@@ -4,11 +4,11 @@
  * is actually relevant at that cursor position.
  *
  * The classifier is pure: it never touches vscode/document APIs. Callers pass
- * the comment-stripped statement text and the cursor offset within it.
+ * the statement text and the cursor offset within it.
  */
 
-import { stripCommentsPreservingStrings } from './sql';
-import { findEnclosingSelectRange } from './selectAliases';
+import { findStatementEnds, normalizeIdentifier, stripCommentsPreservingPositions } from './sql';
+import { findEnclosingSelectRange, isDistinctPredicateFrom } from './selectAliases';
 
 export type ContextKind =
     | 'AFTER_DOT'
@@ -19,6 +19,7 @@ export type ContextKind =
     | 'STATEMENT_START'
     | 'UNKNOWN';
 
+/** Names as the database stores them (see normalizeIdentifier). */
 export interface FromTableRef {
     schema?: string;
     table: string;
@@ -34,14 +35,15 @@ export function classifyContext(
     queryText: string,
     cursorOffset: number
 ): CompletionContext {
-    const text = stripCommentsPreservingStrings(queryText);
+    // Comments become spaces, so the cursor offset stays valid.
+    const text = stripCommentsPreservingPositions(queryText);
     const cursor = clamp(cursorOffset, 0, text.length);
 
     if (cursor > 0 && lastNonSpaceChar(text, cursor) === '.') {
         return { kind: 'AFTER_DOT', fromTables: [] };
     }
 
-    const trimmedBefore = text.slice(0, cursor).replace(/\s+$/, '');
+    const trimmedBefore = text.slice(0, cursor).trimEnd();
     if (!trimmedBefore || isStatementStart(text, cursor)) {
         return { kind: 'STATEMENT_START', fromTables: [] };
     }
@@ -168,7 +170,9 @@ function matchClauseKeyword(upper: string, i: number): KeywordMatch | undefined 
         }
     }
     for (const k of ['JOIN', 'SELECT', 'FROM', 'WHERE', 'HAVING', 'QUALIFY']) {
-        if (matchAt(upper, i, k)) { return { kw: k, len: k.length }; }
+        if (matchAt(upper, i, k) && !(k === 'FROM' && isDistinctPredicateFrom(upper, i))) {
+            return { kw: k, len: k.length };
+        }
     }
     for (const k of ['AND', 'OR', 'ON']) {
         if (matchAt(upper, i, k)) { return { kw: k, len: k.length }; }
@@ -208,45 +212,164 @@ function isImmediatelyAfter(_upper: string, original: string, endPos: number, cu
 
 /**
  * Extract FROM/JOIN table references between the FROM keyword and scopeEnd
- * (or before the next clause keyword such as WHERE/GROUP BY). Reuses the same
- * regex shape that completionProvider.parseAliases uses so it picks up the
- * exact set of named FROM/JOIN tables and nothing else.
+ * (or before the next clause keyword such as WHERE/GROUP BY), including the
+ * tables after a comma in the FROM list.
  */
 function extractFromTables(text: string, upper: string, fromIdx: number, scopeEnd: number): FromTableRef[] {
-    const bodyStart = fromIdx + 4;
-    const bodyEnd = findFromBodyEnd(upper, text, bodyStart, scopeEnd);
-    const body = text.slice(bodyStart, bodyEnd);
+    const bodyEnd = findFromBodyEnd(upper, text, fromIdx + 4, scopeEnd);
+    return dedupe(findTableReferences(text.slice(fromIdx, bodyEnd))
+        .map(r => r.schema ? { schema: r.schema, table: r.table } : { table: r.table }));
+}
 
-    const out: FromTableRef[] = [];
-    const ident = '(?:"([^"]+)"|([A-Za-z_]\\w*))';
-    // Anchor on FROM/JOIN to avoid grabbing aliases or ON-clause refs.
-    // We synthesise a leading FROM so the first table in the body matches too.
-    const withFrom = 'FROM ' + body;
-    const re = new RegExp(
-        `\\b(?:from|(?:(?:inner|left|right|full|cross)\\s+)?(?:outer\\s+)?join)\\s+` +
-        `(?:${ident}\\s*\\.\\s*)?${ident}`,
-        'gi'
-    );
-    let m: RegExpExecArray | null;
-    const STOP = new Set(['ON','WHERE','GROUP','ORDER','HAVING','QUALIFY','LIMIT',
-        'UNION','INTERSECT','EXCEPT','JOIN','INNER','LEFT','RIGHT','FULL','CROSS','OUTER','AS']);
-    while ((m = re.exec(withFrom)) !== null) {
-        const schema = m[1] ?? m[2];
-        const table = m[3] ?? m[4];
-        if (!table) { continue; }
-        const tu = table.toUpperCase();
-        if (STOP.has(tu)) { continue; }
-        if (schema && STOP.has(schema.toUpperCase())) { continue; }
-        out.push(schema ? { schema, table } : { table });
+/** A table in a FROM list or after JOIN; names as the database stores them (see normalizeIdentifier). */
+export interface TableReference {
+    schema?: string;
+    table: string;
+    alias?: string;
+}
+
+/**
+ * Reserved words that end a table reference or cannot be a table name, so
+ * unquoted they are neither a table nor an alias. VALUES starts a list of
+ * rows; LOCAL, CSV, FBV, PARQUET, SCRIPT and AT follow the FROM of an IMPORT
+ * inside parentheses.
+ */
+const NON_TABLE_WORDS = new Set(['AS', 'ON', 'USING', 'WHERE', 'FROM', 'JOIN', 'NATURAL', 'INNER', 'LEFT', 'RIGHT',
+    'FULL', 'CROSS', 'OUTER', 'ORDER', 'GROUP', 'HAVING', 'QUALIFY', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT', 'MINUS',
+    'CONNECT', 'START', 'PREFERRING', 'SELECT', 'VALUES', 'LOCAL', 'CSV', 'FBV', 'PARQUET', 'SCRIPT', 'AT']);
+
+const TABLE_IDENT = '("(?:[^"]|"")+"|[A-Za-z_]\\w*)';
+/** `[schema.]table [[AS] alias]` at the start of a table reference. */
+const TABLE_REFERENCE = new RegExp(
+    `\\s*(?:${TABLE_IDENT}\\s*\\.\\s*)?${TABLE_IDENT}(?:\\s+(?:AS\\s+)?${TABLE_IDENT})?`, 'iy');
+
+/**
+ * The tables in the FROM lists and after the JOINs of `text`, in order, such
+ * as `a x` and `b y` in `FROM a x, b y`. Text in strings, quoted identifiers
+ * and comments is not read as SQL, except a quoted identifier as a name. A
+ * FROM starts a FROM list only at the paren depth of a SELECT, or outside
+ * parentheses, as after DELETE: the FROM of `SUBSTRING(x FROM 1)` or
+ * `EXTRACT(YEAR FROM d)` does not, and neither does the FROM of
+ * `IS [NOT] DISTINCT FROM`. A table after `FROM VALUES (...)` is not listed:
+ * its alias names rows, not a table with columns in the database. The FROM of
+ * an IMPORT statement names a file, a database or a script, never a table.
+ */
+export function findTableReferences(text: string): TableReference[] {
+    const masked = stripCommentsPreservingPositions(text);
+    const refs: TableReference[] = [];
+    for (const start of findTableStarts(masked)) {
+        TABLE_REFERENCE.lastIndex = start;
+        const m = TABLE_REFERENCE.exec(masked);
+        if (!m || isNonTableWord(m[1]) || isNonTableWord(m[2])) { continue; }
+        const schema = m[1] && normalizeIdentifier(m[1]);
+        const table = normalizeIdentifier(m[2]);
+        const alias = m[3] && !isNonTableWord(m[3]) ? normalizeIdentifier(m[3]) : undefined;
+        refs.push({ ...(schema ? { schema } : {}), table, ...(alias ? { alias } : {}) });
     }
-    return dedupe(out);
+    return refs;
+}
+
+function isNonTableWord(written: string | undefined): boolean {
+    return written !== undefined && !written.startsWith('"') && NON_TABLE_WORDS.has(written.toUpperCase());
+}
+
+/** Keywords that end a FROM list. */
+const FROM_LIST_END = new Set(['WHERE', 'GROUP', 'ORDER', 'HAVING', 'QUALIFY', 'LIMIT', 'UNION', 'INTERSECT',
+    'EXCEPT', 'MINUS', 'CONNECT', 'START', 'PREFERRING', 'SELECT']);
+
+/**
+ * Offsets in comment-free `text` where a table reference starts: after a FROM
+ * that starts a FROM list, after JOIN, and after each top-level comma of a
+ * FROM list. A FROM list ends at a clause keyword such as WHERE, at the end
+ * of its statement, or at the `)` that closes its parentheses. Statements end
+ * where findStatementEnds ends them, so a `;` in the body of a script or
+ * function definition does not end a statement, and the `import(...)` of a
+ * Lua script or the `import json` of a Python script is not an IMPORT
+ * statement. Strings and quoted identifiers are skipped, but never past the
+ * end of their statement. The FROM of a statement that starts with IMPORT
+ * starts no FROM list; inside parentheses, as in `FROM (IMPORT ...)`, no
+ * SELECT is at the depth of its FROM. An IMPORT statement has no SELECT
+ * outside parentheses, so such a SELECT starts a new statement even after an
+ * IMPORT without `;`.
+ */
+function findTableStarts(text: string): number[] {
+    const len = text.length;
+    const ends = findStatementEnds(text);
+    let nextEnd = 0;
+    // Per paren depth: a SELECT is at this depth (always true outside parentheses).
+    const query: boolean[] = [true];
+    // Per paren depth: the text at this depth is in a FROM list.
+    const inFrom: boolean[] = [false];
+    const starts: number[] = [];
+    // The word right before the current token, or '' after any other token.
+    let previousWord = '';
+    // The first word of the current statement is still to come.
+    let statementStart = true;
+    let importStatement = false;
+    let i = 0;
+    while (i < len) {
+        const statementEnd = nextEnd < ends.length ? ends[nextEnd] : len;
+        if (i === statementEnd) {
+            query.length = 1;
+            inFrom.length = 1;
+            inFrom[0] = false;
+            previousWord = '';
+            statementStart = true;
+            importStatement = false;
+            nextEnd++;
+            i++;
+            continue;
+        }
+        const ch = text[i];
+        const top = inFrom.length - 1;
+        if (/[A-Za-z_]/.test(ch)) {
+            const start = i;
+            while (i < len && /\w/.test(text[i])) { i++; }
+            const word = text.slice(start, i).toUpperCase();
+            if (statementStart) {
+                importStatement = word === 'IMPORT';
+                statementStart = false;
+            }
+            if (word === 'SELECT' && top === 0) { importStatement = false; }
+            if (word === 'FROM') {
+                if (query[top] && previousWord !== 'DISTINCT' && !(top === 0 && importStatement)) {
+                    inFrom[top] = true;
+                    starts.push(i);
+                }
+            } else if (word === 'JOIN') {
+                starts.push(i);
+            } else if (FROM_LIST_END.has(word)) {
+                inFrom[top] = false;
+                if (word === 'SELECT') { query[top] = true; }
+            }
+            previousWord = word;
+            continue;
+        }
+        if (ch === "'") {
+            i = skipSingleQuoted(text, i, statementEnd);
+        } else if (ch === '"') {
+            i = skipDoubleQuoted(text, i, statementEnd);
+        } else {
+            if (ch === '(') {
+                query.push(false);
+                inFrom.push(false);
+            } else if (ch === ')') {
+                if (inFrom.length > 1) { query.pop(); inFrom.pop(); }
+            } else if (ch === ',' && inFrom[top]) {
+                starts.push(i + 1);
+            }
+            i++;
+        }
+        if (!/\s/.test(ch)) { previousWord = ''; }
+    }
+    return starts;
 }
 
 function dedupe(refs: FromTableRef[]): FromTableRef[] {
     const seen = new Set<string>();
     const out: FromTableRef[] = [];
     for (const r of refs) {
-        const k = `${(r.schema ?? '').toUpperCase()}.${r.table.toUpperCase()}`;
+        const k = JSON.stringify([r.schema, r.table]);
         if (seen.has(k)) { continue; }
         seen.add(k);
         out.push(r);

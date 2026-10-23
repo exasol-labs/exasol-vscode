@@ -3,6 +3,7 @@ import { ConnectionManager } from '../connectionManager';
 import { QueryExecutor, QueryResult } from '../queryExecutor';
 import { getOutputChannel } from '../extension';
 import { formatError } from '../connectionTypes';
+import { stripFinalSlashLine } from '../utils';
 
 export class ExasolNotebookController {
     private readonly controller: vscode.NotebookController;
@@ -44,7 +45,8 @@ export class ExasolNotebookController {
         execution.executionOrder = ++this.executionOrder;
         execution.start(Date.now());
 
-        const sql = cell.document.getText().trim();
+        // The cell is sent as one statement, so a closing `/` line must not reach the database.
+        const sql = stripFinalSlashLine(cell.document.getText().trim());
         if (!sql) {
             execution.replaceOutput([
                 new vscode.NotebookCellOutput([

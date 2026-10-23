@@ -307,6 +307,33 @@ SELECT * FROM table12;`;
         assert.ok(statements[1].includes('table12'));
     });
 
+    test('a statement after a semicolon on the same line keeps its own continuation lines', () => {
+        assert.deepStrictEqual(splitIntoStatements('SELECT 1; SELECT 2\n, 3;'), ['SELECT 1;', 'SELECT 2\n, 3;']);
+    });
+
+    test('a trailing line comment stays with its statement', () => {
+        assert.deepStrictEqual(
+            splitIntoStatements('SELECT 1; -- one; note\nSELECT 2;   \nSELECT 3;'),
+            ['SELECT 1; -- one; note', 'SELECT 2;', 'SELECT 3;']
+        );
+    });
+
+    test('a trailing block comment stays with its statement', () => {
+        assert.deepStrictEqual(splitIntoStatements('SELECT 1; /* c */'), ['SELECT 1; /* c */']);
+        assert.deepStrictEqual(splitIntoStatements('SELECT 1; /* c */ -- d'), ['SELECT 1; /* c */ -- d']);
+    });
+
+    test('a statement after a block comment on the same line is separate', () => {
+        assert.deepStrictEqual(splitIntoStatements('SELECT 1; /* c */ SELECT 2;'), ['SELECT 1;', '/* c */ SELECT 2;']);
+    });
+
+    test('a block comment that continues on the next line is not trailing', () => {
+        assert.deepStrictEqual(
+            splitIntoStatements('SELECT 1; /* c\nd */ SELECT 2;'),
+            ['SELECT 1;', '/* c\nd */ SELECT 2;']
+        );
+    });
+
     test('two statements on one line produce two separate statements', () => {
         const text = `SELECT * FROM table12; SELECT * FROM table13;`;
 

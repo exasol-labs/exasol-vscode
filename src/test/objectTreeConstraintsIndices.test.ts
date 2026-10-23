@@ -94,15 +94,15 @@ suite('ObjectTreeProvider Constraints & Indices', () => {
     });
 
     suite('fetchIndices', () => {
-        test('returns index nodes with name and column list', async () => {
+        test('returns the object id and REMARKS of each index', async () => {
             const driver = {
                 async query(sql: string) {
                     if (sql.includes('EXA_ALL_INDICES')) {
                         return createRawResult(
-                            ['INDEX_NAME', 'INDEX_TYPE', 'INDEX_COLUMNS'],
+                            ['INDEX_OBJECT_ID', 'INDEX_TYPE', 'REMARKS'],
                             [
-                                ['IDX_EMAIL', 'LOCAL', 'EMAIL'],
-                                ['IDX_NAME_DOB', 'LOCAL', 'LAST_NAME, DATE_OF_BIRTH']
+                                [773796864, 'GLOBAL', 'GLOBAL INDEX (ID)'],
+                                [773803008, 'LOCAL', 'LOCAL INDEX (NAME)']
                             ]
                         );
                     }
@@ -114,11 +114,10 @@ suite('ObjectTreeProvider Constraints & Indices', () => {
 
             const indices = await fetchIndices(asConnectionManager(manager), connection, 'TEST_SCHEMA', 'USERS');
 
-            assert.strictEqual(indices.length, 2);
-            assert.strictEqual(indices[0].name, 'IDX_EMAIL');
-            assert.strictEqual(indices[0].columns, 'EMAIL');
-            assert.strictEqual(indices[1].name, 'IDX_NAME_DOB');
-            assert.strictEqual(indices[1].columns, 'LAST_NAME, DATE_OF_BIRTH');
+            assert.deepStrictEqual(indices, [
+                { objectId: '773796864', description: 'GLOBAL INDEX (ID)' },
+                { objectId: '773803008', description: 'LOCAL INDEX (NAME)' }
+            ]);
         });
 
         test('returns empty array on query error', async () => {

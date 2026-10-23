@@ -17,8 +17,8 @@ suite('ObjectTreeProvider Metadata Fallback', () => {
                 } else if (sql.includes('EXA_ALL_OBJECTS')) {
                     throw new Error('object EXA_ALL_OBJECTS not found');
                 } else if (sql.includes('EXA_ALL_COLUMNS')) {
-                    // Succeed on EXA_ALL_COLUMNS fallback
-                    return createRawResult('COLUMN_TABLE', ['FALLBACK_TABLE']);
+                    // Succeed on EXA_ALL_COLUMNS fallback (the query aliases COLUMN_TABLE AS TABLE_NAME)
+                    return createRawResult('TABLE_NAME', ['FALLBACK_TABLE']);
                 }
                 throw new Error('Unexpected query');
             }
@@ -40,5 +40,12 @@ suite('ObjectTreeProvider Metadata Fallback', () => {
         assert.strictEqual(tables.length, 1, 'Should return one table from fallback query');
         assert.strictEqual(tables[0].name, 'FALLBACK_TABLE', 'Should use fallback table name');
         assert.strictEqual(queries.length, 4, 'Should attempt 4 queries before succeeding');
+        const tableQueries = queries.filter(sql => sql.includes('EXA_ALL_TABLES'));
+        assert.strictEqual(tableQueries.length, 2);
+        assert.ok(tableQueries.every(sql => sql.includes('TABLE_IS_VIRTUAL = FALSE')), 'EXA_ALL_TABLES queries must exclude virtual tables');
+        const objectQuery = queries.find(sql => sql.includes('EXA_ALL_OBJECTS'));
+        assert.ok(objectQuery?.includes('OBJECT_IS_VIRTUAL = FALSE'), 'EXA_ALL_OBJECTS fallback must exclude virtual tables');
+        assert.ok(objectQuery?.includes('ROOT_NAME ='), 'EXA_ALL_OBJECTS fallback must filter on ROOT_NAME');
+        assert.ok(!objectQuery?.includes('OBJECT_SCHEMA'), 'EXA_ALL_OBJECTS has no OBJECT_SCHEMA column');
     });
 });

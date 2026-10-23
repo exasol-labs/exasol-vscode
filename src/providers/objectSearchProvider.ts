@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, BACKGROUND_QUERY_TIMEOUT_MS } from '../connectionManager';
 import { getOutputChannel } from '../extension';
+import { formatError } from '../connectionTypes';
 import { getRowsFromResult, rawQuery } from '../utils';
 import { ObjectTreeProvider, ObjectTreeItem, ObjectNode } from './objectTreeProvider';
 import { getNodeTypeConfig, ObjectTreeItemType } from './objectTreeTypes';
@@ -9,7 +10,19 @@ interface SearchableObject {
     schema: string;
     name: string;
     type: ObjectTreeItemType;
+    /** The table, view or virtual table of a column. */
+    table?: string;
+    /** EXA_ALL_SCRIPTS.SCRIPT_TYPE of a script, which decides its folder. */
+    scriptType?: string;
 }
+
+/** The schema folder for each SCRIPT_TYPE the tree lists. */
+const SCRIPT_FOLDERS: Partial<Record<string, ObjectTreeItemType>> = {
+    UDF: 'udfs-folder',
+    SCRIPTING: 'procedures-folder',
+    ADAPTER: 'adapters-folder',
+    PREPROCESSOR: 'preprocessors-folder'
+};
 
 type ObjectTreeView = vscode.TreeView<ObjectNode>;
 
@@ -77,6 +90,7 @@ export class ObjectSearchProvider {
                 SELECT TABLE_SCHEMA, TABLE_NAME, 'table' AS OBJECT_TYPE
                 FROM SYS.EXA_ALL_TABLES
                 WHERE TABLE_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
+                AND TABLE_IS_VIRTUAL = FALSE
                 UNION ALL
                 SELECT VIEW_SCHEMA, VIEW_NAME, 'view'
                 FROM SYS.EXA_ALL_VIEWS
@@ -93,20 +107,21 @@ export class ObjectSearchProvider {
 
             try {
                 const scriptsResult = await rawQuery(driver, `
-                    SELECT SCRIPT_SCHEMA, SCRIPT_NAME
+                    SELECT SCRIPT_SCHEMA, SCRIPT_NAME, SCRIPT_TYPE
                     FROM SYS.EXA_ALL_SCRIPTS
                     WHERE SCRIPT_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
                     ORDER BY SCRIPT_SCHEMA, SCRIPT_NAME
                 `);
-                for (const row of getRowsFromResult<{ SCRIPT_SCHEMA: string; SCRIPT_NAME: string }>(scriptsResult)) {
+                for (const row of getRowsFromResult<{ SCRIPT_SCHEMA: string; SCRIPT_NAME: string; SCRIPT_TYPE: string }>(scriptsResult)) {
                     objects.push({
                         schema: row.SCRIPT_SCHEMA,
                         name: row.SCRIPT_NAME,
-                        type: 'script'
+                        type: 'script',
+                        scriptType: row.SCRIPT_TYPE
                     });
                 }
-            } catch {
-                getOutputChannel()?.appendLine('Object search: Failed to fetch scripts');
+            } catch (error) {
+                getOutputChannel()?.appendLine(`Object search: Failed to fetch scripts: ${formatError(error)}`);
             }
 
             try {
@@ -123,8 +138,8 @@ export class ObjectSearchProvider {
                         type: 'function'
                     });
                 }
-            } catch {
-                getOutputChannel()?.appendLine('Object search: Failed to fetch functions');
+            } catch (error) {
+                getOutputChannel()?.appendLine(`Object search: Failed to fetch functions: ${formatError(error)}`);
             }
 
             try {
@@ -140,8 +155,8 @@ export class ObjectSearchProvider {
                         type: 'virtual-table'
                     });
                 }
-            } catch {
-                getOutputChannel()?.appendLine('Object search: Failed to fetch virtual tables');
+            } catch (error) {
+                getOutputChannel()?.appendLine(`Object search: Failed to fetch virtual tables: ${formatError(error)}`);
             }
 
             try {
@@ -158,8 +173,8 @@ export class ObjectSearchProvider {
                         type: 'system-table'
                     });
                 }
-            } catch {
-                getOutputChannel()?.appendLine('Object search: Failed to fetch system tables');
+            } catch (error) {
+                getOutputChannel()?.appendLine(`Object search: Failed to fetch system tables: ${formatError(error)}`);
             }
 
             const searchIncludesColumns = vscode.workspace
@@ -174,15 +189,16 @@ export class ObjectSearchProvider {
                         WHERE COLUMN_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
                         ORDER BY COLUMN_SCHEMA, COLUMN_TABLE, COLUMN_ORDINAL_POSITION
                     `);
-                    for (const row of getRowsFromResult<{ COLUMN_SCHEMA: string; COLUMN_NAME: string }>(columnsResult)) {
+                    for (const row of getRowsFromResult<{ COLUMN_SCHEMA: string; COLUMN_TABLE: string; COLUMN_NAME: string }>(columnsResult)) {
                         objects.push({
                             schema: row.COLUMN_SCHEMA,
                             name: row.COLUMN_NAME,
-                            type: 'column'
+                            type: 'column',
+                            table: row.COLUMN_TABLE
                         });
                     }
-                } catch {
-                    getOutputChannel()?.appendLine('Object search: Failed to fetch columns');
+                } catch (error) {
+                    getOutputChannel()?.appendLine(`Object search: Failed to fetch columns: ${formatError(error)}`);
                 }
             }
 
@@ -201,7 +217,7 @@ export class ObjectSearchProvider {
 
         const item: vscode.QuickPickItem = {
             label: `$(${iconId}) ${obj.name}`,
-            description: obj.schema,
+            description: obj.table ? `${obj.schema}.${obj.table}` : obj.schema,
             detail: typeLabel
         };
         this.itemDataMap.set(item, obj);
@@ -242,7 +258,7 @@ export class ObjectSearchProvider {
         }
 
         try {
-            const targetNode = await this.findTreeNode(obj.name, obj.schema, obj.type);
+            const targetNode = await this.findTreeNode(obj);
             if (targetNode) {
                 outputChannel?.appendLine(
                     `Object search: found target node id=${targetNode.id}, calling treeView.reveal`
@@ -263,11 +279,8 @@ export class ObjectSearchProvider {
         }
     }
 
-    private async findTreeNode(
-        objectName: string,
-        schemaName: string,
-        treeType: ObjectTreeItemType
-    ): Promise<ObjectTreeItem | undefined> {
+    private async findTreeNode(obj: SearchableObject): Promise<ObjectTreeItem | undefined> {
+        const { name: objectName, schema: schemaName, type: treeType } = obj;
         const outputChannel = getOutputChannel();
         const rootNodes = await this.objectTreeProvider.getChildren();
         outputChannel?.appendLine(
@@ -305,9 +318,23 @@ export class ObjectSearchProvider {
             );
         }
 
-        const folderType = this.getFolderType(treeType);
+        if (treeType === 'column') {
+            const tableNode = obj.table ? await this.findColumnTable(schemaNode, obj.table) : undefined;
+            if (!tableNode) {
+                outputChannel?.appendLine(
+                    `Object search: table ${obj.table} of column ${objectName} not found under schema ${schemaName}`
+                );
+                return undefined;
+            }
+            const columns = await this.objectTreeProvider.getChildren(tableNode);
+            return columns.find(
+                col => col instanceof ObjectTreeItem && col.type === 'column' && col.columnInfo?.name === objectName
+            ) as ObjectTreeItem | undefined;
+        }
+
+        const folderType = this.getFolderType(obj);
         if (!folderType) {
-            outputChannel?.appendLine(`Object search: no folder type for ${treeType}`);
+            outputChannel?.appendLine(`Object search: no folder type for ${treeType}${obj.scriptType ? ` (${obj.scriptType})` : ''}`);
             return undefined;
         }
 
@@ -320,10 +347,6 @@ export class ObjectSearchProvider {
             return undefined;
         }
         outputChannel?.appendLine(`Object search: folder ${folderType} found id=${folderNode.id}`);
-
-        if (treeType === 'column') {
-            return this.findColumnInFolder(folderNode, objectName);
-        }
 
         const leaf = this.findChildByNameAndType(
             await this.objectTreeProvider.getChildren(folderNode),
@@ -343,26 +366,18 @@ export class ObjectSearchProvider {
     ): Promise<ObjectTreeItem | undefined> {
         const outputChannel = getOutputChannel();
 
-        if (treeType === 'system-table') {
-            const systemSchemasFolder = rootNodes.find(
-                node => node instanceof ObjectTreeItem && node.type === 'system-schemas-folder'
-            ) as ObjectTreeItem | undefined;
-
-            if (!systemSchemasFolder) {
-                return undefined;
-            }
-
-            const systemSchemas = await this.objectTreeProvider.getChildren(systemSchemasFolder);
-            return systemSchemas.find(
-                node => node instanceof ObjectTreeItem &&
-                    node.type === 'system-schema' &&
-                    node.schemaName === schemaName
-            ) as ObjectTreeItem | undefined;
+        const special: { folder: ObjectTreeItemType; schema: ObjectTreeItemType } | undefined = treeType === 'system-table'
+            ? { folder: 'system-schemas-folder', schema: 'system-schema' }
+            : treeType === 'virtual-table'
+                ? { folder: 'virtual-schemas-folder', schema: 'virtual-schema' }
+                : undefined;
+        if (special) {
+            return this.findSchemaInFolder(rootNodes, special.folder, special.schema, schemaName);
         }
 
         const direct = rootNodes.find(
             node => node instanceof ObjectTreeItem &&
-                (node.type === 'schema' || node.type === 'virtual-schema') &&
+                node.type === 'schema' &&
                 node.schemaName === schemaName
         ) as ObjectTreeItem | undefined;
         if (direct) {
@@ -383,7 +398,7 @@ export class ObjectSearchProvider {
                 const groupChildren = await this.objectTreeProvider.getChildren(group);
                 const match = groupChildren.find(
                     node => node instanceof ObjectTreeItem &&
-                        (node.type === 'schema' || node.type === 'virtual-schema') &&
+                        node.type === 'schema' &&
                         node.schemaName === schemaName
                 ) as ObjectTreeItem | undefined;
                 if (match) {
@@ -395,16 +410,39 @@ export class ObjectSearchProvider {
             }
         }
 
+        // A column of a virtual table: virtual schemas are listed only in the Virtual Schemas folder.
+        if (treeType === 'column') {
+            return this.findSchemaInFolder(rootNodes, 'virtual-schemas-folder', 'virtual-schema', schemaName);
+        }
+
         return undefined;
     }
 
-    private getFolderType(objectType: ObjectTreeItemType): ObjectTreeItemType | undefined {
-        switch (objectType) {
+    private async findSchemaInFolder(
+        rootNodes: Array<ObjectTreeItem | { label?: string | vscode.TreeItemLabel }>,
+        folderType: ObjectTreeItemType,
+        schemaType: ObjectTreeItemType,
+        schemaName: string
+    ): Promise<ObjectTreeItem | undefined> {
+        const folder = this.findChildByType(rootNodes, folderType);
+        if (!folder) {
+            return undefined;
+        }
+
+        const schemas = await this.objectTreeProvider.getChildren(folder);
+        return schemas.find(
+            node => node instanceof ObjectTreeItem &&
+                node.type === schemaType &&
+                node.schemaName === schemaName
+        ) as ObjectTreeItem | undefined;
+    }
+
+    private getFolderType(obj: SearchableObject): ObjectTreeItemType | undefined {
+        switch (obj.type) {
             case 'table': return 'tables-folder';
             case 'view': return 'views-folder';
-            case 'script': return 'udfs-folder';
+            case 'script': return obj.scriptType ? SCRIPT_FOLDERS[obj.scriptType] : undefined;
             case 'function': return 'functions-folder';
-            case 'column': return 'tables-folder';
             default: return undefined;
         }
     }
@@ -432,24 +470,30 @@ export class ObjectSearchProvider {
         }) as ObjectTreeItem | undefined;
     }
 
-    private async findColumnInFolder(
-        folderNode: ObjectTreeItem,
-        columnName: string
+    /** Finds the table, view or virtual table that holds a column. */
+    private async findColumnTable(
+        schemaNode: ObjectTreeItem,
+        tableName: string
     ): Promise<ObjectTreeItem | undefined> {
-        const tables = await this.objectTreeProvider.getChildren(folderNode);
-        for (const table of tables) {
-            if (!(table instanceof ObjectTreeItem)) {
+        const schemaChildren = await this.objectTreeProvider.getChildren(schemaNode);
+        // Virtual tables are direct children of their virtual schema.
+        if (schemaNode.type === 'virtual-schema') {
+            return this.findChildByNameAndType(schemaChildren, tableName, 'virtual-table');
+        }
+
+        const containers = [['tables-folder', 'table'], ['views-folder', 'view']] as const;
+        for (const [folderType, tableType] of containers) {
+            const folder = this.findChildByType(schemaChildren, folderType);
+            if (!folder) {
                 continue;
             }
-            const columns = await this.objectTreeProvider.getChildren(table);
-            const match = columns.find(col => {
-                if (!(col instanceof ObjectTreeItem) || col.type !== 'column') {
-                    return false;
-                }
-                return col.columnInfo?.name === columnName;
-            });
-            if (match) {
-                return match as ObjectTreeItem;
+            const table = this.findChildByNameAndType(
+                await this.objectTreeProvider.getChildren(folder),
+                tableName,
+                tableType
+            );
+            if (table) {
+                return table;
             }
         }
         return undefined;

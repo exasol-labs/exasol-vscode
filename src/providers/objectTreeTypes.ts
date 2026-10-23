@@ -5,11 +5,13 @@ export type ObjectTreeItemType =
     | 'views-folder'
     | 'view'
     | 'column'
+    | 'virtual-schemas-folder'
     | 'virtual-schema'
     | 'virtual-table'
     | 'udfs-folder'
     | 'procedures-folder'
     | 'adapters-folder'
+    | 'preprocessors-folder'
     | 'functions-folder'
     | 'script'
     | 'function'
@@ -20,7 +22,16 @@ export type ObjectTreeItemType =
     | 'system-schemas-folder'
     | 'system-schema'
     | 'system-table'
-    | 'schema-group';
+    | 'schema-group'
+    | 'db-connections-folder'
+    | 'db-connection';
+
+/** A database CONNECTION object as listed in EXA_ALL_CONNECTIONS. */
+export interface DbConnectionInfo {
+    name: string;
+    created?: string;
+    comment?: string;
+}
 
 export interface NodeTypeConfig {
     icon: string;
@@ -44,6 +55,8 @@ export function getNodeTypeConfig(
             return { icon: 'eye', contextValue: 'view' };
         case 'column':
             return { icon: '', contextValue: 'column' };
+        case 'virtual-schemas-folder':
+            return { icon: 'cloud', contextValue: 'virtual-schemas-folder' };
         case 'virtual-schema':
             return { icon: 'remote', contextValue: 'virtual-schema' };
         case 'virtual-table':
@@ -54,10 +67,12 @@ export function getNodeTypeConfig(
             return { icon: 'folder', contextValue: 'procedures-folder' };
         case 'adapters-folder':
             return { icon: 'folder', contextValue: 'adapters-folder' };
+        case 'preprocessors-folder':
+            return { icon: 'folder', contextValue: 'preprocessors-folder' };
         case 'functions-folder':
             return { icon: 'folder', contextValue: 'functions-folder' };
         case 'script':
-            return { icon: getScriptIcon(metadata?.scriptType), contextValue: 'script' };
+            return { icon: getScriptIcon(metadata?.scriptType), contextValue: getScriptContextValue(metadata?.scriptType) };
         case 'function':
             return { icon: 'symbol-function', contextValue: 'function' };
         case 'constraints-folder':
@@ -76,6 +91,10 @@ export function getNodeTypeConfig(
             return { icon: 'database', contextValue: 'system-schema' };
         case 'system-table':
             return { icon: 'table', contextValue: 'system-table' };
+        case 'db-connections-folder':
+            return { icon: 'plug', contextValue: 'db-connections-folder' };
+        case 'db-connection':
+            return { icon: 'link', contextValue: 'db-connection' };
         default:
             return undefined;
     }
@@ -87,8 +106,24 @@ function getScriptIcon(scriptType?: string): string {
             return 'symbol-event';
         case 'ADAPTER':
             return 'extensions';
+        case 'PREPROCESSOR':
+            return 'filter';
         default:
             return 'symbol-method';
+    }
+}
+
+/** UDF, adapter and preprocessor scripts get their own context menus; other scripts keep 'script'. */
+function getScriptContextValue(scriptType?: string): string {
+    switch (scriptType) {
+        case 'UDF':
+            return 'script-udf';
+        case 'ADAPTER':
+            return 'script-adapter';
+        case 'PREPROCESSOR':
+            return 'script-preprocessor';
+        default:
+            return 'script';
     }
 }
 

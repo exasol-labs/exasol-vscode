@@ -44,7 +44,9 @@ export const vscodeMock = {
             return { get: () => undefined };
         }
     },
-    DataTransferItem: class {},
+    DataTransferItem: class {
+        constructor(readonly value?: unknown) {}
+    },
     DataTransfer: class {},
     Uri: { parse: (s: string) => s },
 };

@@ -1,12 +1,12 @@
 import * as assert from 'assert';
 import type { ConnectionManager } from '../../connectionManager';
-import type { ObjectNode } from '../../providers/objectTreeProvider';
+import type { ObjectNode, ObjectTreeItem } from '../../providers/objectTreeProvider';
 import { registerVscodeMock, registerExtensionMock } from '../helpers/vscodeMock';
 
 registerVscodeMock();
 registerExtensionMock();
 
-const { ObjectTreeProvider } = require('../../providers/objectTreeProvider') as typeof import('../../providers/objectTreeProvider');
+const { ObjectTreeProvider, getQualifiedName } = require('../../providers/objectTreeProvider') as typeof import('../../providers/objectTreeProvider');
 
 import { createRawResult, createEmptyRawResult } from '../helpers/mockConnectionManager';
 import { MockConnectionManager } from '../helpers/mockConnectionManager';
@@ -19,7 +19,7 @@ function getLabelText(item: ObjectNode | undefined): string {
 suite('ObjectTreeProvider, System Schemas', () => {
 
     suite('System Schemas folder at root level', () => {
-        test('appears after user and virtual schemas', async () => {
+        test('appears last, after the user schemas and the other folders', async () => {
             const mockDriver = {
                 query: async (sql: string) => {
                     if (sql.includes('EXA_SCHEMAS')) {
@@ -139,13 +139,15 @@ suite('ObjectTreeProvider, System Schemas', () => {
                             [['EXA_ALL_COLUMNS']]
                         );
                     }
-                    if (sql.includes('DESCRIBE')) {
+                    // DESCRIBE needs read access to the table; EXA_SYS_COLUMNS
+                    // lists the columns of every system table for every user.
+                    if (sql.includes('FROM SYS.EXA_SYS_COLUMNS') && sql.includes("COLUMN_TABLE = 'EXA_ALL_COLUMNS'")) {
                         return createRawResult(
-                            ['COLUMN_NAME', 'SQL_TYPE'],
+                            ['COLUMN_NAME', 'COLUMN_TYPE', 'COLUMN_IS_NULLABLE'],
                             [
-                                ['COLUMN_SCHEMA', 'VARCHAR(128) UTF8'],
-                                ['COLUMN_TABLE', 'VARCHAR(128) UTF8'],
-                                ['COLUMN_NAME', 'VARCHAR(128) UTF8']
+                                ['COLUMN_SCHEMA', 'VARCHAR(128) UTF8', null],
+                                ['COLUMN_TABLE', 'VARCHAR(128) UTF8', true],
+                                ['COLUMN_NAME', 'VARCHAR(128) UTF8', true]
                             ]
                         );
                     }
@@ -174,6 +176,17 @@ suite('ObjectTreeProvider, System Schemas', () => {
                 firstLabel.includes('COLUMN_SCHEMA'),
                 `First column label should contain COLUMN_SCHEMA, got: ${firstLabel}`
             );
+            // COLUMN_IS_NULLABLE passes through as reported, null included.
+            assert.deepStrictEqual(
+                columns.map(c => (c as ObjectTreeItem).columnInfo?.nullable),
+                [null, true, true]
+            );
+
+            // System tables copy or drag as quoted qualified names.
+            const systemTable = table as ObjectTreeItem;
+            assert.strictEqual(systemTable.contextValue, 'system-table');
+            assert.strictEqual(getQualifiedName(systemTable), '"SYS"."EXA_ALL_COLUMNS"');
+            assert.strictEqual(getQualifiedName(sysNode as ObjectTreeItem), '"SYS"');
         });
     });
 
@@ -227,7 +240,7 @@ suite('ObjectTreeProvider, System Schemas', () => {
                     if (sql.includes('EXA_SYSCAT') && sql.includes("'SYS'")) {
                         return createRawResult(['OBJECT_NAME'], [['EXA_ALL_COLUMNS']]);
                     }
-                    if (sql.includes('DESCRIBE')) {
+                    if (sql.includes('EXA_SYS_COLUMNS')) {
                         throw new Error('insufficient privileges');
                     }
                     return createEmptyRawResult(['DUMMY']);

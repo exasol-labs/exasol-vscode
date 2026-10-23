@@ -595,37 +595,5 @@ suite('ObjectTreeProvider Scripts & Functions', () => {
 
             assert.strictEqual(scriptNode.description, 'LUA');
         });
-
-        test('script node has click command to open source', async () => {
-            const driver = {
-                async query(sql: string) {
-                    if (sql.includes('EXA_ALL_SCRIPTS') && sql.includes("'UDF'")) {
-                        return createRawResult(
-                            ['SCRIPT_NAME', 'SCRIPT_LANGUAGE', 'SCRIPT_INPUT_TYPE', 'SCRIPT_TYPE'],
-                            [['MY_UDF', 'PYTHON3', 'SET', 'UDF']]
-                        );
-                    }
-                    throw new Error('Unexpected query');
-                }
-            };
-
-            const manager = new MockConnectionManager(driver);
-            const provider = new ObjectTreeProvider(asConnectionManager(manager));
-
-            const udfsFolderElement = new ObjectTreeItem({
-                type: 'udfs-folder',
-                connection,
-                schemaName: 'MY_SCHEMA',
-                label: 'UDFs',
-                id: 'conn-1:MY_SCHEMA:udfs-folder',
-                collapsibleState: vscode.TreeItemCollapsibleState.Collapsed
-            });
-
-            const children = await provider.getChildren(udfsFolderElement);
-            const scriptNode = children[0] as ObjectTreeItem;
-
-            assert.ok(scriptNode.command, 'Script node should have a command');
-            assert.strictEqual(scriptNode.command!.command, 'exasol.openScriptSource');
-        });
     });
 });

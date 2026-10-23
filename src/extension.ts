@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ConnectionManager, StoredConnection } from './connectionManager';
 import { ConnectionTreeProvider } from './providers/connectionTreeProvider';
-import { ObjectTreeProvider } from './providers/objectTreeProvider';
+import { ObjectTreeProvider, getQualifiedName } from './providers/objectTreeProvider';
 import type { ObjectTreeItem } from './providers/objectTreeProvider';
 import { QueryHistoryProvider } from './providers/queryHistoryProvider';
 import { ExasolCompletionProvider } from './providers/completionProvider';
@@ -11,7 +11,7 @@ import { QueryExecutor } from './queryExecutor';
 import { ResultsPanel } from './panels/resultsPanel';
 import { ConnectionPanel } from './panels/connectionPanel';
 import { SessionManager } from './sessionManager';
-import { ObjectActions } from './objectActions';
+import { ObjectActions, refreshVirtualSchemaAndReload } from './objectActions';
 import { ObjectSearchProvider } from './providers/objectSearchProvider';
 import { findStatementAtCursor, splitIntoStatements } from './utils';
 import { ExasolNotebookSerializer } from './notebooks/serializer';
@@ -24,7 +24,7 @@ import { TabResultCollector } from './execution/tabResultCollector';
  * ObjectTreeItem and ConnectionTreeItem satisfy it structurally, and some
  * commands are also invoked programmatically with a bare `{ connection }`.
  */
-type TreeCommandItem = Partial<Pick<ObjectTreeItem, 'type' | 'connection' | 'schemaName' | 'tableInfo' | 'columnInfo'>> & {
+type TreeCommandItem = Partial<Pick<ObjectTreeItem, 'type' | 'connection' | 'schemaName' | 'tableInfo' | 'columnInfo' | 'scriptInfo' | 'functionInfo' | 'dbConnectionInfo'>> & {
     id?: string;
 };
 
@@ -82,6 +82,8 @@ export function activate(context: vscode.ExtensionContext) {
     const connectionTreeProvider = new ConnectionTreeProvider(connectionManager);
     const objectTreeProvider = new ObjectTreeProvider(connectionManager);
     const queryHistoryProvider = new QueryHistoryProvider(context);
+    // The Preprocessors folder marks the script named in SQL_PREPROCESSOR_SCRIPT.
+    const preprocessorScriptSet = queryExecutor.onDidSetPreprocessorScript(() => objectTreeProvider.refresh());
 
     // Register panel views
     ResultsPanel.register(context, connectionManager);
@@ -178,8 +180,30 @@ export function activate(context: vscode.ExtensionContext) {
             objectActions.generateSelectStatement(i.connection, i.schemaName, i.tableInfo.name)),
         itemCommand('exasol.describeTable', ['connection', 'schemaName', 'tableInfo'], (i) =>
             objectActions.describeTable(i.connection, i.schemaName, i.tableInfo.name)),
+        itemCommand('exasol.refreshVirtualSchema', ['connection', 'schemaName'], (i) =>
+            refreshVirtualSchemaAndReload(
+                { objectActions, completionProvider, objectTreeProvider },
+                i.connection,
+                i.schemaName,
+                i.type === 'virtual-table' ? i.tableInfo?.name : undefined
+            )),
+        itemCommand('exasol.explainPushdown', ['connection', 'schemaName', 'tableInfo'], (i) =>
+            objectActions.explainPushdown(i.connection, i.schemaName, i.tableInfo.name)),
+        itemCommand('exasol.openScriptSource', ['connection', 'schemaName', 'scriptInfo'], (i) =>
+            objectActions.openScriptSource(i.connection, i.schemaName, i.scriptInfo.name)),
+        itemCommand('exasol.generateScriptCall', ['connection', 'schemaName', 'scriptInfo'], (i) =>
+            objectActions.generateScriptCall(i.connection, i.schemaName, i.scriptInfo.name)),
+        itemCommand('exasol.openFunctionSource', ['connection', 'schemaName', 'functionInfo'], (i) =>
+            objectActions.openFunctionSource(i.connection, i.schemaName, i.functionInfo.name)),
+        itemCommand('exasol.showConnectionDDL', ['connection', 'dbConnectionInfo'], (i) =>
+            objectActions.showConnectionDDL(i.connection, i.dbConnectionInfo.name, i.dbConnectionInfo.comment)),
+        itemCommand('exasol.generateImport', ['dbConnectionInfo'], (i) =>
+            objectActions.generateTransfer('IMPORT', i.dbConnectionInfo.name)),
+        itemCommand('exasol.generateExport', ['dbConnectionInfo'], (i) =>
+            objectActions.generateTransfer('EXPORT', i.dbConnectionInfo.name)),
         itemCommand('exasol.setSchema', ['schemaName'], (i) =>
-            sessionManager.setSchema(i.schemaName)),
+            sessionManager.setSchema(i.schemaName).catch(error =>
+                vscode.window.showErrorMessage(formatError(error)))),
         itemCommand('exasol.editConnection', ['connection'], (i) =>
             editConnection(connectionManager, connectionTreeProvider, objectTreeProvider, context, i.connection)),
         itemCommand('exasol.deleteConnection', ['connection'], (i) =>
@@ -334,30 +358,6 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.window.showTextDocument(document);
     });
 
-
-    // Prevent rapid duplicate executions (e.g., double-click)
-    const openObjectExecuting = new Map<string, boolean>();
-
-    const openObjectCmd = vscode.commands.registerCommand('exasol.openObject', async (item?: TreeCommandItem) => {
-        if (item && item.connection && item.schemaName && item.tableInfo) {
-            const key = `${item.connection.id}:${item.schemaName}:${item.tableInfo.name}`;
-
-            // If already executing for this object, skip
-            if (openObjectExecuting.get(key)) {
-                return;
-            }
-
-            try {
-                openObjectExecuting.set(key, true);
-                // Double-click shows table structure only (not preview)
-                await objectActions.describeTable(item.connection, item.schemaName, item.tableInfo.name);
-            } finally {
-                // Clear after a short delay to allow UI to settle
-                setTimeout(() => openObjectExecuting.delete(key), 500);
-            }
-        }
-    });
-
     const clearCacheCmd = vscode.commands.registerCommand('exasol.clearCache', () => {
         completionProvider.clearCache();
         vscode.window.showInformationMessage('Autocomplete cache cleared');
@@ -449,15 +449,7 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     const copyQualifiedNameCmd = vscode.commands.registerCommand('exasol.copyQualifiedName', async (item?: TreeCommandItem) => {
-        let qualifiedName: string | undefined;
-
-        if (item?.type === 'schema' && item?.schemaName) {
-            qualifiedName = `"${item.schemaName}"`;
-        } else if ((item?.type === 'table' || item?.type === 'view') && item?.schemaName && item?.tableInfo) {
-            qualifiedName = `"${item.schemaName}"."${item.tableInfo.name}"`;
-        } else if (item?.type === 'column' && item?.columnInfo) {
-            qualifiedName = `"${item.columnInfo.name}"`;
-        }
+        const qualifiedName = item ? getQualifiedName(item) : undefined;
 
         if (qualifiedName) {
             await vscode.env.clipboard.writeText(qualifiedName);
@@ -523,7 +515,6 @@ export function activate(context: vscode.ExtensionContext) {
         exportResultsCmd,
         exportSourceToCsvCmd,
         openQueryFromHistoryCmd,
-        openObjectCmd,
         clearCacheCmd,
         setActiveConnectionCmd,
         reconnectConnectionCmd,
@@ -549,7 +540,8 @@ export function activate(context: vscode.ExtensionContext) {
         connectionsChanged,
         activeConnectionChanged,
         notebookSerializer,
-        notebookController
+        notebookController,
+        preprocessorScriptSet
     );
 
     return {
@@ -613,7 +605,11 @@ async function executeQuery(
         return;
     }
 
+    // Text from a selection or the whole file is split into statements. The
+    // statement at the cursor is sent as one statement, because a script
+    // without its `/` line would be split at its `;`.
     let queryText: string;
+    let split = true;
     const selection = editor.selection;
     const hasSelection = !selection.isEmpty;
 
@@ -629,13 +625,14 @@ async function executeQuery(
         }
     } else {
         // No selection - try to find the statement at the cursor position
-        const cursorLine = editor.selection.active.line;
+        const cursor = editor.selection.active;
         const documentText = editor.document.getText();
-        const statement = findStatementAtCursor(documentText, cursorLine);
+        const statement = findStatementAtCursor(documentText, cursor.line, cursor.character);
 
         if (statement) {
             // Found a statement at the cursor - execute only that statement
-            queryText = statement.text;
+            queryText = statement.sql;
+            split = false;
             output.appendLine(`🎯 Executing statement at cursor (lines ${statement.range.start + 1}-${statement.range.end + 1})`);
         } else {
             // No statement found at cursor - execute entire file
@@ -649,8 +646,7 @@ async function executeQuery(
         return;
     }
 
-    // Split the text into individual statements
-    const statements = splitIntoStatements(queryText);
+    const statements = split ? splitIntoStatements(queryText) : [queryText];
 
     if (statements.length === 0) {
         vscode.window.showWarningMessage('No queries to execute');
@@ -908,8 +904,9 @@ async function executeStatement(
 ) {
     const output = getOutputChannel();
 
-    // Get the query text from the range
-    const query = document.getText(range).trim();
+    // Get the query text from the range. The end is kept, because a script or
+    // function definition is sent as written.
+    const query = document.getText(range).trimStart();
 
     if (!query) {
         vscode.window.showWarningMessage('No query to execute');

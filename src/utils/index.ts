@@ -5,6 +5,8 @@
 export {
     escapeSqlString,
     escapeSqlIdentifier,
+    normalizeIdentifier,
+    columnsViewFor,
     stripCommentsPreservingStrings,
     findStatementEnds,
     buildLineOffsets,
@@ -12,7 +14,9 @@ export {
     offsetAtLineCharacter,
     findStatementRanges,
     findStatementAtCursor,
-    splitIntoStatements
+    splitIntoStatements,
+    stripFinalSlashLine,
+    isScriptOrFunctionDefinition
 } from './sql';
 
 export {

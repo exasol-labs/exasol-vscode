@@ -99,15 +99,17 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
         test('returns virtual columns for a virtual table', async () => {
             const driver = {
                 async query(sql: string) {
-                    if (sql.includes('EXA_ALL_VIRTUAL_COLUMNS')) {
+                    if (sql.includes('EXA_ALL_COLUMNS')) {
+                        assert.ok(!sql.includes('EXA_ALL_VIRTUAL_COLUMNS'), 'EXA_ALL_VIRTUAL_COLUMNS has no type or position columns');
+                        assert.ok(sql.includes('ORDER BY COLUMN_ORDINAL_POSITION'), 'columns should keep table order');
                         assert.ok(sql.includes("'VS_S3'"), 'query should filter by virtual schema');
                         assert.ok(sql.includes("'BUCKET_DATA'"), 'query should filter by table name');
                         return createRawResult(
-                            ['COLUMN_NAME', 'COLUMN_TYPE'],
+                            ['COLUMN_NAME', 'COLUMN_TYPE', 'COLUMN_IS_NULLABLE'],
                             [
-                                ['ID', 'DECIMAL(18,0)'],
-                                ['FILE_PATH', 'VARCHAR(2000)'],
-                                ['SIZE', 'DECIMAL(18,0)']
+                                ['ID', 'DECIMAL(18,0)', false],
+                                ['FILE_PATH', 'VARCHAR(2000)', true],
+                                ['SIZE', 'DECIMAL(18,0)', null]
                             ]
                         );
                     }
@@ -124,6 +126,7 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             assert.strictEqual(columns[0].type, 'DECIMAL(18,0)');
             assert.strictEqual(columns[1].name, 'FILE_PATH');
             assert.strictEqual(columns[1].type, 'VARCHAR(2000)');
+            assert.deepStrictEqual(columns.map(c => c.nullable), [false, true, null]);
         });
 
         test('returns empty array on query failure', async () => {
@@ -141,11 +144,12 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
         });
     });
 
-    suite('getChildren merges virtual schemas with regular schemas', () => {
-        test('virtual schemas appear sorted alongside regular schemas at root level', async () => {
+    suite('getChildren lists virtual schemas in the Virtual Schemas folder', () => {
+        test('the root lists regular schemas; virtual schemas are inside the folder', async () => {
             const driver = {
                 async query(sql: string) {
-                    if (sql.includes('EXA_SCHEMAS') && !sql.includes('VIRTUAL')) {
+                    if (sql.includes('SYS.EXA_SCHEMAS')) {
+                        assert.ok(sql.includes('SCHEMA_IS_VIRTUAL = FALSE'), 'regular schema query must exclude virtual schemas');
                         return createRawResult(
                             ['SCHEMA_NAME', 'TABLE_COUNT', 'VIEW_COUNT'],
                             [
@@ -169,25 +173,22 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             const manager = new MockConnectionManager(driver, connection);
             const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            // The root always appends a trailing "System Schemas" folder node
-            // (see objectTreeProvider.ts), unrelated to the schema/virtual-schema
-            // ordering under test here, so it's filtered out before asserting.
-            const children = (await provider.getChildren())
-                .filter(c => (c as ObjectTreeItem).type !== 'system-schemas-folder');
+            const roots = await provider.getChildren();
+            assert.deepStrictEqual(roots.map(c => c.label), ['ALPHA', 'GAMMA', 'Virtual Schemas', 'Connections', 'System Schemas']);
+            assert.deepStrictEqual(roots.slice(0, 2).map(c => (c as ObjectTreeItem).type), ['schema', 'schema']);
 
-            assert.strictEqual(children.length, 3, 'Should have 3 items total');
-            assert.strictEqual(children[0].label, 'ALPHA');
-            assert.strictEqual((children[0] as ObjectTreeItem).type, 'schema');
-            assert.strictEqual(children[1].label, 'BETA_VS');
-            assert.strictEqual((children[1] as ObjectTreeItem).type, 'virtual-schema');
-            assert.strictEqual(children[2].label, 'GAMMA');
-            assert.strictEqual((children[2] as ObjectTreeItem).type, 'schema');
+            const children = await provider.getChildren(roots[2]);
+            assert.strictEqual(children.length, 1);
+            assert.strictEqual(children[0].label, 'BETA_VS');
+            assert.strictEqual((children[0] as ObjectTreeItem).type, 'virtual-schema');
+            assert.strictEqual(children[0].description, 'via S3_ADAPTER');
         });
 
         test('virtual schema failure does not block regular schemas', async () => {
             const driver = {
                 async query(sql: string) {
-                    if (sql.includes('EXA_SCHEMAS') && !sql.includes('VIRTUAL')) {
+                    if (sql.includes('SYS.EXA_SCHEMAS')) {
+                        assert.ok(sql.includes('SCHEMA_IS_VIRTUAL = FALSE'), 'regular schema query must exclude virtual schemas');
                         return createRawResult(
                             ['SCHEMA_NAME', 'TABLE_COUNT', 'VIEW_COUNT'],
                             [
@@ -205,14 +206,9 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             const manager = new MockConnectionManager(driver, connection);
             const provider = new ObjectTreeProvider(asConnectionManager(manager));
 
-            // See the comment in the previous test: filter out the always-present
-            // trailing "System Schemas" folder node before counting schema nodes.
-            const children = (await provider.getChildren())
-                .filter(c => (c as ObjectTreeItem).type !== 'system-schemas-folder');
-
-            assert.strictEqual(children.length, 1, 'Regular schemas should still load');
-            assert.strictEqual(children[0].label, 'MY_SCHEMA');
-            assert.strictEqual((children[0] as ObjectTreeItem).type, 'schema');
+            const roots = await provider.getChildren();
+            assert.deepStrictEqual(roots.map(c => c.label), ['MY_SCHEMA', 'Virtual Schemas', 'Connections', 'System Schemas']);
+            assert.deepStrictEqual(await provider.getChildren(roots[1]), [], 'a failed listing gives an empty folder');
         });
     });
 
@@ -259,12 +255,12 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
         test('expands virtual table to show virtual columns', async () => {
             const driver = {
                 async query(sql: string) {
-                    if (sql.includes('EXA_ALL_VIRTUAL_COLUMNS')) {
+                    if (sql.includes('EXA_ALL_COLUMNS')) {
                         return createRawResult(
-                            ['COLUMN_NAME', 'COLUMN_TYPE'],
+                            ['COLUMN_NAME', 'COLUMN_TYPE', 'COLUMN_IS_NULLABLE'],
                             [
-                                ['COL_A', 'INTEGER'],
-                                ['COL_B', 'VARCHAR(100)']
+                                ['COL_A', 'INTEGER', false],
+                                ['COL_B', 'VARCHAR(100)', true]
                             ]
                         );
                     }
@@ -291,6 +287,8 @@ suite('ObjectTreeProvider Virtual Schemas', () => {
             assert.strictEqual(children[0].label, 'COL_A (INTEGER)');
             assert.strictEqual((children[0] as ObjectTreeItem).type, 'column');
             assert.strictEqual(children[1].label, 'COL_B (VARCHAR(100))');
+            assert.strictEqual(children[0].tooltip, 'COL_A: INTEGER');
+            assert.strictEqual(children[1].tooltip, 'COL_B: VARCHAR(100) (nullable)');
         });
     });
 });

@@ -40,7 +40,9 @@ export class ExasolCodeLensProvider implements vscode.CodeLensProvider {
             // range is intentionally NOT reused here; using it would truncate
             // the executed text and drop any content past the first line of
             // the statement (clauses, LIMIT, etc.).
-            const execRange = new vscode.Range(startLine, 0, endLine, end - lineOffsets[endLine] + 1);
+            // It starts at `start`, not at column 0, so on a line shared with
+            // the previous statement only this statement runs.
+            const execRange = new vscode.Range(startLine, start - lineOffsets[startLine], endLine, end - lineOffsets[endLine] + 1);
 
             return new vscode.CodeLens(displayRange, {
                 title: '▶ Execute',

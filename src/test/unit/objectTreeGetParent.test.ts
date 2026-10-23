@@ -278,10 +278,10 @@ suite('ObjectTreeProvider, getParent() extended node types', () => {
                 if (sql.includes('EXA_ALL_INDICES') && sql.includes('COUNT')) {
                     return createRawResult(['INDEX_COUNT'], [[1]]);
                 }
-                if (sql.includes('INDEX_NAME') && sql.includes('MY_TABLE')) {
+                if (sql.includes('EXA_ALL_INDICES') && sql.includes('MY_TABLE')) {
                     return createRawResult(
-                        ['INDEX_NAME', 'INDEX_TYPE', 'INDEX_COLUMNS'],
-                        [['IDX_COL_A', 'LOCAL', 'COL_A']]
+                        ['INDEX_OBJECT_ID', 'INDEX_TYPE', 'REMARKS'],
+                        [[1001, 'LOCAL', 'LOCAL INDEX (COL_A)']]
                     );
                 }
                 if (sql.includes('EXA_SYSCAT')) {
@@ -290,10 +290,10 @@ suite('ObjectTreeProvider, getParent() extended node types', () => {
                         [['EXA_ALL_COLUMNS']]
                     );
                 }
-                if (sql.includes('DESCRIBE')) {
+                if (sql.includes('EXA_SYS_COLUMNS')) {
                     return createRawResult(
-                        ['COLUMN_NAME', 'SQL_TYPE'],
-                        [['VC1', 'VARCHAR(128) UTF8']]
+                        ['COLUMN_NAME', 'COLUMN_TYPE', 'COLUMN_IS_NULLABLE'],
+                        [['VC1', 'VARCHAR(128) UTF8', true]]
                     );
                 }
                 return createEmptyRawResult(['DUMMY']);
@@ -303,17 +303,20 @@ suite('ObjectTreeProvider, getParent() extended node types', () => {
         provider = new ObjectTreeProvider(mockCM as unknown as ConnectionManager);
     });
 
-    test('virtual-schema has null parent', async () => {
+    test('virtual-schema parent is the Virtual Schemas folder, which has null parent', async () => {
         const rootChildren = await provider.getChildren();
-        const vs = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'VS_ORACLE');
+        const folder = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'Virtual Schemas');
+        assert.ok(folder, 'Should find the Virtual Schemas folder');
+        assert.strictEqual(provider.getParent(folder), null, 'Virtual Schemas folder parent should be null');
+        const vs = (await provider.getChildren(folder)).find((c: ObjectNode) => getLabelText(c) === 'VS_ORACLE');
         assert.ok(vs, 'Should find VS_ORACLE');
-        const parent = provider.getParent(vs);
-        assert.strictEqual(parent, null, 'Virtual-schema parent should be null');
+        assert.strictEqual(provider.getParent(vs), folder, 'Virtual-schema parent should be the folder');
     });
 
     test('virtual-table parent is virtual-schema', async () => {
         const rootChildren = await provider.getChildren();
-        const vs = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'VS_ORACLE');
+        const folder = rootChildren.find((c: ObjectNode) => getLabelText(c) === 'Virtual Schemas');
+        const vs = (await provider.getChildren(folder)).find((c: ObjectNode) => getLabelText(c) === 'VS_ORACLE');
         const vsTables = await provider.getChildren(vs);
         const remoteTable = vsTables.find((c: ObjectNode) => getLabelText(c) === 'REMOTE_TABLE');
         assert.ok(remoteTable, 'Should find REMOTE_TABLE');
@@ -401,8 +404,8 @@ suite('ObjectTreeProvider, getParent() extended node types', () => {
         const indicesFolder = tableChildren.find((c: ObjectNode) => getLabelText(c) === 'Indices');
         assert.ok(indicesFolder, 'Should find Indices folder');
         const indices = await provider.getChildren(indicesFolder);
-        const idx = indices.find((c: ObjectNode) => getLabelText(c) === 'IDX_COL_A');
-        assert.ok(idx, 'Should find IDX_COL_A');
+        const idx = indices.find((c: ObjectNode) => getLabelText(c) === 'LOCAL INDEX (COL_A)');
+        assert.ok(idx, 'Should find LOCAL INDEX (COL_A)');
         const parent = provider.getParent(idx);
         assert.strictEqual(parent, indicesFolder, 'Index parent should be indices-folder');
     });
