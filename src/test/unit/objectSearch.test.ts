@@ -444,6 +444,45 @@ suite('ObjectSearchProvider', () => {
         assert.strictEqual(revealed[0].parent?.parent?.type, 'virtual-schemas-folder');
     });
 
+    test('a virtual table column is revealed inside the Virtual Schemas folder', async () => {
+        const revealed: ObjectTreeItemInstance[] = [];
+        mockTreeView.reveal = async node => { revealed.push(node); };
+        const driver: MockDriver = {
+            query: async (sql: string) => {
+                if (sql.includes('EXA_ALL_VIRTUAL_SCHEMAS')) {
+                    return createRawResult(['SCHEMA_NAME'], [['VS_SCHEMA']]);
+                }
+                if (sql.includes('EXA_ALL_COLUMNS') && sql.includes('COLUMN_TYPE')) {
+                    return createRawResult(['COLUMN_NAME', 'COLUMN_TYPE', 'COLUMN_IS_NULLABLE'], [['REMOTE_COL', 'VARCHAR(10)', true]]);
+                }
+                if (sql.includes('EXA_ALL_COLUMNS')) {
+                    return createRawResult(['COLUMN_SCHEMA', 'COLUMN_TABLE', 'COLUMN_NAME'], [['VS_SCHEMA', 'REMOTE_TABLE', 'REMOTE_COL']]);
+                }
+                return mockDriver.query(sql);
+            }
+        };
+        const cm = new MockConnectionManager(driver);
+        searchProvider = new ObjectSearchProvider(
+            cm as unknown as ConnectionManager,
+            new ObjectTreeProvider(cm as unknown as ConnectionManager),
+            mockTreeView as unknown as ObjectTreeView
+        );
+        await searchProvider.showSearch();
+
+        const columnItem = mockQuickPick.items.find(i => i.label.includes('REMOTE_COL'));
+        assert.ok(columnItem, 'Should find REMOTE_COL');
+        mockQuickPick.selectedItems = [columnItem];
+        assert.ok(mockQuickPick._acceptCallback, 'Accept callback should be registered');
+        await mockQuickPick._acceptCallback();
+
+        assert.strictEqual(revealed.length, 1);
+        assert.strictEqual(revealed[0].type, 'column');
+        assert.strictEqual(revealed[0].columnInfo?.name, 'REMOTE_COL');
+        assert.strictEqual(revealed[0].parent?.type, 'virtual-table');
+        assert.strictEqual(revealed[0].parent?.parent?.type, 'virtual-schema');
+        assert.strictEqual(revealed[0].parent?.parent?.parent?.type, 'virtual-schemas-folder');
+    });
+
     test('QuickPick items have correct icon for each type', async () => {
         await searchProvider.showSearch();
 

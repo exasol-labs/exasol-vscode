@@ -233,6 +233,17 @@ suite('ExasolCompletionProvider - completion after an opening quote', () => {
         assertOnlyQuotedNames(await complete('SELECT "lower v|'), [7, 15]);
     });
 
+    test('the range runs to the closing quote after the cursor', async () => {
+        assertOnlyQuotedNames(await complete('SELECT "lo|wer v" FROM s.t'), [7, 16]);
+        assertOnlyQuotedNames(await complete('SELECT "a|""b" FROM s.t'), [7, 13]);
+        assertOnlyQuotedNames(await complete('SELECT "lower v|" FROM s.t'), [7, 16]);
+    });
+
+    test('an unfinished name without a closing quote ends at the word end', async () => {
+        assertOnlyQuotedNames(await complete('SELECT "lo|wer v FROM s.t'), [7, 13]);
+        assertOnlyQuotedNames(await complete('SELECT "lo|wer FROM "S"."T"'), [7, 13]);
+    });
+
     test('a string from an earlier line is closed before the quote', async () => {
         assertOnlyQuotedNames(await complete(`SELECT 'a\nb', "|`), [4, 5]);
     });

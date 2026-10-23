@@ -107,8 +107,9 @@ export function parseAliases(queryText: string): Map<string, AliasTarget> {
 
 /**
  * Range of a quoted identifier the user is typing: from its opening `"` to
- * the end of the word at the cursor, plus a closing `"` right after it, such
- * as the one added by auto-closing. Undefined when the cursor is not inside a
+ * its closing `"` on the same line, or for an unfinished name to the end of
+ * the word at the cursor, plus a closing `"` right after it, such as the one
+ * added by auto-closing. Undefined when the cursor is not inside a
  * quoted identifier opened on the same line, so a line without `"` before
  * the cursor returns early, without scanning the document. Only the current
  * statement is scanned, so a quote in an earlier statement, such as an
@@ -128,8 +129,23 @@ function openingQuoteRange(document: vscode.TextDocument, position: vscode.Posit
     const lineStart = cursor - position.character;
     if (quoteIdx === undefined || quoteIdx < lineStart) { return undefined; }
     const wordEnd = Math.max(document.getWordRangeAtPosition(position)?.end.character ?? 0, position.character);
-    const end = line[wordEnd] === '"' ? wordEnd + 1 : wordEnd;
+    const end = closingQuoteEnd(line, position.character) ?? (line[wordEnd] === '"' ? wordEnd + 1 : wordEnd);
     return new vscode.Range(position.line, quoteIdx - lineStart, position.line, end);
+}
+
+/**
+ * Index after the `"` that closes the quoted identifier containing `from`, or
+ * undefined when the line has none. A doubled quote is an escaped quote. The
+ * rest of the line must have balanced quotes, so the opening quote of a later
+ * name does not close an unfinished one.
+ */
+function closingQuoteEnd(line: string, from: number): number | undefined {
+    for (let i = line.indexOf('"', from); i !== -1; i = line.indexOf('"', i + 2)) {
+        if (line[i + 1] !== '"') {
+            return quotedIdentifierStart(line.slice(i + 1)) === undefined ? i + 1 : undefined;
+        }
+    }
+    return undefined;
 }
 
 /** True when the quoted identifier in `range` ends with its closing quote. */

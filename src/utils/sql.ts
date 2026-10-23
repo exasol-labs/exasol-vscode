@@ -654,6 +654,14 @@ export function findStatementAtCursor(
             if (trimmed && trimmed !== ';') {
                 statements.push({ start: startLine, end: endLine, last: terminatorLine, text: chunk });
             }
+        } else if (documentText[endIdx] === '/') {
+            // An optional `/` line after a definition closed by `;` (`END f;`)
+            // selects that definition, so the cursor there never falls through
+            // to running the whole file.
+            const previous = statements[statements.length - 1];
+            if (previous?.last === consumedThroughLine && isScriptOrFunctionDefinition(previous.text)) {
+                previous.last = terminatorLine;
+            }
         }
 
         consumedThroughLine = terminatorLine;

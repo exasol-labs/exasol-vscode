@@ -307,6 +307,11 @@ export class ObjectSearchProvider {
             );
         }
 
+        // Virtual tables are direct children of their virtual schema.
+        if (treeType === 'column' && schemaNode.type === 'virtual-schema') {
+            return this.findColumnInFolder(schemaNode, objectName);
+        }
+
         const folderType = this.getFolderType(treeType);
         if (!folderType) {
             outputChannel?.appendLine(`Object search: no folder type for ${treeType}`);
@@ -345,26 +350,13 @@ export class ObjectSearchProvider {
     ): Promise<ObjectTreeItem | undefined> {
         const outputChannel = getOutputChannel();
 
-        const special = treeType === 'system-table'
+        const special: { folder: ObjectTreeItemType; schema: ObjectTreeItemType } | undefined = treeType === 'system-table'
             ? { folder: 'system-schemas-folder', schema: 'system-schema' }
             : treeType === 'virtual-table'
                 ? { folder: 'virtual-schemas-folder', schema: 'virtual-schema' }
                 : undefined;
         if (special) {
-            const folder = rootNodes.find(
-                node => node instanceof ObjectTreeItem && node.type === special.folder
-            ) as ObjectTreeItem | undefined;
-
-            if (!folder) {
-                return undefined;
-            }
-
-            const schemas = await this.objectTreeProvider.getChildren(folder);
-            return schemas.find(
-                node => node instanceof ObjectTreeItem &&
-                    node.type === special.schema &&
-                    node.schemaName === schemaName
-            ) as ObjectTreeItem | undefined;
+            return this.findSchemaInFolder(rootNodes, special.folder, special.schema, schemaName);
         }
 
         const direct = rootNodes.find(
@@ -402,7 +394,31 @@ export class ObjectSearchProvider {
             }
         }
 
+        // A column of a virtual table: virtual schemas are listed only in the Virtual Schemas folder.
+        if (treeType === 'column') {
+            return this.findSchemaInFolder(rootNodes, 'virtual-schemas-folder', 'virtual-schema', schemaName);
+        }
+
         return undefined;
+    }
+
+    private async findSchemaInFolder(
+        rootNodes: Array<ObjectTreeItem | { label?: string | vscode.TreeItemLabel }>,
+        folderType: ObjectTreeItemType,
+        schemaType: ObjectTreeItemType,
+        schemaName: string
+    ): Promise<ObjectTreeItem | undefined> {
+        const folder = this.findChildByType(rootNodes, folderType);
+        if (!folder) {
+            return undefined;
+        }
+
+        const schemas = await this.objectTreeProvider.getChildren(folder);
+        return schemas.find(
+            node => node instanceof ObjectTreeItem &&
+                node.type === schemaType &&
+                node.schemaName === schemaName
+        ) as ObjectTreeItem | undefined;
     }
 
     private getFolderType(objectType: ObjectTreeItemType): ObjectTreeItemType | undefined {

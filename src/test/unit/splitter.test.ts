@@ -297,6 +297,35 @@ suite('findStatementRanges and findStatementAtCursor: script definitions', () =>
         assert.strictEqual(findStatementAtCursor(`${fnText}\n/\nSELECT 1;`, 4)?.text, fnText);
     });
 
+    suite('function ending in `END f;` followed by a / line', () => {
+        const fnText = 'CREATE FUNCTION f (p DECIMAL) RETURN DECIMAL IS\nBEGIN\n  RETURN p;\nEND f;';
+        const doc = `${fnText}\n/\nSELECT 2;`;
+
+        test('cursor on the / line selects only the function', () => {
+            const result = findStatementAtCursor(doc, 4);
+            assert.ok(result);
+            assert.strictEqual(result.text, fnText);
+            assert.deepStrictEqual(result.range, { start: 0, end: 3 });
+        });
+
+        test('cursor on the line after the / line selects the next statement', () => {
+            assert.strictEqual(findStatementAtCursor(doc, 5)?.text, 'SELECT 2;');
+        });
+
+        test('blank line between the function and the / line', () => {
+            assert.strictEqual(findStatementAtCursor(`${fnText}\n\n/\nSELECT 2;`, 5)?.text, fnText);
+        });
+
+        test('a / line after a plain statement stays outside it', () => {
+            assert.strictEqual(findStatementAtCursor('SELECT 1;\n/\nSELECT 2;', 1), undefined);
+        });
+
+        test('ranges and run-all give exactly two statements, without the / line', () => {
+            assert.deepStrictEqual(findStatementRanges(doc).map(r => doc.slice(r.start, r.end + 1)), [fnText, 'SELECT 2;']);
+            assert.deepStrictEqual(splitIntoStatements(doc), [fnText, 'SELECT 2;']);
+        });
+    });
+
     test('cursor after the / line selects the next statement', () => {
         assert.strictEqual(findStatementAtCursor(text, 5)?.text, 'SELECT 1;');
     });
