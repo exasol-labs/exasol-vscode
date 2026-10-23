@@ -43,6 +43,7 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - The first query for the views of a schema read `TABLE_NAME`, a column that `EXA_ALL_VIEWS` does not have, so it always failed and the views came from `EXA_ALL_OBJECTS`. It now reads `VIEW_NAME`
 - Object search now writes the database error to the Exasol output channel when a part of the search fails
 - With `exasol.searchIncludesColumns` enabled, selecting a column of a virtual table in object search did nothing. It now shows the column in the Virtual Schemas folder
+- With `exasol.searchIncludesColumns` enabled, selecting a column in object search showed the column of the first table in the schema with that column name, and a column of a view was not shown at all. It now shows the column under its own table, view or virtual table, and the search result lists the column with `SCHEMA.TABLE`
 
 ### Security
 - Updated `brace-expansion` to 2.1.7 and 5.0.12, and `source-map-js` to 1.2.2

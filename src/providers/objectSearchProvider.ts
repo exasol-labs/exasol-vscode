@@ -10,6 +10,8 @@ interface SearchableObject {
     schema: string;
     name: string;
     type: ObjectTreeItemType;
+    /** The table, view or virtual table of a column. */
+    table?: string;
 }
 
 type ObjectTreeView = vscode.TreeView<ObjectNode>;
@@ -176,11 +178,12 @@ export class ObjectSearchProvider {
                         WHERE COLUMN_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
                         ORDER BY COLUMN_SCHEMA, COLUMN_TABLE, COLUMN_ORDINAL_POSITION
                     `);
-                    for (const row of getRowsFromResult<{ COLUMN_SCHEMA: string; COLUMN_NAME: string }>(columnsResult)) {
+                    for (const row of getRowsFromResult<{ COLUMN_SCHEMA: string; COLUMN_TABLE: string; COLUMN_NAME: string }>(columnsResult)) {
                         objects.push({
                             schema: row.COLUMN_SCHEMA,
                             name: row.COLUMN_NAME,
-                            type: 'column'
+                            type: 'column',
+                            table: row.COLUMN_TABLE
                         });
                     }
                 } catch (error) {
@@ -203,7 +206,7 @@ export class ObjectSearchProvider {
 
         const item: vscode.QuickPickItem = {
             label: `$(${iconId}) ${obj.name}`,
-            description: obj.schema,
+            description: obj.table ? `${obj.schema}.${obj.table}` : obj.schema,
             detail: typeLabel
         };
         this.itemDataMap.set(item, obj);
@@ -244,7 +247,7 @@ export class ObjectSearchProvider {
         }
 
         try {
-            const targetNode = await this.findTreeNode(obj.name, obj.schema, obj.type);
+            const targetNode = await this.findTreeNode(obj);
             if (targetNode) {
                 outputChannel?.appendLine(
                     `Object search: found target node id=${targetNode.id}, calling treeView.reveal`
@@ -265,11 +268,8 @@ export class ObjectSearchProvider {
         }
     }
 
-    private async findTreeNode(
-        objectName: string,
-        schemaName: string,
-        treeType: ObjectTreeItemType
-    ): Promise<ObjectTreeItem | undefined> {
+    private async findTreeNode(obj: SearchableObject): Promise<ObjectTreeItem | undefined> {
+        const { name: objectName, schema: schemaName, type: treeType } = obj;
         const outputChannel = getOutputChannel();
         const rootNodes = await this.objectTreeProvider.getChildren();
         outputChannel?.appendLine(
@@ -307,9 +307,18 @@ export class ObjectSearchProvider {
             );
         }
 
-        // Virtual tables are direct children of their virtual schema.
-        if (treeType === 'column' && schemaNode.type === 'virtual-schema') {
-            return this.findColumnInFolder(schemaNode, objectName);
+        if (treeType === 'column') {
+            const tableNode = obj.table ? await this.findColumnTable(schemaNode, obj.table) : undefined;
+            if (!tableNode) {
+                outputChannel?.appendLine(
+                    `Object search: table ${obj.table} of column ${objectName} not found under schema ${schemaName}`
+                );
+                return undefined;
+            }
+            const columns = await this.objectTreeProvider.getChildren(tableNode);
+            return columns.find(
+                col => col instanceof ObjectTreeItem && col.type === 'column' && col.columnInfo?.name === objectName
+            ) as ObjectTreeItem | undefined;
         }
 
         const folderType = this.getFolderType(treeType);
@@ -327,10 +336,6 @@ export class ObjectSearchProvider {
             return undefined;
         }
         outputChannel?.appendLine(`Object search: folder ${folderType} found id=${folderNode.id}`);
-
-        if (treeType === 'column') {
-            return this.findColumnInFolder(folderNode, objectName);
-        }
 
         const leaf = this.findChildByNameAndType(
             await this.objectTreeProvider.getChildren(folderNode),
@@ -427,7 +432,6 @@ export class ObjectSearchProvider {
             case 'view': return 'views-folder';
             case 'script': return 'udfs-folder';
             case 'function': return 'functions-folder';
-            case 'column': return 'tables-folder';
             default: return undefined;
         }
     }
@@ -455,24 +459,30 @@ export class ObjectSearchProvider {
         }) as ObjectTreeItem | undefined;
     }
 
-    private async findColumnInFolder(
-        folderNode: ObjectTreeItem,
-        columnName: string
+    /** Finds the table, view or virtual table that holds a column. */
+    private async findColumnTable(
+        schemaNode: ObjectTreeItem,
+        tableName: string
     ): Promise<ObjectTreeItem | undefined> {
-        const tables = await this.objectTreeProvider.getChildren(folderNode);
-        for (const table of tables) {
-            if (!(table instanceof ObjectTreeItem)) {
+        const schemaChildren = await this.objectTreeProvider.getChildren(schemaNode);
+        // Virtual tables are direct children of their virtual schema.
+        if (schemaNode.type === 'virtual-schema') {
+            return this.findChildByNameAndType(schemaChildren, tableName, 'virtual-table');
+        }
+
+        const containers = [['tables-folder', 'table'], ['views-folder', 'view']] as const;
+        for (const [folderType, tableType] of containers) {
+            const folder = this.findChildByType(schemaChildren, folderType);
+            if (!folder) {
                 continue;
             }
-            const columns = await this.objectTreeProvider.getChildren(table);
-            const match = columns.find(col => {
-                if (!(col instanceof ObjectTreeItem) || col.type !== 'column') {
-                    return false;
-                }
-                return col.columnInfo?.name === columnName;
-            });
-            if (match) {
-                return match as ObjectTreeItem;
+            const table = this.findChildByNameAndType(
+                await this.objectTreeProvider.getChildren(folder),
+                tableName,
+                tableType
+            );
+            if (table) {
+                return table;
             }
         }
         return undefined;

@@ -483,6 +483,106 @@ suite('ObjectSearchProvider', () => {
         assert.strictEqual(revealed[0].parent?.parent?.parent?.type, 'virtual-schemas-folder');
     });
 
+    suite('a column hit is revealed under its own table', () => {
+        function node(type: ObjectTreeItemInstance['type'], label: string, schemaName: string, parent?: ObjectTreeItemInstance): ObjectTreeItemInstance {
+            return new ObjectTreeItem({
+                label,
+                id: `${schemaName}:${parent?.id ?? ''}:${label}:${type}`,
+                collapsibleState: 0 as vscode.TreeItemCollapsibleState,
+                type,
+                schemaName,
+                tableInfo: type === 'column' ? undefined : { name: label },
+                columnInfo: type === 'column' ? { name: label, type: 'DECIMAL(18,0)', nullable: true } : undefined,
+                parent
+            });
+        }
+
+        // Two containers in one schema that both hold a column named ID.
+        async function revealSecondId(columnRows: string[][], tree: Map<ObjectNode | undefined, ObjectTreeItemInstance[]>): Promise<ObjectTreeItemInstance[]> {
+            const revealed: ObjectTreeItemInstance[] = [];
+            mockTreeView.reveal = async revealedNode => { revealed.push(revealedNode); };
+            const baseQuery = mockDriver.query;
+            mockDriver.query = async (sql: string) => sql.includes('EXA_ALL_COLUMNS')
+                ? createRawResult(['COLUMN_SCHEMA', 'COLUMN_TABLE', 'COLUMN_NAME'], columnRows)
+                : baseQuery(sql);
+            objectTreeProvider.getChildren = async (element?: ObjectNode) => tree.get(element) ?? [];
+
+            await searchProvider.showSearch();
+            const [, second] = mockQuickPick.items.filter(i => i.detail === 'Column');
+            assert.ok(second, 'Should list two ID columns');
+            mockQuickPick.selectedItems = [second];
+            assert.ok(mockQuickPick._acceptCallback, 'Accept callback should be registered');
+            await mockQuickPick._acceptCallback();
+            return revealed;
+        }
+
+        test('regular tables', async () => {
+            const schema = node('schema', 'MY_SCHEMA', 'MY_SCHEMA');
+            const folder = node('tables-folder', 'Tables', 'MY_SCHEMA', schema);
+            const first = node('table', 'FIRST', 'MY_SCHEMA', folder);
+            const second = node('table', 'SECOND', 'MY_SCHEMA', folder);
+            const secondId = node('column', 'ID', 'MY_SCHEMA', second);
+            const tree = new Map<ObjectNode | undefined, ObjectTreeItemInstance[]>([
+                [undefined, [schema]],
+                [schema, [folder]],
+                [folder, [first, second]],
+                [first, [node('column', 'ID', 'MY_SCHEMA', first)]],
+                [second, [secondId]]
+            ]);
+
+            const revealed = await revealSecondId([['MY_SCHEMA', 'FIRST', 'ID'], ['MY_SCHEMA', 'SECOND', 'ID']], tree);
+
+            assert.deepStrictEqual(revealed, [secondId]);
+        });
+
+        test('views', async () => {
+            const schema = node('schema', 'MY_SCHEMA', 'MY_SCHEMA');
+            const tables = node('tables-folder', 'Tables', 'MY_SCHEMA', schema);
+            const views = node('views-folder', 'Views', 'MY_SCHEMA', schema);
+            const table = node('table', 'BASE', 'MY_SCHEMA', tables);
+            const view = node('view', 'V_BASE', 'MY_SCHEMA', views);
+            const viewId = node('column', 'ID', 'MY_SCHEMA', view);
+            const tree = new Map<ObjectNode | undefined, ObjectTreeItemInstance[]>([
+                [undefined, [schema]],
+                [schema, [tables, views]],
+                [tables, [table]],
+                [views, [view]],
+                [table, [node('column', 'ID', 'MY_SCHEMA', table)]],
+                [view, [viewId]]
+            ]);
+
+            const revealed = await revealSecondId([['MY_SCHEMA', 'BASE', 'ID'], ['MY_SCHEMA', 'V_BASE', 'ID']], tree);
+
+            assert.deepStrictEqual(revealed, [viewId]);
+        });
+
+        test('virtual tables', async () => {
+            const folder = node('virtual-schemas-folder', 'Virtual Schemas', '');
+            const schema = node('virtual-schema', 'VS_SCHEMA', 'VS_SCHEMA', folder);
+            const first = node('virtual-table', 'FIRST', 'VS_SCHEMA', schema);
+            const second = node('virtual-table', 'SECOND', 'VS_SCHEMA', schema);
+            const secondId = node('column', 'ID', 'VS_SCHEMA', second);
+            const tree = new Map<ObjectNode | undefined, ObjectTreeItemInstance[]>([
+                [undefined, [folder]],
+                [folder, [schema]],
+                [schema, [first, second]],
+                [first, [node('column', 'ID', 'VS_SCHEMA', first)]],
+                [second, [secondId]]
+            ]);
+
+            const revealed = await revealSecondId([['VS_SCHEMA', 'FIRST', 'ID'], ['VS_SCHEMA', 'SECOND', 'ID']], tree);
+
+            assert.deepStrictEqual(revealed, [secondId]);
+        });
+    });
+
+    test('a column hit shows its schema and table as the description', async () => {
+        await searchProvider.showSearch();
+
+        const colItem = mockQuickPick.items.find(i => i.detail === 'Column');
+        assert.strictEqual(colItem?.description, 'MY_SCHEMA.USERS');
+    });
+
     test('QuickPick items have correct icon for each type', async () => {
         await searchProvider.showSearch();
 
