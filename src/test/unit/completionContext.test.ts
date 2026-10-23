@@ -140,4 +140,19 @@ suite('classifyContext', () => {
         const lineComment = 'SELECT a -- the main columns, with a long comment\n, HERE FROM s.t';
         assert.strictEqual(classifyContext(lineComment, at(lineComment, 'HERE')).kind, 'AFTER_SELECT_KEYWORD');
     });
+
+    test('a long run of spaces before the cursor is classified in linear time', () => {
+        const text = 'SELECT a' + ' '.repeat(100000) + 'b';
+        const started = performance.now();
+        classifyContext(text, text.length);
+        const elapsed = performance.now() - started;
+        assert.ok(elapsed < 200, `took ${elapsed.toFixed(0)} ms`);
+    });
+
+    test('comma-joined tables are all FROM tables', () => {
+        const text = 'SELECT HERE FROM s.a x, "s"."b c" AS "y", t WHERE a = 1';
+        assert.deepStrictEqual(classifyContext(text, at(text, 'HERE')).fromTables, [
+            { schema: 'S', table: 'A' }, { schema: 's', table: 'b c' }, { table: 'T' }
+        ]);
+    });
 });

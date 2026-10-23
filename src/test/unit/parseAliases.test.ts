@@ -144,4 +144,45 @@ limit 100;`;
         assert.deepStrictEqual(m.get('W'), { schema: 'S', table: 'V' });
         assert.strictEqual(m.has('AS'), false);
     });
+
+    suite('comma-joined tables', () => {
+        test('FROM s.a x, s.b y', () => {
+            const m = parseAliases('SELECT y. FROM s.a x, s.b y');
+            assert.deepStrictEqual(m.get('X'), { schema: 'S', table: 'A' });
+            assert.deepStrictEqual(m.get('Y'), { schema: 'S', table: 'B' });
+        });
+
+        test('AS, quoted and schema-qualified names', () => {
+            const m = parseAliases('SELECT * FROM s.a AS x, "s"."b c" AS "y", t z');
+            assert.deepStrictEqual(m.get('X'), { schema: 'S', table: 'A' });
+            assert.deepStrictEqual(m.get('y'), { schema: 's', table: 'b c' });
+            assert.deepStrictEqual(m.get('Z'), { table: 'T' });
+        });
+
+        test('a table after a JOIN and its ON condition', () => {
+            const m = parseAliases('SELECT * FROM a x JOIN b y ON x.id = y.id, c z WHERE z.k IN (1, 2)');
+            assert.deepStrictEqual(m.get('Z'), { table: 'C' });
+        });
+
+        test('commas outside the FROM list are not tables', () => {
+            const m = parseAliases(
+                'SELECT a, b c FROM t, u WHERE x IN (d, e f) GROUP BY g, h i ORDER BY j, k l;\n'
+                + 'SELECT m, n o FROM v WHERE EXTRACT(DAY FROM d) = 1, p q'
+            );
+            assert.deepStrictEqual([...m.keys()], []);
+        });
+
+        test('a table without alias before a comma or a JOIN', () => {
+            const m = parseAliases('SELECT * FROM a, b y JOIN c z ON 1 = 1');
+            assert.deepStrictEqual(m.get('Y'), { table: 'B' });
+            assert.deepStrictEqual(m.get('Z'), { table: 'C' });
+            assert.deepStrictEqual(parseAliases('SELECT * FROM a JOIN b y ON 1 = 1').get('Y'), { table: 'B' });
+        });
+
+        test('a comma-joined table in a subquery', () => {
+            const m = parseAliases('SELECT * FROM (SELECT 1 FROM a x, b y) d, c z');
+            assert.deepStrictEqual(m.get('Y'), { table: 'B' });
+            assert.deepStrictEqual(m.get('Z'), { table: 'C' });
+        });
+    });
 });

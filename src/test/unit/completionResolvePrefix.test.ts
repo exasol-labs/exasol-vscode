@@ -13,7 +13,7 @@ registerExtensionMock();
 // completionProvider.ts imports `vscode` at module scope, so it must stay a
 // deferred require() issued AFTER the mocks above are registered. A static
 // import would resolve 'vscode' before require.cache is patched.
-const { resolvePrefixCompletions } = require('../../providers/completionProvider') as typeof import('../../providers/completionProvider');
+const { parseAliases, resolvePrefixCompletions } = require('../../providers/completionProvider') as typeof import('../../providers/completionProvider');
 
 function objs(): DatabaseObject[] {
     return [
@@ -84,5 +84,17 @@ suite('resolvePrefixCompletions', () => {
         assert.deepStrictEqual(resolvePrefixCompletions(objects, new Map(), '"lower v"'), { kind: 'columns', schema: 'S', table: 'lower v' });
         assert.deepStrictEqual(resolvePrefixCompletions(objects, new Map(), '"t"'), { kind: 'none' });
         assert.strictEqual(resolvePrefixCompletions(objects, new Map(), '"S"').kind, 'schemaObjects');
+    });
+
+    test('alias of the second comma-joined table resolves to its columns', () => {
+        const objects: DatabaseObject[] = [
+            { schema: 'S', name: 'A', type: 'table' },
+            { schema: 'S', name: 'B', type: 'table' },
+            { schema: 's', name: 'b c', type: 'table' }
+        ];
+        const r = resolvePrefixCompletions(objects, parseAliases('SELECT y. FROM s.a x, s.b y'), 'y');
+        assert.deepStrictEqual(r, { kind: 'columns', schema: 'S', table: 'B' });
+        const quoted = resolvePrefixCompletions(objects, parseAliases('SELECT "y". FROM s.a AS x, "s"."b c" AS "y"'), '"y"');
+        assert.deepStrictEqual(quoted, { kind: 'columns', schema: 's', table: 'b c' });
     });
 });

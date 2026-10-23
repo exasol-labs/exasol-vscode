@@ -16,7 +16,7 @@ import {
     safeFetch
 } from '../utils';
 import type { CteDefinition, SelectAlias } from '../utils';
-import { classifyContext } from '../utils/completionContext';
+import { anchorCommaJoinedTables, classifyContext } from '../utils/completionContext';
 import type { CompletionContext, ContextKind } from '../utils/completionContext';
 
 export interface DatabaseObject {
@@ -78,7 +78,8 @@ export function resolvePrefixCompletions(
 // schema and table in FROM/JOIN clauses: schema.table, "schema".table,
 // schema."table", "schema"."table", and quoted or unquoted aliases. Keys,
 // schema and table are the names the database stores (see
-// normalizeIdentifier), so callers compare them with ===.
+// normalizeIdentifier), so callers compare them with ===. The tables after a
+// comma in a FROM list, as in `FROM a x, b y`, get their aliases too.
 export function parseAliases(queryText: string): Map<string, AliasTarget> {
     const aliases = new Map<string, AliasTarget>();
 
@@ -90,15 +91,20 @@ export function parseAliases(queryText: string): Map<string, AliasTarget> {
     );
 
     // Keywords that can follow a table name; quoted, they are aliases.
-    const STOP = new Set(['AS', 'ON', 'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS',
+    const STOP = new Set(['AS', 'ON', 'WHERE', 'FROM', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS',
         'OUTER', 'ORDER', 'GROUP', 'HAVING', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT']);
 
     let match: RegExpExecArray | null;
-    while ((match = tableAliasPattern.exec(queryText)) !== null) {
+    const text = anchorCommaJoinedTables(queryText);
+    while ((match = tableAliasPattern.exec(text)) !== null) {
         const schema = match[1] && normalizeIdentifier(match[1]);
         const table = normalizeIdentifier(match[2]);
         const alias = normalizeIdentifier(match[3]);
-        if (!match[3].startsWith('"') && STOP.has(alias)) { continue; }
+        if (!match[3].startsWith('"') && STOP.has(alias)) {
+            // The keyword can start the next table, as in `FROM a JOIN b y`.
+            tableAliasPattern.lastIndex = match.index + match[0].length - match[3].length;
+            continue;
+        }
         if (alias === table) { continue; }
         aliases.set(alias, schema ? { schema, table } : { table });
     }

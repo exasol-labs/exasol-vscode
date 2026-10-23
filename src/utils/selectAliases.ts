@@ -438,7 +438,7 @@ function splitTopLevelCommas(text: string): string[] {
  *   5. Else give up (expressions without an alias).
  */
 function extractAliasFromItem(item: string): SelectAlias | undefined {
-    const trimmed = item.replace(/\s+$/, '');
+    const trimmed = item.trimEnd();
     if (!trimmed) { return undefined; }
     if (trimmed === '*' || /(^|[\s.])\*$/.test(trimmed)) { return undefined; }
 

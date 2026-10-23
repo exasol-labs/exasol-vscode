@@ -53,6 +53,8 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - Show Connection DDL always contains `IDENTIFIED BY '<password>'`, also for a connection without a user, so running the DDL no longer removes the password of the connection
 - Open Source for functions and Show View DDL now add the schema to the name also when a comment stands before the name or between the keywords. If the name cannot be found, the DDL starts with a note line, instead of silently creating the object in the current schema. Show View DDL keeps the case of the keywords as written, so a lowercase `create or replace view` stays lowercase
 - Object search now reveals procedures and adapter scripts in the Procedures and Adapters folders. Before, it looked for them only in the UDFs folder
+- SQL completion now suggests the columns of every table in a comma-separated `FROM` list, such as `y` in `FROM s.a x, s.b y` or `"y"` in `FROM s.a AS x, "s"."b c" AS "y"`. Before, only the first table counted. The alias of a table after `JOIN` is now also found when the table before `JOIN` has no alias, as in `FROM a JOIN b y`
+- SQL completion took several seconds when the statement held a long run of spaces, for example about 4 seconds for 100,000 spaces after `SELECT DISTINCT(`. It now takes a few milliseconds
 
 ### Security
 - Updated `brace-expansion` to 2.1.7 and 5.0.12, and `source-map-js` to 1.2.2

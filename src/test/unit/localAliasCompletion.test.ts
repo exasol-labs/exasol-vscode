@@ -116,6 +116,14 @@ where local.`;
         assert.deepStrictEqual(names('SELECT DISTINCT(a + 1) FROM t'), []);
     });
 
+    test('a long run of spaces inside an item is parsed in linear time', () => {
+        const stmt = 'SELECT DISTINCT(' + ' '.repeat(100000) + '"';
+        const started = performance.now();
+        assert.deepStrictEqual(parseEnclosingSelectListAliases(stmt, stmt.length), []);
+        const elapsed = performance.now() - started;
+        assert.ok(elapsed < 200, `took ${elapsed.toFixed(0)} ms`);
+    });
+
     test('unclosed quoted alias without AS is skipped', () => {
         assert.deepStrictEqual(names('SELECT 1 "open FROM t'), []);
     });

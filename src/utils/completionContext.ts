@@ -43,7 +43,7 @@ export function classifyContext(
         return { kind: 'AFTER_DOT', fromTables: [] };
     }
 
-    const trimmedBefore = text.slice(0, cursor).replace(/\s+$/, '');
+    const trimmedBefore = text.slice(0, cursor).trimEnd();
     if (!trimmedBefore || isStatementStart(text, cursor)) {
         return { kind: 'STATEMENT_START', fromTables: [] };
     }
@@ -212,7 +212,8 @@ function isImmediatelyAfter(_upper: string, original: string, endPos: number, cu
  * Extract FROM/JOIN table references between the FROM keyword and scopeEnd
  * (or before the next clause keyword such as WHERE/GROUP BY). Reuses the same
  * regex shape that completionProvider.parseAliases uses so it picks up the
- * exact set of named FROM/JOIN tables and nothing else.
+ * exact set of named FROM/JOIN tables and nothing else, including the tables
+ * after a comma in the FROM list.
  */
 function extractFromTables(text: string, upper: string, fromIdx: number, scopeEnd: number): FromTableRef[] {
     const bodyStart = fromIdx + 4;
@@ -223,7 +224,7 @@ function extractFromTables(text: string, upper: string, fromIdx: number, scopeEn
     const ident = '("(?:[^"]|"")+"|[A-Za-z_]\\w*)';
     // Anchor on FROM/JOIN to avoid grabbing aliases or ON-clause refs.
     // We synthesise a leading FROM so the first table in the body matches too.
-    const withFrom = 'FROM ' + body;
+    const withFrom = anchorCommaJoinedTables('FROM ' + body);
     const re = new RegExp(
         `\\b(?:from|(?:(?:inner|left|right|full|cross)\\s+)?(?:outer\\s+)?join)\\s+` +
         `(?:${ident}\\s*\\.\\s*)?${ident}`,
@@ -239,6 +240,65 @@ function extractFromTables(text: string, upper: string, fromIdx: number, scopeEn
         out.push(schema ? { schema, table } : { table });
     }
     return dedupe(out);
+}
+
+/** Keywords that end a FROM list. */
+const FROM_LIST_END = new Set(['WHERE', 'GROUP', 'ORDER', 'HAVING', 'QUALIFY', 'LIMIT', 'UNION', 'INTERSECT',
+    'EXCEPT', 'MINUS', 'CONNECT', 'START', 'PREFERRING', 'SELECT']);
+
+/**
+ * `text` with every top-level comma of a FROM list replaced by ` FROM `, so a
+ * pattern anchored on FROM also finds the tables after the first one, such as
+ * `b y` in `FROM a x, b y`. A FROM list ends at a clause keyword such as
+ * WHERE, at a `;`, or at the `)` that closes its parentheses. Commas inside
+ * parentheses, strings, quoted identifiers and comments are kept.
+ */
+export function anchorCommaJoinedTables(text: string): string {
+    const len = text.length;
+    // inFrom[depth]: the text at this paren depth is in a FROM list.
+    const inFrom: boolean[] = [false];
+    const parts: string[] = [];
+    let copied = 0;
+    let i = 0;
+    while (i < len) {
+        const ch = text[i];
+        if (ch === "'") { i = skipSingleQuoted(text, i, len); continue; }
+        if (ch === '"') { i = skipDoubleQuoted(text, i, len); continue; }
+        if (ch === '-' && text[i + 1] === '-') {
+            const nl = text.indexOf('\n', i);
+            i = nl === -1 ? len : nl;
+            continue;
+        }
+        if (ch === '/' && text[i + 1] === '*') {
+            const close = text.indexOf('*/', i + 2);
+            i = close === -1 ? len : close + 2;
+            continue;
+        }
+        if (ch === '(') {
+            inFrom.push(false);
+        } else if (ch === ')') {
+            if (inFrom.length > 1) { inFrom.pop(); }
+        } else if (ch === ';') {
+            inFrom.length = 1;
+            inFrom[0] = false;
+        } else if (ch === ',' && inFrom[inFrom.length - 1]) {
+            parts.push(text.slice(copied, i), ' FROM ');
+            copied = i + 1;
+        } else if (/[A-Za-z_]/.test(ch)) {
+            const start = i;
+            while (i < len && /\w/.test(text[i])) { i++; }
+            const word = text.slice(start, i).toUpperCase();
+            if (word === 'FROM') {
+                inFrom[inFrom.length - 1] = true;
+            } else if (FROM_LIST_END.has(word)) {
+                inFrom[inFrom.length - 1] = false;
+            }
+            continue;
+        }
+        i++;
+    }
+    parts.push(text.slice(copied));
+    return parts.join('');
 }
 
 function dedupe(refs: FromTableRef[]): FromTableRef[] {
