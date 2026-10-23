@@ -232,6 +232,13 @@ suite('splitIntoStatements: script and function definitions', () => {
         assert.deepStrictEqual(splitIntoStatements(`${fnText}\nSELECT 1;`), [fnText, 'SELECT 1;']);
     });
 
+    test('many statements on one line', () => {
+        const text = Array.from({ length: 20000 }, (_, i) => `INSERT INTO t VALUES (${i}, 'abc'); /* c */`).join(' ');
+        const statements = splitIntoStatements(text);
+        assert.strictEqual(statements.length, 20000);
+        assert.strictEqual(statements[1], "/* c */ INSERT INTO t VALUES (1, 'abc');");
+        assert.strictEqual(statements[19999], "/* c */ INSERT INTO t VALUES (19999, 'abc'); /* c */");
+    });
 
     test('/ line with surrounding whitespace and CRLF line breaks', () => {
         assert.deepStrictEqual(

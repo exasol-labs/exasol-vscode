@@ -272,12 +272,11 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
             // body is the CTE's inner SELECT, not the outer one).
             const localMatch = linePrefix.match(/\blocal\.\s*$/i);
             if (localMatch) {
-                const stmt = findStatementAtCursor(queryText, position.line);
                 let aliasesList: SelectAlias[] = [];
-                if (stmt) {
+                if (currentStmt) {
                     const docOff = offsetAtLineCharacter(queryText, position.line, position.character);
-                    const cursorInStmt = Math.max(0, docOff - stmt.startOffset);
-                    aliasesList = parseEnclosingSelectListAliases(stmt.text, cursorInStmt);
+                    const cursorInStmt = Math.max(0, docOff - currentStmt.startOffset);
+                    aliasesList = parseEnclosingSelectListAliases(currentStmt.text, cursorInStmt);
                 }
                 if (aliasesList.length === 0) {
                     log?.appendLine(`[completion] LOCAL.: no parseable enclosing SELECT-list aliases; returning empty`);
@@ -353,10 +352,9 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
 
             // No prefix-dot context: classify cursor and rank buckets accordingly.
             const docOffsetForCtx = offsetAtLineCharacter(queryText, position.line, position.character);
-            const stmtForCtx = currentStmt ?? findStatementAtCursor(queryText, position.line);
-            const ctxQuery = stmtForCtx?.text ?? queryText;
-            const ctxOffset = stmtForCtx
-                ? Math.max(0, docOffsetForCtx - stmtForCtx.startOffset)
+            const ctxQuery = currentStmt?.text ?? queryText;
+            const ctxOffset = currentStmt
+                ? Math.max(0, docOffsetForCtx - currentStmt.startOffset)
                 : docOffsetForCtx;
             const ctx = classifyContext(ctxQuery, ctxOffset);
             log?.appendLine(`[completion] context=${ctx.kind} fromTables=${ctx.fromTables.length}`);
