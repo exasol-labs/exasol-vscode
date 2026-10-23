@@ -131,4 +131,13 @@ suite('classifyContext', () => {
         const r = classifyContext(text, at(text, 'HERE'));
         assert.deepStrictEqual(r.fromTables, [{ schema: 'S', table: 't' }, { schema: 'S', table: 'T' }, { table: 'a"b' }]);
     });
+
+    test('a comment before the cursor does not shift it', () => {
+        const text = 'SELECT a /* a long comment about columns */, HERE FROM s.t';
+        const r = classifyContext(text, at(text, 'HERE'));
+        assert.strictEqual(r.kind, 'AFTER_SELECT_KEYWORD');
+        assert.deepStrictEqual(r.fromTables, [{ schema: 'S', table: 'T' }]);
+        const lineComment = 'SELECT a -- the main columns, with a long comment\n, HERE FROM s.t';
+        assert.strictEqual(classifyContext(lineComment, at(lineComment, 'HERE')).kind, 'AFTER_SELECT_KEYWORD');
+    });
 });

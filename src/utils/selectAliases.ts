@@ -17,7 +17,7 @@
  * only, respecting paren depth and string/identifier quoting.
  */
 
-import { stripCommentsPreservingStrings } from './sql';
+import { stripCommentsPreservingPositions, stripCommentsPreservingStrings } from './sql';
 
 export interface SelectAlias {
     /** Alias name as written (unquoted form of the identifier). */
@@ -72,7 +72,7 @@ export function findEnclosingSelectListText(
     statementText: string,
     cursorOffsetInStatement: number
 ): string | undefined {
-    const text = stripCommentsPreservingStrings(statementText);
+    const text = stripCommentsPreservingPositions(statementText);
     const upper = text.toUpperCase();
     const cursor = clamp(cursorOffsetInStatement, 0, text.length);
 
@@ -128,17 +128,15 @@ export interface EnclosingSelectRange {
  * Locate the full lexical range of the SELECT clause enclosing
  * `cursorOffsetInStatement`. Returns undefined when no enclosing SELECT exists.
  *
- * Offsets are into the comment-stripped view (`text`); callers should also
- * translate their cursor through stripCommentsPreservingStrings if they need
- * to compare. In practice, stripping replaces comments with whitespace so the
- * cursor offset is identical between raw and stripped views; this matches the
- * function's contract elsewhere.
+ * Offsets are into the comment-stripped view (`text`), which has the same
+ * length as the statement: comments are replaced by spaces, so offsets into
+ * the statement, such as the cursor, are valid in it.
  */
 export function findEnclosingSelectRange(
     statementText: string,
     cursorOffsetInStatement: number
 ): EnclosingSelectRange | undefined {
-    const text = stripCommentsPreservingStrings(statementText);
+    const text = stripCommentsPreservingPositions(statementText);
     const upper = text.toUpperCase();
     const cursor = clamp(cursorOffsetInStatement, 0, text.length);
 
@@ -165,8 +163,12 @@ export function findEnclosingSelectRange(
 
 function aliasesFromListText(list: string | undefined): SelectAlias[] {
     if (list === undefined) { return []; }
-    // `SELECT DISTINCT x` and `SELECT ALL x`: the set quantifier is not part of the first item.
-    const items = splitTopLevelCommas(list.replace(/^\s*(DISTINCT|ALL)\b/i, ''));
+    // `SELECT DISTINCT x` and `SELECT ALL x`: the set quantifier is not part of
+    // the first item. In `SELECT DISTINCT(t.x)` the parentheses only wrap the column.
+    const ident = '(?:"(?:[^"]|"")+"|\\w+)';
+    const items = splitTopLevelCommas(list
+        .replace(new RegExp(`^\\s*DISTINCT\\s*\\(\\s*(${ident}(?:\\s*\\.\\s*${ident})?)\\s*\\)`, 'i'), ' $1')
+        .replace(/^\s*(DISTINCT|ALL)\b/i, ''));
     const out: SelectAlias[] = [];
     const seen = new Set<string>();
     for (const raw of items) {

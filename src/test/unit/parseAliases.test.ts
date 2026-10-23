@@ -136,4 +136,12 @@ limit 100;`;
         const m = parseAliases('SELECT * FROM "users" users');
         assert.deepStrictEqual(m.get('USERS'), { table: 'users' });
     });
+
+    test('quoted aliases, with and without AS', () => {
+        const m = parseAliases('SELECT * FROM s.t AS "x" JOIN s.u "My T" ON 1=1 JOIN s.v AS w ON 1=1');
+        assert.deepStrictEqual(m.get('x'), { schema: 'S', table: 'T' });
+        assert.deepStrictEqual(m.get('My T'), { schema: 'S', table: 'U' });
+        assert.deepStrictEqual(m.get('W'), { schema: 'S', table: 'V' });
+        assert.strictEqual(m.has('AS'), false);
+    });
 });

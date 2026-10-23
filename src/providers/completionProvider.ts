@@ -76,30 +76,31 @@ export function resolvePrefixCompletions(
 
 // Exported for unit testing. Handles every combination of quoted/unquoted
 // schema and table in FROM/JOIN clauses: schema.table, "schema".table,
-// schema."table", "schema"."table". Keys are aliases in uppercase. Schema and
-// table are the names the database stores (see normalizeIdentifier), so
-// callers compare them with ===.
+// schema."table", "schema"."table", and quoted or unquoted aliases. Keys,
+// schema and table are the names the database stores (see
+// normalizeIdentifier), so callers compare them with ===.
 export function parseAliases(queryText: string): Map<string, AliasTarget> {
     const aliases = new Map<string, AliasTarget>();
 
     const ident = '("(?:[^"]|"")+"|\\w+)';
     const tableAliasPattern = new RegExp(
         `(?:from|(?:(?:inner|left|right|full|cross)\\s+)?(?:outer\\s+)?join)\\s+` +
-        `(?:${ident}\\s*\\.\\s*)?${ident}\\s+(?:as\\s+)?(\\w+)\\b`,
+        `(?:${ident}\\s*\\.\\s*)?${ident}\\s+(?:as\\s+)?${ident}`,
         'gi'
     );
 
-    const STOP = new Set(['ON', 'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS',
+    // Keywords that can follow a table name; quoted, they are aliases.
+    const STOP = new Set(['AS', 'ON', 'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS',
         'OUTER', 'ORDER', 'GROUP', 'HAVING', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT']);
 
     let match: RegExpExecArray | null;
     while ((match = tableAliasPattern.exec(queryText)) !== null) {
         const schema = match[1] && normalizeIdentifier(match[1]);
         const table = normalizeIdentifier(match[2]);
-        const aliasUpper = match[3].toUpperCase();
-        if (STOP.has(aliasUpper)) { continue; }
-        if (aliasUpper === table) { continue; }
-        aliases.set(aliasUpper, schema ? { schema, table } : { table });
+        const alias = normalizeIdentifier(match[3]);
+        if (!match[3].startsWith('"') && STOP.has(alias)) { continue; }
+        if (alias === table) { continue; }
+        aliases.set(alias, schema ? { schema, table } : { table });
     }
 
     return aliases;

@@ -4,10 +4,10 @@
  * is actually relevant at that cursor position.
  *
  * The classifier is pure: it never touches vscode/document APIs. Callers pass
- * the comment-stripped statement text and the cursor offset within it.
+ * the statement text and the cursor offset within it.
  */
 
-import { normalizeIdentifier, stripCommentsPreservingStrings } from './sql';
+import { normalizeIdentifier, stripCommentsPreservingPositions } from './sql';
 import { findEnclosingSelectRange } from './selectAliases';
 
 export type ContextKind =
@@ -35,7 +35,8 @@ export function classifyContext(
     queryText: string,
     cursorOffset: number
 ): CompletionContext {
-    const text = stripCommentsPreservingStrings(queryText);
+    // Comments become spaces, so the cursor offset stays valid.
+    const text = stripCommentsPreservingPositions(queryText);
     const cursor = clamp(cursorOffset, 0, text.length);
 
     if (cursor > 0 && lastNonSpaceChar(text, cursor) === '.') {

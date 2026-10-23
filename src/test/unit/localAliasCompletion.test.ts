@@ -109,6 +109,13 @@ where local.`;
         assert.deepStrictEqual(names('SELECT all_x, distinct_y FROM t'), ['all_x', 'distinct_y']);
     });
 
+    test('DISTINCT with a parenthesized column', () => {
+        assert.deepStrictEqual(names('SELECT DISTINCT(a), b FROM t'), ['a', 'b']);
+        assert.deepStrictEqual(names('SELECT DISTINCT ( t."My Col" ) FROM t'), ['My Col']);
+        assert.deepStrictEqual(names('SELECT DISTINCT(a) x FROM t'), ['x']);
+        assert.deepStrictEqual(names('SELECT DISTINCT(a + 1) FROM t'), []);
+    });
+
     test('unclosed quoted alias without AS is skipped', () => {
         assert.deepStrictEqual(names('SELECT 1 "open FROM t'), []);
     });
@@ -203,6 +210,11 @@ function encNames(stmt: string, cursor: number): string[] {
 }
 
 suite('parseEnclosingSelectListAliases', () => {
+    test('comments before the cursor do not shift it', () => {
+        const stmt = 'SELECT o AS oo FROM (SELECT a AS aa /* a comment longer than the rest */ FROM t WHERE local.HERE) s';
+        assert.deepStrictEqual(encNames(stmt, stmt.indexOf('HERE')), ['aa']);
+    });
+
     test('bug-report fixture: cursor inside CTE body reads INNER SELECT list', () => {
         const stmt = `WITH test AS (
   SELECT b.col_a AS m1, b.col_b FROM SCHEMA_A.TABLE_X AS b
