@@ -277,7 +277,7 @@ export class ObjectActions {
             }
 
             ResultsPanel.show(queryResult, query);
-            vscode.window.showInformationMessage(`Table structure: ${schemaName}.${tableName}`);
+            vscode.window.showInformationMessage(`Columns of ${schemaName}.${tableName}`);
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to describe ${schemaName}.${tableName}: ${error}`);
         }

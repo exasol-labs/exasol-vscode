@@ -18,7 +18,7 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - Virtual schemas are now listed in a Virtual Schemas folder in the Objects view, next to the Connections and System Schemas folders. Before, they were listed between the schemas and the schema groups. The folder is hidden when there are no virtual schemas ([#81](https://github.com/exasol-labs/exasol-vscode/issues/81))
 - Clicking an object in the Objects view only selects it. Before, clicking a table or view opened Describe. Describe and Show DDL are in the context menu. Views now also support Describe
 - Generate SELECT now opens the statement in a new editor. Before, it inserted the statement at the cursor of the active SQL editor. All commands that generate SQL now open it in a new editor
-- Context menu items in the Objects view have the same name for the same action on every object type: Show DDL (before Show Table DDL, Show View DDL and Open Source), Preview Data (before Preview Table), Describe (before Describe Table) and Generate SELECT (before Generate SELECT Statement)
+- Context menu items in the Objects view have the same name for the same action on every object type: Show DDL (before Show Table DDL and Show View DDL), Preview Data (before Preview Table), Describe (before Describe Table) and Generate SELECT (before Generate SELECT Statement)
 
 ### Fixed
 - Expanding a virtual table now lists its columns with their data types; before, the list was empty ([#81](https://github.com/exasol-labs/exasol-vscode/issues/81))
@@ -55,6 +55,7 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - SQL completion now suggests the columns of every table in a comma-separated `FROM` list, such as `y` in `FROM s.a x, s.b y` or `"y"` in `FROM s.a AS x, "s"."b c" AS "y"`. Before, only the first table counted. The alias of a table after `JOIN` is now also found when the table before `JOIN` has no alias, as in `FROM a JOIN b y`
 - SQL completion took several seconds when the statement held a long run of spaces, for example about 4 seconds for 100,000 spaces after `SELECT DISTINCT(`. It now takes a few milliseconds
 - SQL completion no longer takes text that only looks like a `FROM` clause as a table with an alias. This applies to the `FROM` of `IS [NOT] DISTINCT FROM`, of a function such as `SUBSTRING(x FROM 1 FOR 2)`, `TRIM(... FROM ...)` or `EXTRACT(YEAR FROM d)`, and of an `IMPORT` statement, such as `JDBC DRIVER = 'd'` in `IMPORT INTO t FROM JDBC DRIVER = 'd' AT c TABLE x`, to text in strings, quoted identifiers and comments, and to words that end in `FROM`, such as `xfrom`. `VALUES` in `FROM VALUES (1, 2) AS v(a, b)` is not taken as a table. `NATURAL` in `FROM a NATURAL JOIN b` is not taken as the alias of `a`. `LOCAL.` completion no longer ends the `SELECT` list at the `FROM` of `IS [NOT] DISTINCT FROM`
+- Copy Name and Rename Connection no longer appear in the Command Palette, where they did nothing without a selected item. Set Active Connection and Reconnect are hidden there too; without a selected item they only showed a warning
 
 ### Security
 - Updated `brace-expansion` to 2.1.7 and 5.0.12, and `source-map-js` to 1.2.2

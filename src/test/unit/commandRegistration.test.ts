@@ -11,7 +11,7 @@ const srcDir = path.resolve(__dirname, '../..');
 const packageJson = JSON.parse(fs.readFileSync(path.resolve(srcDir, '../package.json'), 'utf8')) as {
     contributes: {
         commands: Array<{ command: string }>;
-        menus: Record<string, Array<{ command: string }>>;
+        menus: Record<string, Array<{ command: string; when?: string }>>;
     };
 };
 
@@ -32,6 +32,13 @@ function matchAll(sources: string[], pattern: RegExp): Set<string> {
 const sources = readSources(srcDir);
 const registered = matchAll(sources, /(?:registerCommand|itemCommand)\(\s*'(exasol\.[\w.]+)'/g);
 const declared = new Set(packageJson.contributes.commands.map(c => c.command));
+const itemCommands = matchAll(sources, /itemCommand\(\s*'(exasol\.[\w.]+)'/g);
+// Registered with registerCommand, but they read the connection from the tree
+// item and only show a warning or do nothing without one.
+const inlineItemCommands = ['exasol.copyQualifiedName', 'exasol.setActiveConnection', 'exasol.reconnectConnection'];
+const hiddenInPalette = new Set(
+    (packageJson.contributes.menus.commandPalette ?? []).filter(e => e.when === 'false').map(e => e.command)
+);
 
 suite('Command registration', () => {
     test('every command declared in package.json is registered', () => {
@@ -47,6 +54,14 @@ suite('Command registration', () => {
                 assert.ok(declared.has(command), `${command} in menu ${menu} is not declared`);
                 assert.ok(registered.has(command), `${command} in menu ${menu} is never registered`);
             }
+        }
+    });
+
+    test('every command that needs a tree item is hidden in the Command Palette', () => {
+        assert.ok(itemCommands.has('exasol.renameConnection'), 'scan must find itemCommand registrations');
+        for (const command of [...itemCommands, ...inlineItemCommands]) {
+            assert.ok(declared.has(command), `${command} is not declared`);
+            assert.ok(hiddenInPalette.has(command), `${command} needs a tree item but is shown in the Command Palette`);
         }
     });
 });
