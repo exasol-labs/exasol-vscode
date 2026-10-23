@@ -20,7 +20,8 @@ interface SearchableObject {
 const SCRIPT_FOLDERS: Partial<Record<string, ObjectTreeItemType>> = {
     UDF: 'udfs-folder',
     SCRIPTING: 'procedures-folder',
-    ADAPTER: 'adapters-folder'
+    ADAPTER: 'adapters-folder',
+    PREPROCESSOR: 'preprocessors-folder'
 };
 
 type ObjectTreeView = vscode.TreeView<ObjectNode>;

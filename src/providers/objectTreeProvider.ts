@@ -21,9 +21,10 @@ import {
     fetchVirtualColumns,
     fetchSystemTables,
     fetchSystemTableColumns,
-    fetchDbConnections
+    fetchDbConnections,
+    fetchPreprocessorParameter
 } from './objectTreeFetchers';
-import { escapeSqlIdentifier } from '../utils';
+import { escapeSqlIdentifier, normalizeIdentifier } from '../utils';
 
 export type ObjectNode = ObjectTreeItem | ObjectMessageItem;
 
@@ -347,6 +348,20 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                 }));
             }
 
+            const preprocessorCount = scriptCounts.get('PREPROCESSOR') ?? 0;
+            if (preprocessorCount > 0) {
+                children.push(new ObjectTreeItem({
+                    label: 'Preprocessors',
+                    id: `${connId}:${schema}:preprocessors-folder`,
+                    collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                    type: 'preprocessors-folder',
+                    connection: element.connection,
+                    schemaName: schema,
+                    itemCount: preprocessorCount,
+                    parent: element
+                }));
+            }
+
             if (functionCount > 0) {
                 children.push(new ObjectTreeItem({
                     label: 'Functions',
@@ -425,6 +440,14 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
 
         if (element.type === 'adapters-folder') {
             return this.getScriptFolderChildren(element, 'ADAPTER');
+        }
+
+        if (element.type === 'preprocessors-folder') {
+            const preprocessors = await this.getScriptFolderChildren(element, 'PREPROCESSOR');
+            // The parameter is read on the user session, which can be busy
+            // with a query, so the nodes are shown first and marked after.
+            void this.markActivePreprocessor(element.connection!, preprocessors);
+            return preprocessors;
         }
 
         if (element.type === 'functions-folder') {
@@ -710,7 +733,7 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         return [];
     }
 
-    private async getScriptFolderChildren(element: ObjectTreeItem, scriptType: string): Promise<ObjectNode[]> {
+    private async getScriptFolderChildren(element: ObjectTreeItem, scriptType: string): Promise<ObjectTreeItem[]> {
         const outputChannel = getOutputChannel();
         const scripts = await fetchScripts(this.connectionManager, element.connection!, element.schemaName!, scriptType);
         outputChannel?.appendLine(`Objects view: Found ${scripts.length} ${scriptType} scripts`);
@@ -727,6 +750,46 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
         }));
     }
 
+    /**
+     * Marks the preprocessor named by SQL_PREPROCESSOR_SCRIPT: "active" when
+     * it is the session value, "system value" when only the system value
+     * names it.
+     */
+    private async markActivePreprocessor(connection: StoredConnection, nodes: ObjectTreeItem[]): Promise<void> {
+        const parameter = await fetchPreprocessorParameter(this.connectionManager, connection);
+        if (!parameter) {
+            return;
+        }
+        for (const node of nodes) {
+            const script = node.scriptInfo;
+            if (!script) {
+                continue;
+            }
+            let marker: string | undefined;
+            if (namesScript(parameter.sessionValue, node.schemaName, script.name)) {
+                marker = 'active';
+            } else if (namesScript(parameter.systemValue, node.schemaName, script.name)) {
+                marker = 'system value';
+            }
+            if (marker) {
+                node.description = `${script.language}, ${marker}`;
+                node.tooltip = `SQL_PREPROCESSOR_SCRIPT\nSession value: ${parameter.sessionValue ?? 'NULL'}\nSystem value: ${parameter.systemValue ?? 'NULL'}`;
+                this.onDidChangeTreeDataEmitter.fire(node);
+            }
+        }
+    }
+
+}
+
+/**
+ * Whether a schema-qualified script name as Exasol returns it, e.g.
+ * `MY_SCHEMA.MY_PP` or `"my_schema"."a.b"`, names this script.
+ */
+function namesScript(value: string | null, schemaName: string | undefined, scriptName: string): boolean {
+    const parts = value?.match(/^("(?:[^"]|"")*"|[^".]+)\.("(?:[^"]|"")*"|[^".]+)$/s);
+    return !!parts
+        && normalizeIdentifier(parts[1]) === schemaName
+        && normalizeIdentifier(parts[2]) === scriptName;
 }
 
 interface SchemaInfo {
@@ -849,6 +912,7 @@ export class ObjectTreeItem extends vscode.TreeItem {
                 break;
             case 'udfs-folder':
             case 'procedures-folder':
+            case 'preprocessors-folder':
             case 'functions-folder':
                 if (this.itemCount !== undefined) {
                     this.description = `${this.itemCount}`;

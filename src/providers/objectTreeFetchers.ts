@@ -786,3 +786,29 @@ export async function fetchDbConnections(
         }, connection.id, { role: 'background' }),
     [], getOutputChannel());
 }
+
+/**
+ * SQL_PREPROCESSOR_SCRIPT as Exasol returns it, e.g. `MY_SCHEMA.MY_PP` or
+ * `"my_schema"."my_pp"`. A session parameter is visible only in its own
+ * session, so this reads the user session, where queries run and where
+ * ALTER SESSION changes it. It waits for a running user query to finish
+ * and has no timeout, because a timeout replaces the driver and so ends the
+ * user session. Undefined when the query fails.
+ */
+export async function fetchPreprocessorParameter(
+    connectionManager: ConnectionManager,
+    connection: StoredConnection
+): Promise<{ sessionValue: string | null; systemValue: string | null } | undefined> {
+    return safeFetch('Failed to fetch SQL_PREPROCESSOR_SCRIPT', () =>
+        connectionManager.executeWithRetry(async () => {
+            const driver = await connectionManager.getDriver(connection.id, 'user');
+            const result = await rawQuery(driver, `
+                SELECT SESSION_VALUE, SYSTEM_VALUE
+                FROM SYS.EXA_PARAMETERS
+                WHERE PARAMETER_NAME = 'SQL_PREPROCESSOR_SCRIPT'
+            `);
+            const [row] = getRowsFromResult<{ SESSION_VALUE: string | null; SYSTEM_VALUE: string | null }>(result);
+            return row ? { sessionValue: row.SESSION_VALUE ?? null, systemValue: row.SYSTEM_VALUE ?? null } : undefined;
+        }, connection.id, { role: 'user' }),
+    undefined, getOutputChannel());
+}

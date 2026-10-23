@@ -581,6 +581,7 @@ suite('ObjectSearchProvider', () => {
         ['UDF', 'udfs-folder'],
         ['SCRIPTING', 'procedures-folder'],
         ['ADAPTER', 'adapters-folder'],
+        ['PREPROCESSOR', 'preprocessors-folder'],
     ] as const) {
         test(`a ${scriptType} script is revealed in the ${folderType}`, async () => {
             const revealed: ObjectTreeItemInstance[] = [];
@@ -593,7 +594,7 @@ suite('ObjectSearchProvider', () => {
                 label, id: `${label}:${type}`, collapsibleState: 0 as vscode.TreeItemCollapsibleState, type, schemaName: 'MY_SCHEMA'
             });
             const schema = item('schema', 'MY_SCHEMA');
-            const folders = (['udfs-folder', 'procedures-folder', 'adapters-folder'] as const).map(type => item(type, type));
+            const folders = (['udfs-folder', 'procedures-folder', 'adapters-folder', 'preprocessors-folder'] as const).map(type => item(type, type));
             const folder = folders.find(f => f.type === folderType);
             const script = item('script', 'MY_SCRIPT');
             objectTreeProvider.getChildren = async (element?: ObjectNode) => {

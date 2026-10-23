@@ -365,7 +365,7 @@
         },
         {
           "command": "exasol.openScriptSource",
-          "when": "view == exasol.objects && (viewItem == script || viewItem == script-udf || viewItem == script-adapter)",
+          "when": "view == exasol.objects && (viewItem == script || viewItem == script-udf || viewItem == script-adapter || viewItem == script-preprocessor)",
           "group": "exasol@1"
         },
         {
@@ -395,7 +395,7 @@
         },
         {
           "command": "exasol.copyQualifiedName",
-          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == schema || viewItem == virtual-table || viewItem == virtual-schema || viewItem == script-udf || viewItem == script-adapter || viewItem == system-schema || viewItem == system-table || viewItem == db-connection)",
+          "when": "view == exasol.objects && (viewItem == table || viewItem == view || viewItem == schema || viewItem == virtual-table || viewItem == virtual-schema || viewItem == script-udf || viewItem == script-adapter || viewItem == script-preprocessor || viewItem == system-schema || viewItem == system-table || viewItem == db-connection)",
           "group": "inline@1"
         },
         {

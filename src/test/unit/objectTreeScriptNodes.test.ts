@@ -10,7 +10,8 @@ registerExtensionMock();
 
 const { ObjectTreeItem, ObjectTreeProvider } = require('../../providers/objectTreeProvider') as typeof import('../../providers/objectTreeProvider');
 
-import { createEmptyRawResult, MockConnectionManager, TEST_CONNECTION, asConnectionManager } from '../helpers/mockConnectionManager';
+import type { ExasolDriver } from '@exasol/exasol-driver-ts';
+import { createEmptyRawResult, createRawResult, createRawErrorResult, MockConnectionManager, TEST_CONNECTION, asConnectionManager } from '../helpers/mockConnectionManager';
 
 function makeScriptItem(scriptType: string, name = 'S1'): InstanceType<typeof ObjectTreeItem> {
     return new ObjectTreeItem({
@@ -42,6 +43,7 @@ suite('ObjectTreeProvider, script, function and system nodes', () => {
         assert.strictEqual(makeScriptItem('UDF').contextValue, 'script-udf');
         assert.strictEqual(makeScriptItem('ADAPTER').contextValue, 'script-adapter');
         assert.strictEqual(makeScriptItem('SCRIPTING').contextValue, 'script');
+        assert.strictEqual(makeScriptItem('PREPROCESSOR').contextValue, 'script-preprocessor');
     });
 
     test('no node of any type runs a command on click', () => {
@@ -49,13 +51,13 @@ suite('ObjectTreeProvider, script, function and system nodes', () => {
         const allTypes: Record<ObjectTreeItemType, true> = {
             'schema': true, 'tables-folder': true, 'table': true, 'views-folder': true, 'view': true,
             'column': true, 'virtual-schemas-folder': true, 'virtual-schema': true, 'virtual-table': true,
-            'udfs-folder': true, 'procedures-folder': true, 'adapters-folder': true, 'functions-folder': true,
+            'udfs-folder': true, 'procedures-folder': true, 'adapters-folder': true, 'preprocessors-folder': true, 'functions-folder': true,
             'script': true, 'function': true, 'constraints-folder': true, 'indices-folder': true,
             'constraint': true, 'index': true, 'system-schemas-folder': true, 'system-schema': true,
             'system-table': true, 'schema-group': true, 'db-connections-folder': true, 'db-connection': true
         };
         for (const type of Object.keys(allTypes) as ObjectTreeItemType[]) {
-            for (const scriptType of type === 'script' ? ['UDF', 'ADAPTER', 'SCRIPTING'] : [undefined]) {
+            for (const scriptType of type === 'script' ? ['UDF', 'ADAPTER', 'SCRIPTING', 'PREPROCESSOR'] : [undefined]) {
                 const item = new ObjectTreeItem({
                     label: 'X',
                     id: `conn-1:VS_SRC:X:${type}`,
@@ -94,6 +96,9 @@ suite('ObjectTreeProvider, script, function and system nodes', () => {
         assert.deepStrictEqual(menuCommandsFor('script-adapter'), [
             'exasol.openScriptSource', 'exasol.copyQualifiedName (inline)'
         ]);
+        assert.deepStrictEqual(menuCommandsFor('script-preprocessor'), [
+            'exasol.openScriptSource', 'exasol.copyQualifiedName (inline)'
+        ]);
         assert.deepStrictEqual(menuCommandsFor('script'), ['exasol.openScriptSource']);
         assert.deepStrictEqual(menuCommandsFor('function'), ['exasol.openFunctionSource']);
     });
@@ -114,5 +119,161 @@ suite('ObjectTreeProvider, script, function and system nodes', () => {
             'exasol.previewTable', 'exasol.describeTable', 'exasol.generateSelect', 'exasol.copyQualifiedName (inline)'
         ]);
         assert.deepStrictEqual(menuCommandsFor('system-schema'), ['exasol.copyQualifiedName (inline)']);
+    });
+});
+
+/** Records the driver role of each query, as the tree reads scripts and the parameter on different sessions. */
+class RoleRecordingConnectionManager extends MockConnectionManager {
+    readonly roles: string[] = [];
+
+    async getDriver(_connectionId?: string, role = 'user'): Promise<ExasolDriver> {
+        this.roles.push(role);
+        return super.getDriver();
+    }
+}
+
+type ParameterAnswer = [string | null, string | null] | 'error';
+
+// SCRIPT_TYPE and the parameter values as Exasol returns them (docker, 2026-10-23):
+// unquoted names in uppercase, other names quoted, always schema-qualified.
+function makePreprocessorProvider(parameter: ParameterAnswer, scripts: Array<[string, string]> = [['VS_PP', 'MY_PP'], ['VS_PP', 'OTHER_PP']]) {
+    const queries: string[] = [];
+    const manager = new RoleRecordingConnectionManager({
+        query: async (sql: string) => {
+            queries.push(sql);
+            if (sql.includes('EXA_PARAMETERS')) {
+                return parameter === 'error'
+                    ? createRawErrorResult('42000', 'boom')
+                    : createRawResult(['SESSION_VALUE', 'SYSTEM_VALUE'], [parameter]);
+            }
+            if (sql.includes('GROUP BY SCRIPT_TYPE')) {
+                return createRawResult(['SCRIPT_TYPE', 'SCRIPT_COUNT'], [['PREPROCESSOR', scripts.length]]);
+            }
+            if (sql.includes("SCRIPT_TYPE = 'PREPROCESSOR'")) {
+                return createRawResult(
+                    ['SCRIPT_NAME', 'SCRIPT_LANGUAGE', 'SCRIPT_INPUT_TYPE', 'SCRIPT_TYPE'],
+                    scripts.map(([, name]) => [name, 'LUA', null, 'PREPROCESSOR'])
+                );
+            }
+            return createEmptyRawResult(['DUMMY']);
+        }
+    });
+    const provider = new ObjectTreeProvider(asConnectionManager(manager));
+    const changed: unknown[] = [];
+    provider.onDidChangeTreeData(node => { changed.push(node); });
+    return { provider, manager, queries, changed };
+}
+
+function makeSchemaItem(schemaName: string): InstanceType<typeof ObjectTreeItem> {
+    return new ObjectTreeItem({
+        label: schemaName, id: `conn-1:${schemaName}`, collapsibleState: 1, type: 'schema',
+        connection: TEST_CONNECTION, schemaName
+    });
+}
+
+/** Expands the schema and its Preprocessors folder, then lets the marker read finish. */
+async function expandPreprocessors(provider: InstanceType<typeof ObjectTreeProvider>, schemaName = 'VS_PP') {
+    const schemaChildren = await provider.getChildren(makeSchemaItem(schemaName)) as Array<InstanceType<typeof ObjectTreeItem>>;
+    const folder = schemaChildren.find(child => child.type === 'preprocessors-folder');
+    assert.ok(folder, 'Preprocessors folder missing');
+    const nodes = await provider.getChildren(folder) as Array<InstanceType<typeof ObjectTreeItem>>;
+    await new Promise(resolve => setImmediate(resolve));
+    return { folder, nodes };
+}
+
+suite('ObjectTreeProvider, Preprocessors folder', () => {
+    test('a schema with preprocessor scripts gets a Preprocessors folder with their count', async () => {
+        const { provider } = makePreprocessorProvider([null, null]);
+
+        const { folder, nodes } = await expandPreprocessors(provider);
+
+        assert.strictEqual(folder.label, 'Preprocessors');
+        assert.strictEqual(folder.id, 'conn-1:VS_PP:preprocessors-folder');
+        assert.strictEqual(folder.description, '2');
+        assert.strictEqual(folder.contextValue, 'preprocessors-folder');
+        assert.deepStrictEqual(nodes.map(node => node.label), ['MY_PP', 'OTHER_PP']);
+        assert.strictEqual(nodes[0].contextValue, 'script-preprocessor');
+        assert.strictEqual((nodes[0].iconPath as { id?: string }).id, 'filter');
+        assert.strictEqual(nodes[0].description, 'LUA');
+        assert.strictEqual(nodes[0].parent, folder);
+    });
+
+    test('a schema without preprocessor scripts has no Preprocessors folder', async () => {
+        const provider = new ObjectTreeProvider(asConnectionManager(new MockConnectionManager({
+            query: async (sql: string) => sql.includes('GROUP BY SCRIPT_TYPE')
+                ? createRawResult(['SCRIPT_TYPE', 'SCRIPT_COUNT'], [['UDF', 1]])
+                : createEmptyRawResult(['DUMMY'])
+        })));
+
+        const children = await provider.getChildren(makeSchemaItem('VS_PP')) as Array<InstanceType<typeof ObjectTreeItem>>;
+
+        assert.deepStrictEqual(children.map(child => child.type), ['tables-folder', 'views-folder', 'udfs-folder']);
+    });
+
+    test('the session value marks its script "active", read on the user session only on expand', async () => {
+        const { provider, manager, queries, changed } = makePreprocessorProvider(['VS_PP.MY_PP', null]);
+
+        await provider.getChildren(makeSchemaItem('VS_PP'));
+        assert.ok(!queries.some(q => q.includes('EXA_PARAMETERS')), 'the schema expand must not read the parameter');
+        const { nodes } = await expandPreprocessors(provider);
+
+        assert.strictEqual(nodes[0].description, 'LUA, active');
+        assert.strictEqual(nodes[0].tooltip, 'SQL_PREPROCESSOR_SCRIPT\nSession value: VS_PP.MY_PP\nSystem value: NULL');
+        assert.strictEqual(nodes[1].description, 'LUA');
+        assert.deepStrictEqual(changed, [nodes[0]]);
+        const parameterQueries = queries.filter(q => q.includes('EXA_PARAMETERS'));
+        assert.strictEqual(parameterQueries.length, 1);
+        assert.match(parameterQueries[0], /SELECT SESSION_VALUE, SYSTEM_VALUE\s+FROM SYS\.EXA_PARAMETERS\s+WHERE PARAMETER_NAME = 'SQL_PREPROCESSOR_SCRIPT'/);
+        assert.strictEqual(manager.roles[manager.roles.length - 1], 'user');
+        assert.ok(manager.roles.slice(0, -1).every(role => role === 'background'), 'scripts are read on the background session');
+    });
+
+    test('only the system value naming a script gives "system value"', async () => {
+        const { provider } = makePreprocessorProvider(['VS_PP.OTHER_PP', 'VS_PP.MY_PP']);
+
+        const { nodes } = await expandPreprocessors(provider);
+
+        assert.strictEqual(nodes[0].description, 'LUA, system value');
+        assert.strictEqual(nodes[0].tooltip, 'SQL_PREPROCESSOR_SCRIPT\nSession value: VS_PP.OTHER_PP\nSystem value: VS_PP.MY_PP');
+        assert.strictEqual(nodes[1].description, 'LUA, active');
+    });
+
+    test('quoted names in the parameter match the stored names', async () => {
+        const { provider } = makePreprocessorProvider(['"vs_pp_lower"."a.b""c"', null], [['vs_pp_lower', 'a.b"c'], ['vs_pp_lower', 'A']]);
+
+        const { nodes } = await expandPreprocessors(provider, 'vs_pp_lower');
+
+        assert.strictEqual(nodes[0].description, 'LUA, active');
+        assert.strictEqual(nodes[1].description, 'LUA');
+    });
+
+    test('a script of the same name in another schema is not marked', async () => {
+        const { provider, changed } = makePreprocessorProvider(['OTHER_SCHEMA.MY_PP', 'OTHER_SCHEMA.MY_PP']);
+
+        const { nodes } = await expandPreprocessors(provider);
+
+        assert.deepStrictEqual(nodes.map(node => node.description), ['LUA', 'LUA']);
+        assert.deepStrictEqual(changed, []);
+    });
+
+    test('a failed parameter read leaves the scripts unmarked', async () => {
+        const { provider, changed } = makePreprocessorProvider('error');
+
+        const { nodes } = await expandPreprocessors(provider);
+
+        assert.deepStrictEqual(nodes.map(node => node.description), ['LUA', 'LUA']);
+        assert.strictEqual(nodes[0].tooltip, undefined);
+        assert.deepStrictEqual(changed, []);
+    });
+
+    test('dragging a preprocessor gives its quoted qualified name', async () => {
+        const { provider } = makePreprocessorProvider([null, null]);
+        const { nodes } = await expandPreprocessors(provider);
+        const store = new Map<string, { value?: unknown }>();
+        const dataTransfer = { set: (mime: string, value: { value?: unknown }) => { store.set(mime, value); } };
+
+        await provider.handleDrag([nodes[0]], dataTransfer as unknown as vscode.DataTransfer, {} as vscode.CancellationToken);
+
+        assert.strictEqual(store.get('text/plain')?.value, '"VS_PP"."MY_PP"');
     });
 });

@@ -11,6 +11,7 @@ export type ObjectTreeItemType =
     | 'udfs-folder'
     | 'procedures-folder'
     | 'adapters-folder'
+    | 'preprocessors-folder'
     | 'functions-folder'
     | 'script'
     | 'function'
@@ -66,6 +67,8 @@ export function getNodeTypeConfig(
             return { icon: 'folder', contextValue: 'procedures-folder' };
         case 'adapters-folder':
             return { icon: 'folder', contextValue: 'adapters-folder' };
+        case 'preprocessors-folder':
+            return { icon: 'folder', contextValue: 'preprocessors-folder' };
         case 'functions-folder':
             return { icon: 'folder', contextValue: 'functions-folder' };
         case 'script':
@@ -103,18 +106,22 @@ function getScriptIcon(scriptType?: string): string {
             return 'symbol-event';
         case 'ADAPTER':
             return 'extensions';
+        case 'PREPROCESSOR':
+            return 'filter';
         default:
             return 'symbol-method';
     }
 }
 
-/** UDF and adapter scripts get their own context menus; other scripts keep 'script'. */
+/** UDF, adapter and preprocessor scripts get their own context menus; other scripts keep 'script'. */
 function getScriptContextValue(scriptType?: string): string {
     switch (scriptType) {
         case 'UDF':
             return 'script-udf';
         case 'ADAPTER':
             return 'script-adapter';
+        case 'PREPROCESSOR':
+            return 'script-preprocessor';
         default:
             return 'script';
     }
