@@ -7,7 +7,7 @@
  * the statement text and the cursor offset within it.
  */
 
-import { normalizeIdentifier, stripCommentsPreservingPositions } from './sql';
+import { findStatementEnds, normalizeIdentifier, stripCommentsPreservingPositions } from './sql';
 import { findEnclosingSelectRange, isDistinctPredicateFrom } from './selectAliases';
 
 export type ContextKind =
@@ -280,20 +280,22 @@ const FROM_LIST_END = new Set(['WHERE', 'GROUP', 'ORDER', 'HAVING', 'QUALIFY', '
 /**
  * Offsets in comment-free `text` where a table reference starts: after a FROM
  * that starts a FROM list, after JOIN, and after each top-level comma of a
- * FROM list. A FROM list ends at a clause keyword such as WHERE, at a `;`, or
- * at the `)` that closes its parentheses. Strings and quoted identifiers are
- * skipped. The FROM of a statement that starts with IMPORT starts no FROM
- * list; inside parentheses, as in `FROM (IMPORT ...)`, no SELECT is at the
- * depth of its FROM. An IMPORT statement has no SELECT outside parentheses,
- * so such a SELECT starts a new statement even after an IMPORT without `;`.
- * A line with only `/` ends a statement too, as it ends a script or function
- * definition. A `;` in the body of a CREATE SCRIPT or CREATE FUNCTION belongs
- * to that body, so the word after it does not start a statement: the
- * `import(...)` of a Lua script or the `import json` of a Python script is
- * not an IMPORT statement.
+ * FROM list. A FROM list ends at a clause keyword such as WHERE, at the end
+ * of its statement, or at the `)` that closes its parentheses. Statements end
+ * where findStatementEnds ends them, so a `;` in the body of a script or
+ * function definition does not end a statement, and the `import(...)` of a
+ * Lua script or the `import json` of a Python script is not an IMPORT
+ * statement. Strings and quoted identifiers are skipped, but never past the
+ * end of their statement. The FROM of a statement that starts with IMPORT
+ * starts no FROM list; inside parentheses, as in `FROM (IMPORT ...)`, no
+ * SELECT is at the depth of its FROM. An IMPORT statement has no SELECT
+ * outside parentheses, so such a SELECT starts a new statement even after an
+ * IMPORT without `;`.
  */
 function findTableStarts(text: string): number[] {
     const len = text.length;
+    const ends = findStatementEnds(text);
+    let nextEnd = 0;
     // Per paren depth: a SELECT is at this depth (always true outside parentheses).
     const query: boolean[] = [true];
     // Per paren depth: the text at this depth is in a FROM list.
@@ -304,11 +306,20 @@ function findTableStarts(text: string): number[] {
     // The first word of the current statement is still to come.
     let statementStart = true;
     let importStatement = false;
-    let createStatement = false;
-    // The text is in the body of a CREATE SCRIPT or CREATE FUNCTION, which ends at a `/` line.
-    let definitionBody = false;
     let i = 0;
     while (i < len) {
+        const statementEnd = nextEnd < ends.length ? ends[nextEnd] : len;
+        if (i === statementEnd) {
+            query.length = 1;
+            inFrom.length = 1;
+            inFrom[0] = false;
+            previousWord = '';
+            statementStart = true;
+            importStatement = false;
+            nextEnd++;
+            i++;
+            continue;
+        }
         const ch = text[i];
         const top = inFrom.length - 1;
         if (/[A-Za-z_]/.test(ch)) {
@@ -317,11 +328,7 @@ function findTableStarts(text: string): number[] {
             const word = text.slice(start, i).toUpperCase();
             if (statementStart) {
                 importStatement = word === 'IMPORT';
-                createStatement = word === 'CREATE';
                 statementStart = false;
-            } else if (createStatement && top === 0 && (word === 'SCRIPT' || word === 'FUNCTION')) {
-                definitionBody = true;
-                createStatement = false;
             }
             if (word === 'SELECT' && top === 0) { importStatement = false; }
             if (word === 'FROM') {
@@ -339,23 +346,15 @@ function findTableStarts(text: string): number[] {
             continue;
         }
         if (ch === "'") {
-            i = skipSingleQuoted(text, i, len);
+            i = skipSingleQuoted(text, i, statementEnd);
         } else if (ch === '"') {
-            i = skipDoubleQuoted(text, i, len);
+            i = skipDoubleQuoted(text, i, statementEnd);
         } else {
             if (ch === '(') {
                 query.push(false);
                 inFrom.push(false);
             } else if (ch === ')') {
                 if (inFrom.length > 1) { query.pop(); inFrom.pop(); }
-            } else if ((ch === ';' && !definitionBody) || (ch === '/' && isSlashLine(text, i))) {
-                query.length = 1;
-                inFrom.length = 1;
-                inFrom[0] = false;
-                statementStart = true;
-                importStatement = false;
-                createStatement = false;
-                definitionBody = false;
             } else if (ch === ',' && inFrom[top]) {
                 starts.push(i + 1);
             }
@@ -364,19 +363,6 @@ function findTableStarts(text: string): number[] {
         if (!/\s/.test(ch)) { previousWord = ''; }
     }
     return starts;
-}
-
-/** The `/` at `i` is the only character on its line, apart from whitespace. */
-function isSlashLine(text: string, i: number): boolean {
-    let j = i - 1;
-    while (j >= 0 && text[j] !== '\n') {
-        if (!/\s/.test(text[j])) { return false; }
-        j--;
-    }
-    for (j = i + 1; j < text.length && text[j] !== '\n'; j++) {
-        if (!/\s/.test(text[j])) { return false; }
-    }
-    return true;
 }
 
 function dedupe(refs: FromTableRef[]): FromTableRef[] {

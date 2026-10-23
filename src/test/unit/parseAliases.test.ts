@@ -253,8 +253,20 @@ limit 100;`;
             assert.deepStrictEqual([...python.entries()], [['Y', { table: 'A' }]]);
             const noSemicolon = parseAliases("IMPORT INTO t FROM CSV AT c FILE 'a'\n\nSELECT * FROM a y");
             assert.deepStrictEqual([...noSemicolon.entries()], [['Y', { table: 'A' }]]);
-            const slash = parseAliases("IMPORT INTO t FROM CSV AT c FILE 'a'\n/\nDELETE FROM a y");
+            const slash = parseAliases("IMPORT INTO t FROM CSV AT c FILE 'a';\n/\nDELETE FROM a y");
             assert.deepStrictEqual([...slash.entries()], [['Y', { table: 'A' }]]);
+        });
+
+        test('statements end where the splitter ends them', () => {
+            assert.deepStrictEqual(findTableReferences('CREATE LUA SCRIPT s AS\nx = f(;\nDELETE FROM b y'),
+                [{ table: 'B', alias: 'Y' }]);
+            const fn = 'CREATE FUNCTION f (a INT) RETURN INT IS\nBEGIN\nRETURN a;\nEND f;\n';
+            assert.deepStrictEqual(findTableReferences(`${fn}SELECT * FROM a x;\nUPDATE t SET p = 1, q = 2`),
+                [{ table: 'A', alias: 'X' }]);
+            const jdbc = "IMPORT INTO t FROM JDBC DRIVER = 'd' AT c TABLE x;\nSELECT * FROM a y";
+            for (const before of ['CREATE LUA SCRIPT s AS\nreturn 1;\n', fn]) {
+                assert.deepStrictEqual(findTableReferences(before + jdbc), [{ table: 'A', alias: 'Y' }], before);
+            }
         });
 
         test('join keywords are not aliases', () => {
