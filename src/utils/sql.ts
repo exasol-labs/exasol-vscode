@@ -219,16 +219,30 @@ function slashLineAt(text: string, lineStart: number): number {
     return slash;
 }
 
-/** Indices of the `/` of every line that holds only `/`, in ascending order. */
-function findSlashLines(text: string): number[] {
+/**
+ * Line marks for script definitions, in ascending order: the `/` of every
+ * line that holds only `/`, and the `CREATE` of every line that starts a
+ * script or function definition.
+ */
+function findLineMarks(text: string): { slashes: number[]; definitions: number[] } {
     const slashes: number[] = [];
+    const definitions: number[] = [];
     for (let lineStart = 0; lineStart < text.length; lineStart = lineEndAt(text, lineStart) + 1) {
         const slash = slashLineAt(text, lineStart);
         if (slash !== -1) {
             slashes.push(slash);
+            continue;
+        }
+        let i = lineStart;
+        while (text.charCodeAt(i) === SPACE || text.charCodeAt(i) === TAB) {
+            i++;
+        }
+        if (text.slice(i, i + 6).toUpperCase() === 'CREATE' && !isWordCode(text.charCodeAt(i + 6))
+            && definitionKind(readWords(text, i, 6)) !== undefined) {
+            definitions.push(i);
         }
     }
-    return slashes;
+    return { slashes, definitions };
 }
 
 /** The first of the ascending `values` that is greater than `after`, or undefined. */
@@ -328,13 +342,14 @@ export function isScriptOrFunctionDefinition(sql: string): boolean {
  * Semicolons inside string literals, quoted identifiers and comments are
  * ignored. Exasol script and function definitions follow the convention of
  * the Exasol SQL clients and end at a line that holds only `/`:
- *   - `CREATE ... SCRIPT` runs until the next `/` line. The body is code in
- *     another language, so it is not tokenized as SQL.
+ *   - `CREATE ... SCRIPT` runs until the next `/` line, if that line comes
+ *     before the next line that starts with a script or function definition.
+ *     The body is code in another language, so it is not tokenized as SQL.
  *   - `CREATE ... FUNCTION` ends at a `/` line after the `END [name]` that
  *     closes the body, or at the first `;` after that `END`. Semicolons and
  *     `/` lines inside the body, and the `END` of `IF`, `FOR`, `WHILE` and
  *     `CASE`, do not end it.
- * A script without a later `/` line, and a function that does not end before
+ * A script without such a `/` line, and a function that does not end before
  * the end of the text, are split at `;` like any other text, so the
  * statements after them stay separate.
  * A `/` line between statements ends an empty statement; everywhere else
@@ -346,7 +361,7 @@ export function isScriptOrFunctionDefinition(sql: string): boolean {
 export function findStatementEnds(text: string): number[] {
     const ends: number[] = [];
     const len = text.length;
-    let slashLines: number[] | undefined;
+    let lineMarks: { slashes: number[]; definitions: number[] } | undefined;
     let i = 0;
     let statementEmpty = true;
     let functionBody: FunctionBody = FunctionBody.NONE;
@@ -396,10 +411,12 @@ export function findStatementEnds(text: string): number[] {
                         ? undefined
                         : definitionKind(readWords(text, start, 6));
                     if (kind === 'script') {
-                        // The body is not SQL: skip it up to the next `/` line, if there is one.
-                        slashLines ??= findSlashLines(text);
-                        const end = firstAfter(slashLines, lineEndAt(text, start));
-                        if (end !== undefined) {
+                        // The body is not SQL: skip it up to the next `/` line, if one
+                        // comes before the next definition that starts a line.
+                        lineMarks ??= findLineMarks(text);
+                        const end = firstAfter(lineMarks.slashes, lineEndAt(text, start));
+                        const nextDefinition = firstAfter(lineMarks.definitions, start);
+                        if (end !== undefined && (nextDefinition === undefined || end < nextDefinition)) {
                             ends.push(end);
                             i = lineEndAt(text, end);
                             statementEmpty = true;

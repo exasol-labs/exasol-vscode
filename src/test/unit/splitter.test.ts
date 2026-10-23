@@ -213,6 +213,26 @@ suite('splitIntoStatements: script and function definitions', () => {
         assert.strictEqual(findStatementAtCursor(doc, 3)?.text, 'SELECT 1;');
     });
 
+    test('a script without its own / line does not run to the / line of the next definition', () => {
+        const doc = 'CREATE LUA SCRIPT a AS\nreturn 1;\nSELECT 1;\nCREATE LUA SCRIPT b AS\nreturn 2;\n/\nSELECT 2;';
+        assert.deepStrictEqual(splitIntoStatements(doc), [
+            'CREATE LUA SCRIPT a AS\nreturn 1;',
+            'SELECT 1;',
+            'CREATE LUA SCRIPT b AS\nreturn 2;',
+            'SELECT 2;'
+        ]);
+        const withFunction = 'CREATE LUA SCRIPT a AS\nreturn 1;\n  create or replace function f() return decimal is begin return 1; end f;\n/';
+        assert.deepStrictEqual(splitIntoStatements(withFunction), [
+            'CREATE LUA SCRIPT a AS\nreturn 1;',
+            'create or replace function f() return decimal is begin return 1; end f;'
+        ]);
+    });
+
+    test('CREATE SCRIPT inside a script body, not at the start of a line, does not end the body', () => {
+        const script = 'CREATE LUA SCRIPT a AS\nquery([[CREATE OR REPLACE LUA SCRIPT b AS return 1]]);\nlocal s = "x"; -- CREATE SCRIPT c\nreturn 1;';
+        assert.deepStrictEqual(splitIntoStatements(`${script}\n/\nSELECT 1;`), [script, 'SELECT 1;']);
+    });
+
     test('unfinished function without a / line is split at ;', () => {
         const doc = 'CREATE FUNCTION f(x DECIMAL) RETURN DECIMAL IS\nBEGIN\n RETURN x;\n\nSELECT 1;\nDELETE FROM t;';
         assert.deepStrictEqual(splitIntoStatements(doc), [
