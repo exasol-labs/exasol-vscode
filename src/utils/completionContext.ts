@@ -231,10 +231,11 @@ export interface TableReference {
 /**
  * Reserved words that end a table reference or cannot be a table name, so
  * unquoted they are neither a table nor an alias. VALUES starts a list of
- * rows; LOCAL, CSV, FBV, PARQUET, SCRIPT and AT follow the FROM of IMPORT.
+ * rows; LOCAL, CSV, FBV, PARQUET, SCRIPT and AT follow the FROM of an IMPORT
+ * inside parentheses.
  */
-const NON_TABLE_WORDS = new Set(['AS', 'ON', 'USING', 'WHERE', 'FROM', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL',
-    'CROSS', 'OUTER', 'ORDER', 'GROUP', 'HAVING', 'QUALIFY', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT', 'MINUS',
+const NON_TABLE_WORDS = new Set(['AS', 'ON', 'USING', 'WHERE', 'FROM', 'JOIN', 'NATURAL', 'INNER', 'LEFT', 'RIGHT',
+    'FULL', 'CROSS', 'OUTER', 'ORDER', 'GROUP', 'HAVING', 'QUALIFY', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT', 'MINUS',
     'CONNECT', 'START', 'PREFERRING', 'SELECT', 'VALUES', 'LOCAL', 'CSV', 'FBV', 'PARQUET', 'SCRIPT', 'AT']);
 
 const TABLE_IDENT = '("(?:[^"]|"")+"|[A-Za-z_]\\w*)';
@@ -250,7 +251,8 @@ const TABLE_REFERENCE = new RegExp(
  * parentheses, as after DELETE: the FROM of `SUBSTRING(x FROM 1)` or
  * `EXTRACT(YEAR FROM d)` does not, and neither does the FROM of
  * `IS [NOT] DISTINCT FROM`. A table after `FROM VALUES (...)` is not listed:
- * its alias names rows, not a table with columns in the database.
+ * its alias names rows, not a table with columns in the database. The FROM of
+ * an IMPORT statement names a file, a database or a script, never a table.
  */
 export function findTableReferences(text: string): TableReference[] {
     const masked = stripCommentsPreservingPositions(text);
@@ -280,7 +282,9 @@ const FROM_LIST_END = new Set(['WHERE', 'GROUP', 'ORDER', 'HAVING', 'QUALIFY', '
  * that starts a FROM list, after JOIN, and after each top-level comma of a
  * FROM list. A FROM list ends at a clause keyword such as WHERE, at a `;`, or
  * at the `)` that closes its parentheses. Strings and quoted identifiers are
- * skipped.
+ * skipped. The FROM of a statement that starts with IMPORT starts no FROM
+ * list; inside parentheses, as in `FROM (IMPORT ...)`, no SELECT is at the
+ * depth of its FROM.
  */
 function findTableStarts(text: string): number[] {
     const len = text.length;
@@ -291,6 +295,9 @@ function findTableStarts(text: string): number[] {
     const starts: number[] = [];
     // The word right before the current token, or '' after any other token.
     let previousWord = '';
+    // The first word of the current statement is still to come.
+    let statementStart = true;
+    let importStatement = false;
     let i = 0;
     while (i < len) {
         const ch = text[i];
@@ -299,8 +306,12 @@ function findTableStarts(text: string): number[] {
             const start = i;
             while (i < len && /\w/.test(text[i])) { i++; }
             const word = text.slice(start, i).toUpperCase();
+            if (statementStart) {
+                importStatement = word === 'IMPORT';
+                statementStart = false;
+            }
             if (word === 'FROM') {
-                if (query[top] && previousWord !== 'DISTINCT') {
+                if (query[top] && previousWord !== 'DISTINCT' && !(top === 0 && importStatement)) {
                     inFrom[top] = true;
                     starts.push(i);
                 }
@@ -327,6 +338,7 @@ function findTableStarts(text: string): number[] {
                 query.length = 1;
                 inFrom.length = 1;
                 inFrom[0] = false;
+                statementStart = true;
             } else if (ch === ',' && inFrom[top]) {
                 starts.push(i + 1);
             }

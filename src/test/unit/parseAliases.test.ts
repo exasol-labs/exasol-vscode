@@ -13,6 +13,7 @@ registerExtensionMock();
 // deferred require() issued AFTER the mocks above are registered. A static
 // import would resolve 'vscode' before require.cache is patched.
 const { parseAliases } = require('../../providers/completionProvider') as typeof import('../../providers/completionProvider');
+const { findTableReferences } = require('../../utils/completionContext') as typeof import('../../utils/completionContext');
 
 suite('parseAliases', () => {
     test('unquoted: FROM users u', () => {
@@ -226,6 +227,30 @@ limit 100;`;
                 + "IMPORT INTO t FROM SCRIPT s.x WITH a = 'b'"
             );
             assert.deepStrictEqual([...m.keys()], []);
+        });
+
+        test('the FROM of IMPORT names no table', () => {
+            const sql = "IMPORT INTO t FROM JDBC DRIVER = 'd' AT c STATEMENT 'SELECT * FROM a x';\n"
+                + 'IMPORT INTO t FROM ORA AT c TABLE x;\nIMPORT INTO s.t (a, b) FROM EXA AT c TABLE s.x;\n'
+                + "IMPORT INTO t FROM LOCAL CSV FILE 'a.csv';\nEXPORT t INTO CSV AT c FILE 'a.csv'";
+            assert.deepStrictEqual(findTableReferences(sql), []);
+            const after = parseAliases("IMPORT INTO t FROM JDBC DRIVER = 'd' AT c TABLE x; SELECT * FROM a y");
+            assert.deepStrictEqual([...after.entries()], [['Y', { table: 'A' }]]);
+            const sub = parseAliases(
+                "SELECT * FROM (IMPORT INTO (i INT) FROM JDBC DRIVER = 'd' AT c TABLE x) y, b z;\n"
+                + 'EXPORT (SELECT * FROM a x) INTO CSV AT c FILE \'a.csv\''
+            );
+            assert.deepStrictEqual([...sub.entries()], [['Z', { table: 'B' }], ['X', { table: 'A' }]]);
+        });
+
+        test('join keywords are not aliases', () => {
+            for (const join of ['NATURAL JOIN', 'NATURAL LEFT OUTER JOIN', 'LEFT JOIN', 'RIGHT OUTER JOIN',
+                'FULL JOIN', 'INNER JOIN', 'CROSS JOIN', 'JOIN']) {
+                assert.deepStrictEqual(findTableReferences(`SELECT * FROM a ${join} b y`),
+                    [{ table: 'A' }, { table: 'B', alias: 'Y' }], join);
+            }
+            assert.deepStrictEqual(findTableReferences('SELECT * FROM a JOIN b ON 1 = 1 JOIN c USING (k)'),
+                [{ table: 'A' }, { table: 'B' }, { table: 'C' }]);
         });
 
         test('a long statement is parsed in linear time', () => {
