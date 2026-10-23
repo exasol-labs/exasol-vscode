@@ -185,4 +185,57 @@ limit 100;`;
             assert.deepStrictEqual(m.get('Z'), { table: 'C' });
         });
     });
+
+    suite('FROM that does not start a FROM clause', () => {
+        test('IS [NOT] DISTINCT FROM is a predicate', () => {
+            assert.deepStrictEqual([...parseAliases('SELECT a IS DISTINCT FROM b, c d FROM t').keys()], []);
+            const m = parseAliases('SELECT * FROM t x WHERE a IS NOT DISTINCT FROM b AND c = 1');
+            assert.deepStrictEqual([...m.keys()], ['X']);
+        });
+
+        test('text in strings, quoted identifiers and comments is not SQL', () => {
+            const m = parseAliases(
+                "SELECT 'a, b FROM x y' AS \"from p q\" FROM t u -- FROM c d\n/* JOIN e f */ JOIN \"g\" h ON 1 = 1"
+            );
+            assert.deepStrictEqual([...m.entries()], [['U', { table: 'T' }], ['H', { table: 'g' }]]);
+        });
+
+        test('FROM inside the parentheses of a function', () => {
+            const m = parseAliases(
+                "SELECT SUBSTRING(x FROM 1 FOR 2), TRIM(LEADING 'a' FROM s) a, EXTRACT(YEAR FROM d) e,"
+                + " POSITION(a IN b) p, OVERLAY(s PLACING r FROM 2 FOR 3) o FROM t u"
+            );
+            assert.deepStrictEqual([...m.entries()], [['U', { table: 'T' }]]);
+            const sub = parseAliases('SELECT * FROM (SELECT SUBSTRING(x FROM 1 FOR 2) FROM a x) d, b y');
+            assert.deepStrictEqual([...sub.entries()], [['X', { table: 'A' }], ['Y', { table: 'B' }]]);
+        });
+
+        test('VALUES is not a table', () => {
+            assert.deepStrictEqual([...parseAliases('SELECT v. FROM VALUES (1, 2) AS v(a, b)').keys()], []);
+            const m = parseAliases('SELECT * FROM VALUES (1, 2), (3, 4) v(a, b), t x');
+            assert.deepStrictEqual([...m.entries()], [['X', { table: 'T' }]]);
+        });
+
+        test('FROM inside a longer word', () => {
+            assert.deepStrictEqual([...parseAliases('SELECT xfrom t y, datefrom FROM u').keys()], []);
+        });
+
+        test('IMPORT FROM a file or a database', () => {
+            const m = parseAliases(
+                "IMPORT INTO t FROM LOCAL CSV FILE 'a.csv';\nIMPORT INTO t FROM EXA AT c TABLE s.x;\n"
+                + "IMPORT INTO t FROM SCRIPT s.x WITH a = 'b'"
+            );
+            assert.deepStrictEqual([...m.keys()], []);
+        });
+
+        test('a long statement is parsed in linear time', () => {
+            const text = 'SELECT ' + 'SUBSTRING(x FROM 1 FOR 2), a IS DISTINCT FROM b, '.repeat(20000)
+                + "'FROM a b', 1 FROM " + 'a x, '.repeat(20000) + 't y';
+            const started = performance.now();
+            const m = parseAliases(text);
+            const elapsed = performance.now() - started;
+            assert.deepStrictEqual([...m.entries()], [['X', { table: 'A' }], ['Y', { table: 'T' }]]);
+            assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)} ms`);
+        });
+    });
 });

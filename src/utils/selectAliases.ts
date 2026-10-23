@@ -339,7 +339,7 @@ function findKeywordAt(upper: string, original: string, kw: string, from: number
         if (ch === '"') { i = skipDoubleQuoted(original, i); continue; }
         if (ch === '(') { depth++; i++; continue; }
         if (ch === ')') { depth--; i++; continue; }
-        if (depth === wantedDepth && matchesKeywordAt(upper, kw, i)) {
+        if (depth === wantedDepth && matchesClauseKeywordAt(upper, kw, i)) {
             return i;
         }
         i++;
@@ -361,10 +361,26 @@ function findKeywordWithin(upper: string, original: string, kw: string, from: nu
         if (ch === '"') { i = skipDoubleQuoted(original, i); continue; }
         if (ch === '(') { depth++; i++; continue; }
         if (ch === ')') { if (depth > 0) { depth--; } else { return -1; } i++; continue; }
-        if (depth === 0 && matchesKeywordAt(upper, kw, i)) { return i; }
+        if (depth === 0 && matchesClauseKeywordAt(upper, kw, i)) { return i; }
         i++;
     }
     return -1;
+}
+
+/** `kw` at `i`, unless it is the FROM of `IS [NOT] DISTINCT FROM`. */
+function matchesClauseKeywordAt(upper: string, kw: string, i: number): boolean {
+    return matchesKeywordAt(upper, kw, i) && !(kw === 'FROM' && isDistinctPredicateFrom(upper, i));
+}
+
+/**
+ * True when the FROM at `i` of comment-free `upper` follows DISTINCT, as in
+ * `a IS [NOT] DISTINCT FROM b`, where it is part of a predicate and does not
+ * start a FROM clause.
+ */
+export function isDistinctPredicateFrom(upper: string, i: number): boolean {
+    let j = i;
+    while (j > 0 && /\s/.test(upper[j - 1])) { j--; }
+    return j >= 8 && upper.slice(j - 8, j) === 'DISTINCT' && !isIdentChar(upper[j - 9]);
 }
 
 function matchesKeywordAt(upper: string, kw: string, i: number): boolean {

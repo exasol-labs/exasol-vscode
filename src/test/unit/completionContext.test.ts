@@ -155,4 +155,16 @@ suite('classifyContext', () => {
             { schema: 'S', table: 'A' }, { schema: 's', table: 'b c' }, { table: 'T' }
         ]);
     });
+
+    test('IS DISTINCT FROM in the SELECT list does not start the FROM clause', () => {
+        const text = 'SELECT a IS DISTINCT FROM b, HERE FROM s.t x WHERE c IS NOT DISTINCT FROM d';
+        const r = classifyContext(text, at(text, 'HERE'));
+        assert.strictEqual(r.kind, 'AFTER_SELECT_KEYWORD');
+        assert.deepStrictEqual(r.fromTables, [{ schema: 'S', table: 'T' }]);
+    });
+
+    test('fromTables: VALUES, functions with FROM and strings are not tables', () => {
+        const text = "SELECT HERE FROM VALUES (1, 2) AS v(a, b), (SELECT TRIM(LEADING 'x' FROM 'FROM y z') FROM u) w";
+        assert.deepStrictEqual(classifyContext(text, at(text, 'HERE')).fromTables, [{ table: 'U' }]);
+    });
 });

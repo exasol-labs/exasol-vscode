@@ -16,7 +16,7 @@ import {
     safeFetch
 } from '../utils';
 import type { CteDefinition, SelectAlias } from '../utils';
-import { anchorCommaJoinedTables, classifyContext } from '../utils/completionContext';
+import { classifyContext, findTableReferences } from '../utils/completionContext';
 import type { CompletionContext, ContextKind } from '../utils/completionContext';
 
 export interface DatabaseObject {
@@ -82,33 +82,10 @@ export function resolvePrefixCompletions(
 // comma in a FROM list, as in `FROM a x, b y`, get their aliases too.
 export function parseAliases(queryText: string): Map<string, AliasTarget> {
     const aliases = new Map<string, AliasTarget>();
-
-    const ident = '("(?:[^"]|"")+"|\\w+)';
-    const tableAliasPattern = new RegExp(
-        `(?:from|(?:(?:inner|left|right|full|cross)\\s+)?(?:outer\\s+)?join)\\s+` +
-        `(?:${ident}\\s*\\.\\s*)?${ident}\\s+(?:as\\s+)?${ident}`,
-        'gi'
-    );
-
-    // Keywords that can follow a table name; quoted, they are aliases.
-    const STOP = new Set(['AS', 'ON', 'WHERE', 'FROM', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS',
-        'OUTER', 'ORDER', 'GROUP', 'HAVING', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT']);
-
-    let match: RegExpExecArray | null;
-    const text = anchorCommaJoinedTables(queryText);
-    while ((match = tableAliasPattern.exec(text)) !== null) {
-        const schema = match[1] && normalizeIdentifier(match[1]);
-        const table = normalizeIdentifier(match[2]);
-        const alias = normalizeIdentifier(match[3]);
-        if (!match[3].startsWith('"') && STOP.has(alias)) {
-            // The keyword can start the next table, as in `FROM a JOIN b y`.
-            tableAliasPattern.lastIndex = match.index + match[0].length - match[3].length;
-            continue;
-        }
-        if (alias === table) { continue; }
+    for (const { schema, table, alias } of findTableReferences(queryText)) {
+        if (alias === undefined || alias === table) { continue; }
         aliases.set(alias, schema ? { schema, table } : { table });
     }
-
     return aliases;
 }
 

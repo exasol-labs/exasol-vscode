@@ -116,6 +116,12 @@ where local.`;
         assert.deepStrictEqual(names('SELECT DISTINCT(a + 1) FROM t'), []);
     });
 
+    test('IS [NOT] DISTINCT FROM does not end the SELECT list', () => {
+        assert.deepStrictEqual(names('SELECT a IS DISTINCT FROM b AS x, c d FROM t'), ['x', 'd']);
+        const stmt = 'SELECT a IS NOT DISTINCT\n  FROM b x, c d FROM t WHERE LOCAL.';
+        assert.deepStrictEqual(parseEnclosingSelectListAliases(stmt, stmt.length).map(a => a.name), ['x', 'd']);
+    });
+
     test('a long run of spaces inside an item is parsed in linear time', () => {
         const stmt = 'SELECT DISTINCT(' + ' '.repeat(100000) + '"';
         const started = performance.now();
