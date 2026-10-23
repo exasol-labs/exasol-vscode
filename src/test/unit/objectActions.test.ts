@@ -717,7 +717,7 @@ suite('qualifyFunctionText', () => {
                 'CREATE OR REPLACE FUNCTION "S"."F" (p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END f;\n/'
             );
         }
-        assert.strictEqual(qualifyFunctionText('something else\n/', 'S', 'N'), 'CREATE OR REPLACE something else\n/');
+        assert.ok(qualifyFunctionText('something else\n/', 'S', 'N').endsWith('\nCREATE OR REPLACE something else\n/'));
     });
 
     test('keeps a comment that touches the name', () => {
@@ -768,8 +768,24 @@ suite('qualifyFunctionText', () => {
         assert.strictEqual(splitIntoStatements(`${ddl}\nSELECT 2;`).length, 2);
     });
 
-    test('only prefixes text with an unexpected header', () => {
-        assert.strictEqual(qualifyFunctionText('something else', 'S', 'N'), 'CREATE OR REPLACE something else\n/');
+    // FUNCTION_TEXT keeps a comment written before the name (docker, 2026-10-23).
+    const body = ' RETURN NUMBER IS BEGIN RETURN a; END f2;';
+    for (const [stored, expected] of [
+        [`FUNCTION /* x */ f2 (a NUMBER)${body}`, `CREATE OR REPLACE FUNCTION /* x */ "S"."F2" (a NUMBER)${body}\n/`],
+        [`FUNCTION /* x */ S /* y */ . f2 (a NUMBER)${body}`, `CREATE OR REPLACE FUNCTION /* x */ "S"."F2" (a NUMBER)${body}\n/`],
+        [`FUNCTION -- x\n  f2(a NUMBER)${body}`, `CREATE OR REPLACE FUNCTION -- x\n  "S"."F2"(a NUMBER)${body}\n/`],
+    ]) {
+        test(`keeps a comment before the name: ${JSON.stringify(stored.slice(0, 30))}`, () => {
+            assert.strictEqual(qualifyFunctionText(stored, 'S', 'F2'), expected);
+        });
+    }
+
+    test('text with an unexpected header gets a note that the schema is not added', () => {
+        assert.strictEqual(
+            qualifyFunctionText('something else', 'S', 'N'),
+            '-- The function name was not found in FUNCTION_TEXT, so the schema is not added.\n'
+            + 'CREATE OR REPLACE something else\n/'
+        );
     });
 });
 
@@ -1301,7 +1317,16 @@ suite('qualifyViewText', () => {
         ['CREATE OR REPLACE VIEW V_PLAIN AS SELECT 1 AS A', 'V_PLAIN',
             'CREATE OR REPLACE VIEW "VS_SRC"."V_PLAIN" AS SELECT 1 AS A\n;'],
         ['create or replace view v_lower as select 9 as g', 'V_LOWER',
-            'CREATE OR REPLACE view "VS_SRC"."V_LOWER" as select 9 as g\n;'],
+            'create or replace view "VS_SRC"."V_LOWER" as select 9 as g\n;'],
+        // Comments between the keywords and before the name are stored (docker, 2026-10-23).
+        ['CREATE VIEW /* c */ v1 AS SELECT 1 x', 'V1',
+            'CREATE OR REPLACE VIEW /* c */ "VS_SRC"."V1" AS SELECT 1 x\n;'],
+        ['CREATE FORCE /* d */ VIEW -- e\n v2 AS SELECT 1 x', 'V2',
+            'CREATE OR REPLACE FORCE /* d */ VIEW -- e\n "VS_SRC"."V2" AS SELECT 1 x\n;'],
+        ['CREATE /*a*/ OR REPLACE /*b*/ FORCE /*c*/ VIEW/*d*/VS_SRC.v3 AS SELECT 1 x', 'V3',
+            'CREATE /*a*/ OR REPLACE /*b*/ FORCE /*c*/ VIEW/*d*/"VS_SRC"."V3" AS SELECT 1 x\n;'],
+        ['CREATE/*a*/VIEW v4 AS SELECT 1 x', 'V4',
+            'CREATE OR REPLACE/*a*/VIEW "VS_SRC"."V4" AS SELECT 1 x\n;'],
         ['CREATE OR REPLACE VIEW "VS_SRC"."v Quoted" AS SELECT 3 AS C', 'v Quoted',
             'CREATE OR REPLACE VIEW "VS_SRC"."v Quoted" AS SELECT 3 AS C\n;'],
         ['CREATE OR REPLACE VIEW "VS_SRC" . "V_SPACED" (X, Y) AS SELECT 4, 5', 'V_SPACED',
@@ -1373,8 +1398,11 @@ suite('qualifyViewText', () => {
         }
     });
 
-    test('text with an unexpected header only gets the semicolon', () => {
-        assert.strictEqual(qualifyViewText('SELECT 1', 'S', 'V'), 'SELECT 1\n;');
+    test('text with an unexpected header gets the semicolon and a note', () => {
+        assert.strictEqual(
+            qualifyViewText('SELECT 1', 'S', 'V'),
+            '-- The view name was not found in VIEW_TEXT, so the schema and OR REPLACE are not added.\nSELECT 1\n;'
+        );
     });
 });
 

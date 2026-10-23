@@ -529,23 +529,28 @@ export function qualifyScriptText(scriptText: string, schemaName: string, script
  * Turns FUNCTION_TEXT into a statement that recreates the function in its own
  * schema. The database stores the text as written after `CREATE [OR REPLACE]`,
  * so the name may lack the schema, and `SCHEMA . NAME` keeps the spaces and
- * comments around the dot; it is replaced by the quoted qualified name. A `/` line closes the statement, as
- * for scripts.
+ * comments around the dot; it is replaced by the quoted qualified name.
+ * Comments before the name are kept. A `/` line closes the statement, as for
+ * scripts. Text with an unexpected header gets a note line, as the schema
+ * cannot be added.
  */
 export function qualifyFunctionText(functionText: string, schemaName: string, functionName: string): string {
     // A client that sent the `/` line along with the statement leaves it in FUNCTION_TEXT.
     const text = stripFinalSlashLine(functionText);
-    const header = new RegExp(`^(FUNCTION\\s+)${OBJECT_NAME}`, 'i').exec(text);
+    const header = new RegExp(`^(FUNCTION${GAP})${OBJECT_NAME}`, 'i').exec(text);
     if (!header) {
-        return `CREATE OR REPLACE ${text}\n/`;
+        return `-- The function name was not found in FUNCTION_TEXT, so the schema is not added.\nCREATE OR REPLACE ${text}\n/`;
     }
     const name = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(functionName)}"`;
     return `CREATE OR REPLACE ${header[1]}${name}${text.slice(header[0].length)}\n/`;
 }
 
-/** Leading comments, `CREATE [OR REPLACE] [FORCE] VIEW` and the name, which may lack the schema. */
+/**
+ * `CREATE [OR REPLACE] [FORCE] VIEW` and the name, which may lack the schema;
+ * comments may come before and between them.
+ */
 const VIEW_HEADER = new RegExp(
-    `^(${GAP})CREATE\\s+(?:OR\\s+REPLACE\\s+)?((?:FORCE\\s+)?VIEW\\s+)${OBJECT_NAME}`,
+    `^(${GAP}CREATE)(${GAP}OR${GAP}REPLACE)?(${GAP}(?:FORCE${GAP})?VIEW${GAP})${OBJECT_NAME}`,
     'i'
 );
 
@@ -553,19 +558,20 @@ const VIEW_HEADER = new RegExp(
  * Turns VIEW_TEXT into a statement that recreates the view in its own schema.
  * The database stores the whole statement as written, so OR REPLACE may be
  * missing and the name may lack the schema. The header becomes
- * `CREATE OR REPLACE [FORCE] VIEW "SCHEMA"."NAME"`; leading comments and the
- * rest are kept. The text may end with a comment, so an unterminated
+ * `CREATE OR REPLACE [FORCE] VIEW "SCHEMA"."NAME"`; comments and the rest are
+ * kept as written. The text may end with a comment, so an unterminated
  * statement gets the `;` on a line of its own. Text with an unexpected header
- * is only given the `;`.
+ * is given the `;` and a note line, as schema and OR REPLACE cannot be added.
  */
 export function qualifyViewText(viewText: string, schemaName: string, viewName: string): string {
     const terminated = /;\s*$/.test(stripCommentsPreservingStrings(viewText)) ? viewText : `${viewText}\n;`;
     const header = VIEW_HEADER.exec(terminated);
     if (!header) {
-        return terminated;
+        return `-- The view name was not found in VIEW_TEXT, so the schema and OR REPLACE are not added.\n${terminated}`;
     }
     const name = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(viewName)}"`;
-    return `${header[1]}CREATE OR REPLACE ${header[2]}${name}${terminated.slice(header[0].length)}`;
+    const [, create, orReplace = ' OR REPLACE', view] = header;
+    return `${create}${orReplace}${view}${name}${terminated.slice(header[0].length)}`;
 }
 
 /**
