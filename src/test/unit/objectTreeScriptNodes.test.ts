@@ -11,6 +11,7 @@ registerExtensionMock();
 const { ObjectTreeItem, ObjectTreeProvider } = require('../../providers/objectTreeProvider') as typeof import('../../providers/objectTreeProvider');
 
 import type { ExasolDriver } from '@exasol/exasol-driver-ts';
+import type { StoredConnection } from '../../connectionManager';
 import { createEmptyRawResult, createRawResult, createRawErrorResult, MockConnectionManager, TEST_CONNECTION, asConnectionManager } from '../helpers/mockConnectionManager';
 
 function makeScriptItem(scriptType: string, name = 'S1'): InstanceType<typeof ObjectTreeItem> {
@@ -122,13 +123,34 @@ suite('ObjectTreeProvider, script, function and system nodes', () => {
     });
 });
 
-/** Records the driver role of each query, as the tree reads scripts and the parameter on different sessions. */
+/**
+ * Records the driver role of each query, as the tree reads scripts and the
+ * parameter on different sessions. `userSession` says whether a user driver
+ * is open; `whileQueued` runs before a user-role operation, as another query
+ * would while it waits for the user session.
+ */
 class RoleRecordingConnectionManager extends MockConnectionManager {
     readonly roles: string[] = [];
+    userSession = true;
+    activeConnection: StoredConnection | undefined = TEST_CONNECTION;
+    whileQueued: (() => void) | undefined;
+
+    getActiveConnection(): StoredConnection | undefined { return this.activeConnection; }
+
+    hasDriver(_connectionId: string, role: string): boolean {
+        return role !== 'user' || this.userSession;
+    }
 
     async getDriver(_connectionId?: string, role = 'user'): Promise<ExasolDriver> {
         this.roles.push(role);
         return super.getDriver();
+    }
+
+    async executeWithRetry<T>(fn: () => Promise<T>, _connectionId?: string, options?: { role?: string }): Promise<T> {
+        if ((options?.role ?? 'user') === 'user') {
+            this.whileQueued?.();
+        }
+        return fn();
     }
 }
 
@@ -263,6 +285,30 @@ suite('ObjectTreeProvider, Preprocessors folder', () => {
 
         assert.deepStrictEqual(nodes.map(node => node.description), ['LUA', 'LUA']);
         assert.strictEqual(nodes[0].tooltip, undefined);
+        assert.deepStrictEqual(changed, []);
+    });
+
+    test('without an open user session the marker is skipped and no session is opened', async () => {
+        const { provider, manager, queries, changed } = makePreprocessorProvider(['VS_PP.MY_PP', null]);
+        manager.userSession = false;
+
+        const { nodes } = await expandPreprocessors(provider);
+
+        assert.deepStrictEqual(nodes.map(node => node.description), ['LUA', 'LUA']);
+        assert.ok(!queries.some(q => q.includes('EXA_PARAMETERS')));
+        assert.ok(!manager.roles.includes('user'), 'no user driver may be requested');
+        assert.deepStrictEqual(changed, []);
+    });
+
+    test('a marker read queued while the active connection changed is skipped', async () => {
+        const { provider, manager, queries, changed } = makePreprocessorProvider(['VS_PP.MY_PP', null]);
+        manager.whileQueued = () => { manager.activeConnection = { ...TEST_CONNECTION, id: 'conn-2', name: 'Other' }; };
+
+        const { nodes } = await expandPreprocessors(provider);
+
+        assert.deepStrictEqual(nodes.map(node => node.description), ['LUA', 'LUA']);
+        assert.ok(!queries.some(q => q.includes('EXA_PARAMETERS')));
+        assert.ok(!manager.roles.includes('user'), 'no user driver may be requested for the old connection');
         assert.deepStrictEqual(changed, []);
     });
 

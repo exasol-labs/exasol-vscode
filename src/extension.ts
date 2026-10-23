@@ -82,6 +82,8 @@ export function activate(context: vscode.ExtensionContext) {
     const connectionTreeProvider = new ConnectionTreeProvider(connectionManager);
     const objectTreeProvider = new ObjectTreeProvider(connectionManager);
     const queryHistoryProvider = new QueryHistoryProvider(context);
+    // The Preprocessors folder marks the script named in SQL_PREPROCESSOR_SCRIPT.
+    const preprocessorScriptSet = queryExecutor.onDidSetPreprocessorScript(() => objectTreeProvider.refresh());
 
     // Register panel views
     ResultsPanel.register(context, connectionManager);
@@ -538,7 +540,8 @@ export function activate(context: vscode.ExtensionContext) {
         connectionsChanged,
         activeConnectionChanged,
         notebookSerializer,
-        notebookController
+        notebookController,
+        preprocessorScriptSet
     );
 
     return {

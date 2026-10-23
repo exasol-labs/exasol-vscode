@@ -58,8 +58,14 @@ export async function captureBaselineStatementIdentity(driver: ExasolDriver): Pr
     }, {}, getOutputChannel());
 }
 
+/** ALTER SESSION or ALTER SYSTEM SET SQL_PREPROCESSOR_SCRIPT, after comments are removed. */
+const SET_PREPROCESSOR_SCRIPT = /^\s*ALTER\s+(?:SESSION|SYSTEM)\s+SET\s+SQL_PREPROCESSOR_SCRIPT\b/i;
+
 export class QueryExecutor {
     private currentCancellationToken: vscode.CancellationTokenSource | undefined;
+    private readonly setPreprocessorScriptEmitter = new vscode.EventEmitter<void>();
+    /** Fires after a statement that sets SQL_PREPROCESSOR_SCRIPT ran successfully. */
+    readonly onDidSetPreprocessorScript = this.setPreprocessorScriptEmitter.event;
 
     constructor(private connectionManager: ConnectionManager) {}
 
@@ -178,7 +184,7 @@ export class QueryExecutor {
         // the identity-capture query and any time spent queued behind another
         // in-flight operation on the same connection.
         const isResultSet = this.isResultSetQuery(finalQuery);
-        return await this.connectionManager.executeWithRetry(async () => {
+        const result = await this.connectionManager.executeWithRetry(async () => {
             const driver = await this.connectionManager.getDriver();
             const shouldCapturePlanIdentity = isExecutionPlanEnabled()
                 && (this.connectionManager.isExecutionPlanAvailable?.(activeConnection.id) ?? true);
@@ -239,6 +245,10 @@ export class QueryExecutor {
             retryOnConnectionError: isResultSet,
             ...(cancellationToken ? { cancellationToken } : {})
         });
+        if (SET_PREPROCESSOR_SCRIPT.test(stripCommentsPreservingStrings(finalQuery))) {
+            this.setPreprocessorScriptEmitter.fire();
+        }
+        return result;
     }
 
     setCancellationToken(token: vscode.CancellationTokenSource) {
