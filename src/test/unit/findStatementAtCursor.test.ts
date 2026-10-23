@@ -253,4 +253,26 @@ AND name = 'test';`;
         assert.strictEqual(result.range.start, 0);
         assert.strictEqual(result.range.end, 1);
     });
+
+    suite('sql to run', () => {
+        test('a script at the cursor runs whole, without being split at its semicolons', () => {
+            const documentText = 'SELECT 1;\nCREATE LUA SCRIPT s AS\n a = 1;\n b = 2;\n/\nSELECT 2;';
+            for (const line of [1, 2, 3, 4]) {
+                const result = findStatementAtCursor(documentText, line, 0);
+                assert.ok(result);
+                assert.strictEqual(result.sql, 'CREATE LUA SCRIPT s AS\n a = 1;\n b = 2;', `line ${line}`);
+            }
+        });
+
+        test('a statement closed by a semicolon runs trimmed, with the comment after it', () => {
+            const documentText = 'SELECT 1;\n  SELECT 2; -- note  \nSELECT 3';
+            assert.strictEqual(findStatementAtCursor(documentText, 1, 4)?.sql, 'SELECT 2; -- note');
+            assert.strictEqual(findStatementAtCursor(documentText, 2, 0)?.sql, 'SELECT 3');
+        });
+
+        test('a script body keeps its end as written', () => {
+            const documentText = 'CREATE LUA SCRIPT s AS\n  a = 1;  \n/\n';
+            assert.strictEqual(findStatementAtCursor(documentText, 1, 0)?.sql, 'CREATE LUA SCRIPT s AS\n  a = 1;  ');
+        });
+    });
 });

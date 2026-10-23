@@ -757,21 +757,24 @@ function statementStartOffset(text: string, lineOffsets: number[], from: number,
  * it is in, or the one whose `;` is right before it; after the last `;` on the
  * line, it selects the last statement on that line.
  *
- * Returns the statement text, its line range, and the offset of its first character,
- * or undefined if no statement found.
+ * Returns the statement text, its line range, the offset of its first character,
+ * and `sql`, the text to send as one statement: trimmed like in
+ * splitIntoStatements, a definition closed by a `/` line keeps its end as
+ * written. It must not be split again, because without its `/` line a script
+ * would be split at its `;`. Returns undefined if no statement is found.
  */
 export function findStatementAtCursor(
     documentText: string,
     cursorLine: number,
     cursorCharacter: number
-): { text: string; range: { start: number; end: number }; startOffset: number } | undefined {
+): { text: string; sql: string; range: { start: number; end: number }; startOffset: number } | undefined {
     const lineOffsets = buildLineOffsets(documentText);
     const lastLine = lineOffsets.length - 1;
     const ends = findStatementEnds(documentText);
 
     // `last` is the terminator line, so a cursor on a `/` line selects the statement it closes.
     // `endOffset` is the offset right after the `;`, or the end of the `/` line.
-    const statements: Array<{ start: number; end: number; last: number; text: string; startOffset: number; endOffset: number }> = [];
+    const statements: Array<{ start: number; end: number; last: number; text: string; sql: string; startOffset: number; endOffset: number }> = [];
     let from = 0;
     let previousTerminatorLine = -1;
 
@@ -787,7 +790,8 @@ export function findStatementAtCursor(
         const trimmed = chunk.trim();
         if (trimmed && trimmed !== ';') {
             statements.push({
-                start: offsetToLine(lineOffsets, start), end: endLine, last: terminatorLine, text: chunk, startOffset: start,
+                start: offsetToLine(lineOffsets, start), end: endLine, last: terminatorLine, text: chunk,
+                sql: slash ? chunk.trimStart() : trimmed, startOffset: start,
                 endOffset: slash ? lineEndAt(documentText, endIdx) : endIdx + 1
             });
         } else if (slash) {
@@ -811,7 +815,8 @@ export function findStatementAtCursor(
         const chunk = documentText.slice(tailStart);
         if (chunk.trim()) {
             statements.push({
-                start: offsetToLine(lineOffsets, tailStart), end: lastLine, last: lastLine, text: chunk, startOffset: tailStart,
+                start: offsetToLine(lineOffsets, tailStart), end: lastLine, last: lastLine, text: chunk, sql: chunk.trim(),
+                startOffset: tailStart,
                 endOffset: documentText.length
             });
         }
@@ -822,6 +827,7 @@ export function findStatementAtCursor(
     const statement = onLine.find(s => cursor <= s.endOffset) ?? onLine[onLine.length - 1];
     return statement && {
         text: statement.text,
+        sql: statement.sql,
         range: { start: statement.start, end: statement.end },
         startOffset: statement.startOffset
     };

@@ -602,7 +602,11 @@ async function executeQuery(
         return;
     }
 
+    // Text from a selection or the whole file is split into statements. The
+    // statement at the cursor is sent as one statement, because a script
+    // without its `/` line would be split at its `;`.
     let queryText: string;
+    let split = true;
     const selection = editor.selection;
     const hasSelection = !selection.isEmpty;
 
@@ -624,7 +628,8 @@ async function executeQuery(
 
         if (statement) {
             // Found a statement at the cursor - execute only that statement
-            queryText = statement.text;
+            queryText = statement.sql;
+            split = false;
             output.appendLine(`🎯 Executing statement at cursor (lines ${statement.range.start + 1}-${statement.range.end + 1})`);
         } else {
             // No statement found at cursor - execute entire file
@@ -638,8 +643,7 @@ async function executeQuery(
         return;
     }
 
-    // Split the text into individual statements
-    const statements = splitIntoStatements(queryText);
+    const statements = split ? splitIntoStatements(queryText) : [queryText];
 
     if (statements.length === 0) {
         vscode.window.showWarningMessage('No queries to execute');
