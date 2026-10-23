@@ -260,7 +260,7 @@ export class ExasolCompletionProvider implements vscode.CompletionItemProvider {
             const aliases = parseAliases(queryText);
 
             // Parse CTEs from the CURRENT statement only (CTEs are statement-scoped).
-            const currentStmt = findStatementAtCursor(queryText, position.line);
+            const currentStmt = findStatementAtCursor(queryText, position.line, position.character);
             const ctes: CteDefinition[] = currentStmt ? parseCtes(currentStmt.text) : [];
             const cteByName = new Map<string, CteDefinition>();
             for (const c of ctes) { cteByName.set(c.name, c); }

@@ -755,21 +755,25 @@ function statementStartOffset(text: string, lineOffsets: number[], from: number,
  * Leading comment-only lines are excluded from each statement's range, so a cursor
  * on a pure comment line returns undefined. A statement that starts on the line
  * where the previous one ends starts after it, and the previous one ends at its
- * `;`; on such a line the cursor selects the statement that ends there.
+ * `;`. On a line with more than one statement, the cursor selects the statement
+ * it is in, or the one whose `;` is right before it; after the last `;` on the
+ * line, it selects the last statement on that line.
  *
  * Returns the statement text, its line range, and the offset of its first character,
  * or undefined if no statement found.
  */
 export function findStatementAtCursor(
     documentText: string,
-    cursorLine: number
+    cursorLine: number,
+    cursorCharacter: number
 ): { text: string; range: { start: number; end: number }; startOffset: number } | undefined {
     const lineOffsets = buildLineOffsets(documentText);
     const lastLine = lineOffsets.length - 1;
     const ends = findStatementEnds(documentText);
 
     // `last` is the terminator line, so a cursor on a `/` line selects the statement it closes.
-    const statements: Array<{ start: number; end: number; last: number; text: string; startOffset: number }> = [];
+    // `endOffset` is the offset right after the `;`, or the end of the `/` line.
+    const statements: Array<{ start: number; end: number; last: number; text: string; startOffset: number; endOffset: number }> = [];
     let from = 0;
     let previousTerminatorLine = -1;
 
@@ -784,7 +788,10 @@ export function findStatementAtCursor(
         const chunk = start === -1 ? '' : documentText.slice(start, textEnd);
         const trimmed = chunk.trim();
         if (trimmed && trimmed !== ';') {
-            statements.push({ start: offsetToLine(lineOffsets, start), end: endLine, last: terminatorLine, text: chunk, startOffset: start });
+            statements.push({
+                start: offsetToLine(lineOffsets, start), end: endLine, last: terminatorLine, text: chunk, startOffset: start,
+                endOffset: slash ? lineEndAt(documentText, endIdx) : endIdx + 1
+            });
         } else if (slash) {
             // An optional `/` line after a definition closed by `;` (`END f;`)
             // selects that definition, so the cursor there never falls through
@@ -792,6 +799,7 @@ export function findStatementAtCursor(
             const previous = statements[statements.length - 1];
             if (previous?.last === previousTerminatorLine && isScriptOrFunctionDefinition(previous.text)) {
                 previous.last = terminatorLine;
+                previous.endOffset = lineEndAt(documentText, endIdx);
             }
         }
 
@@ -804,21 +812,21 @@ export function findStatementAtCursor(
     if (tailStart !== -1) {
         const chunk = documentText.slice(tailStart);
         if (chunk.trim()) {
-            statements.push({ start: offsetToLine(lineOffsets, tailStart), end: lastLine, last: lastLine, text: chunk, startOffset: tailStart });
+            statements.push({
+                start: offsetToLine(lineOffsets, tailStart), end: lastLine, last: lastLine, text: chunk, startOffset: tailStart,
+                endOffset: documentText.length
+            });
         }
     }
 
-    for (const statement of statements) {
-        if (cursorLine >= statement.start && cursorLine <= statement.last) {
-            return {
-                text: statement.text,
-                range: { start: statement.start, end: statement.end },
-                startOffset: statement.startOffset
-            };
-        }
-    }
-
-    return undefined;
+    const cursor = cursorLine <= lastLine ? lineOffsets[cursorLine] + cursorCharacter : documentText.length;
+    const onLine = statements.filter(s => cursorLine >= s.start && cursorLine <= s.last);
+    const statement = onLine.find(s => cursor <= s.endOffset) ?? onLine[onLine.length - 1];
+    return statement && {
+        text: statement.text,
+        range: { start: statement.start, end: statement.end },
+        startOffset: statement.startOffset
+    };
 }
 
 /**

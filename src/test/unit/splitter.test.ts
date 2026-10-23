@@ -210,7 +210,7 @@ suite('splitIntoStatements: script and function definitions', () => {
         ]);
         const doc = 'CREATE OR REPLACE LUA SCRIPT s AS\n  return 1;\n;\nSELECT 1;\nDROP TABLE t;';
         assert.deepStrictEqual(splitIntoStatements(doc), ['CREATE OR REPLACE LUA SCRIPT s AS\n  return 1;', 'SELECT 1;', 'DROP TABLE t;']);
-        assert.strictEqual(findStatementAtCursor(doc, 3)?.text, 'SELECT 1;');
+        assert.strictEqual(findStatementAtCursor(doc, 3, 0)?.text, 'SELECT 1;');
     });
 
     test('a script without its own / line does not run to the / line of the next definition', () => {
@@ -240,7 +240,7 @@ suite('splitIntoStatements: script and function definitions', () => {
             'SELECT 1;',
             'DELETE FROM t;'
         ]);
-        assert.strictEqual(findStatementAtCursor(doc, 4)?.text, 'SELECT 1;');
+        assert.strictEqual(findStatementAtCursor(doc, 4, 0)?.text, 'SELECT 1;');
         assert.deepStrictEqual(
             splitIntoStatements('CREATE FUNCTION f(x DECIMAL) RETURN DECIMAL IS\n r DECIMAL;\nSELECT 1;'),
             ['CREATE FUNCTION f(x DECIMAL) RETURN DECIMAL IS\n r DECIMAL;', 'SELECT 1;']
@@ -332,7 +332,7 @@ suite('findStatementRanges and findStatementAtCursor: script definitions', () =>
 
     test('cursor inside the body selects the whole script', () => {
         for (const line of [1, 2, 3]) {
-            const result = findStatementAtCursor(text, line);
+            const result = findStatementAtCursor(text, line, 0);
             assert.ok(result);
             assert.strictEqual(result.text, 'CREATE LUA SCRIPT x AS\nlocal a = 1;\nexit()');
             assert.deepStrictEqual(result.range, { start: 1, end: 3 });
@@ -340,7 +340,7 @@ suite('findStatementRanges and findStatementAtCursor: script definitions', () =>
     });
 
     test('cursor on the / line selects the script it closes, without the / line', () => {
-        const result = findStatementAtCursor(text, 4);
+        const result = findStatementAtCursor(text, 4, 0);
         assert.ok(result);
         assert.strictEqual(result.text, 'CREATE LUA SCRIPT x AS\nlocal a = 1;\nexit()');
         assert.deepStrictEqual(result.range, { start: 1, end: 3 });
@@ -348,7 +348,7 @@ suite('findStatementRanges and findStatementAtCursor: script definitions', () =>
 
     test('cursor on the / line after a function selects the function', () => {
         const fnText = 'CREATE FUNCTION f (p DECIMAL) RETURN DECIMAL IS\nBEGIN\n  RETURN p;\nEND f';
-        assert.strictEqual(findStatementAtCursor(`${fnText}\n/\nSELECT 1;`, 4)?.text, fnText);
+        assert.strictEqual(findStatementAtCursor(`${fnText}\n/\nSELECT 1;`, 4, 0)?.text, fnText);
     });
 
     suite('function ending in `END f;` followed by a / line', () => {
@@ -356,22 +356,22 @@ suite('findStatementRanges and findStatementAtCursor: script definitions', () =>
         const doc = `${fnText}\n/\nSELECT 2;`;
 
         test('cursor on the / line selects only the function', () => {
-            const result = findStatementAtCursor(doc, 4);
+            const result = findStatementAtCursor(doc, 4, 0);
             assert.ok(result);
             assert.strictEqual(result.text, fnText);
             assert.deepStrictEqual(result.range, { start: 0, end: 3 });
         });
 
         test('cursor on the line after the / line selects the next statement', () => {
-            assert.strictEqual(findStatementAtCursor(doc, 5)?.text, 'SELECT 2;');
+            assert.strictEqual(findStatementAtCursor(doc, 5, 0)?.text, 'SELECT 2;');
         });
 
         test('blank line between the function and the / line', () => {
-            assert.strictEqual(findStatementAtCursor(`${fnText}\n\n/\nSELECT 2;`, 5)?.text, fnText);
+            assert.strictEqual(findStatementAtCursor(`${fnText}\n\n/\nSELECT 2;`, 5, 0)?.text, fnText);
         });
 
         test('a / line after a plain statement stays outside it', () => {
-            assert.strictEqual(findStatementAtCursor('SELECT 1;\n/\nSELECT 2;', 1), undefined);
+            assert.strictEqual(findStatementAtCursor('SELECT 1;\n/\nSELECT 2;', 1, 0), undefined);
         });
 
         test('ranges and run-all give exactly two statements, without the / line', () => {
@@ -381,28 +381,52 @@ suite('findStatementRanges and findStatementAtCursor: script definitions', () =>
     });
 
     test('cursor after the / line selects the next statement', () => {
-        assert.strictEqual(findStatementAtCursor(text, 5)?.text, 'SELECT 1;');
+        assert.strictEqual(findStatementAtCursor(text, 5, 0)?.text, 'SELECT 1;');
     });
 
     test('cursor inside a script without a / line at the end of the text', () => {
-        const result = findStatementAtCursor('SELECT 0;\ncreate python3 scalar script p() returns int as\ndef run(ctx): return 1', 2);
+        const result = findStatementAtCursor('SELECT 0;\ncreate python3 scalar script p() returns int as\ndef run(ctx): return 1', 2, 0);
         assert.strictEqual(result?.text, 'create python3 scalar script p() returns int as\ndef run(ctx): return 1');
     });
 
     test('a script that starts after a statement on the same line', () => {
         const doc = 'SELECT 1; CREATE LUA SCRIPT s AS\nreturn 1\n/\nSELECT 2;';
         for (const line of [1, 2]) {
-            const result = findStatementAtCursor(doc, line);
+            const result = findStatementAtCursor(doc, line, 0);
             assert.strictEqual(result?.text, 'CREATE LUA SCRIPT s AS\nreturn 1');
             assert.strictEqual(result?.startOffset, 10);
             assert.deepStrictEqual(result?.range, { start: 0, end: 1 });
         }
-        assert.strictEqual(findStatementAtCursor(doc, 0)?.text, 'SELECT 1;');
+        assert.strictEqual(findStatementAtCursor(doc, 0, 0)?.text, 'SELECT 1;');
+    });
+
+    test('two statements on one line: the statement at the cursor character', () => {
+        const doc = 'SELECT 1; SELECT 2;\n\nSELECT 3;';
+        assert.strictEqual(findStatementAtCursor(doc, 0, 0)?.text, 'SELECT 1;');
+        assert.strictEqual(findStatementAtCursor(doc, 0, 4)?.text, 'SELECT 1;');
+        assert.strictEqual(findStatementAtCursor(doc, 0, 9)?.text, 'SELECT 1;');
+        assert.strictEqual(findStatementAtCursor(doc, 0, 10)?.text, 'SELECT 2;');
+        assert.strictEqual(findStatementAtCursor(doc, 0, 15)?.text, 'SELECT 2;');
+        assert.strictEqual(findStatementAtCursor(doc, 1, 0), undefined);
+        assert.strictEqual(findStatementAtCursor(doc, 2, 3)?.text, 'SELECT 3;');
+    });
+
+    test('cursor after the last ; on a line selects the last statement on that line', () => {
+        const doc = 'SELECT 1; SELECT 2;   -- note\nSELECT 3;';
+        assert.strictEqual(findStatementAtCursor(doc, 0, 22)?.text, 'SELECT 2;   -- note');
+        assert.strictEqual(findStatementAtCursor(doc, 0, 29)?.text, 'SELECT 2;   -- note');
+    });
+
+    test('a statement that ends on the line where the next one starts', () => {
+        const doc = 'SELECT 1\nFROM t; SELECT 2;';
+        assert.strictEqual(findStatementAtCursor(doc, 1, 2)?.text, 'SELECT 1\nFROM t;');
+        assert.strictEqual(findStatementAtCursor(doc, 1, 10)?.text, 'SELECT 2;');
+        assert.strictEqual(findStatementAtCursor(doc, 0, 3)?.text, 'SELECT 1\nFROM t;');
     });
 
     test('statement after a script closed by a ; line', () => {
         const doc = 'CREATE OR REPLACE LUA SCRIPT s.sc AS\n  -- don\'t\n  exit()\n;\nSELECT  FROM s.t';
-        const result = findStatementAtCursor(doc, 4);
+        const result = findStatementAtCursor(doc, 4, 0);
         assert.strictEqual(result?.text, 'SELECT  FROM s.t');
         assert.strictEqual(result?.startOffset, doc.indexOf('SELECT'));
     });
@@ -468,10 +492,10 @@ suite('quoted identifiers holding ;, -- or /*', () => {
 
     test('statement at cursor', () => {
         const doc = 'SELECT 1 AS "a;b"\nFROM DUAL;\nSELECT 1 AS "c--d";\nSELECT 1 AS "e/*f";\nSELECT 2;';
-        assert.strictEqual(findStatementAtCursor(doc, 1)?.text, 'SELECT 1 AS "a;b"\nFROM DUAL;');
-        assert.strictEqual(findStatementAtCursor(doc, 2)?.text, 'SELECT 1 AS "c--d";');
-        assert.strictEqual(findStatementAtCursor(doc, 3)?.text, 'SELECT 1 AS "e/*f";');
-        assert.strictEqual(findStatementAtCursor(doc, 4)?.text, 'SELECT 2;');
+        assert.strictEqual(findStatementAtCursor(doc, 1, 0)?.text, 'SELECT 1 AS "a;b"\nFROM DUAL;');
+        assert.strictEqual(findStatementAtCursor(doc, 2, 0)?.text, 'SELECT 1 AS "c--d";');
+        assert.strictEqual(findStatementAtCursor(doc, 3, 0)?.text, 'SELECT 1 AS "e/*f";');
+        assert.strictEqual(findStatementAtCursor(doc, 4, 0)?.text, 'SELECT 2;');
     });
 
     test('statement ranges for CodeLens', () => {

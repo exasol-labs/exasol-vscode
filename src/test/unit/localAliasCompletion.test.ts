@@ -190,7 +190,7 @@ suite('LOCAL.<alias>: current-statement scoping', () => {
 
 SELECT two AS b, three AS c FROM t2;`;
         // Cursor on line 2 (the "SELECT two..." line)
-        const stmt = findStatementAtCursor(doc, 2);
+        const stmt = findStatementAtCursor(doc, 2, 0);
         assert.ok(stmt);
         assert.deepStrictEqual(names(stmt!.text), ['b', 'c']);
     });
@@ -199,7 +199,7 @@ SELECT two AS b, three AS c FROM t2;`;
         const doc = `SELECT one AS a FROM t1;
 
 SELECT two AS b FROM t2;`;
-        const stmt = findStatementAtCursor(doc, 0);
+        const stmt = findStatementAtCursor(doc, 0, 0);
         assert.ok(stmt);
         assert.deepStrictEqual(names(stmt!.text), ['a']);
     });

@@ -618,9 +618,9 @@ async function executeQuery(
         }
     } else {
         // No selection - try to find the statement at the cursor position
-        const cursorLine = editor.selection.active.line;
+        const cursor = editor.selection.active;
         const documentText = editor.document.getText();
-        const statement = findStatementAtCursor(documentText, cursorLine);
+        const statement = findStatementAtCursor(documentText, cursor.line, cursor.character);
 
         if (statement) {
             // Found a statement at the cursor - execute only that statement
