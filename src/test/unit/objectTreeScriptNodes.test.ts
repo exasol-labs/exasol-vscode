@@ -131,6 +131,7 @@ suite('ObjectTreeProvider, script, function and system nodes', () => {
  */
 class RoleRecordingConnectionManager extends MockConnectionManager {
     readonly roles: string[] = [];
+    userRetries = 0;
     userSession = true;
     activeConnection: StoredConnection | undefined = TEST_CONNECTION;
     whileQueued: (() => void) | undefined;
@@ -148,6 +149,7 @@ class RoleRecordingConnectionManager extends MockConnectionManager {
 
     async executeWithRetry<T>(fn: () => Promise<T>, _connectionId?: string, options?: { role?: string }): Promise<T> {
         if ((options?.role ?? 'user') === 'user') {
+            this.userRetries++;
             this.whileQueued?.();
         }
         return fn();
@@ -297,6 +299,7 @@ suite('ObjectTreeProvider, Preprocessors folder', () => {
         assert.deepStrictEqual(nodes.map(node => node.description), ['LUA', 'LUA']);
         assert.ok(!queries.some(q => q.includes('EXA_PARAMETERS')));
         assert.ok(!manager.roles.includes('user'), 'no user driver may be requested');
+        assert.strictEqual(manager.userRetries, 0, 'the read may not wait for the user session');
         assert.deepStrictEqual(changed, []);
     });
 
@@ -309,6 +312,7 @@ suite('ObjectTreeProvider, Preprocessors folder', () => {
         assert.deepStrictEqual(nodes.map(node => node.description), ['LUA', 'LUA']);
         assert.ok(!queries.some(q => q.includes('EXA_PARAMETERS')));
         assert.ok(!manager.roles.includes('user'), 'no user driver may be requested for the old connection');
+        assert.strictEqual(manager.userRetries, 1, 'the read waits once, then sees the switch');
         assert.deepStrictEqual(changed, []);
     });
 

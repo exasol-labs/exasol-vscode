@@ -819,17 +819,23 @@ export async function fetchRootFolderCounts(
  * ALTER SESSION changes it. It waits for a running user query to finish
  * and has no timeout, because a timeout replaces the driver and so ends the
  * user session. Undefined when the query fails, when no user session is
- * open yet (the read does not open one), or when the active connection
- * changed while the read waited for the user session.
+ * open yet (the read does not open a session when none is open), or when
+ * the active connection changed while the read waited for the user session.
  */
 export async function fetchPreprocessorParameter(
     connectionManager: ConnectionManager,
     connection: StoredConnection
 ): Promise<{ sessionValue: string | null; systemValue: string | null } | undefined> {
+    const userSessionOpen = () => connectionManager.getActiveConnection()?.id === connection.id
+        && connectionManager.hasDriver(connection.id, 'user');
+    // Checked before waiting, so a closed session never queues on the user
+    // session, and again inside, for a connection switch while queued.
+    if (!userSessionOpen()) {
+        return undefined;
+    }
     return safeFetch('Failed to fetch SQL_PREPROCESSOR_SCRIPT', () =>
         connectionManager.executeWithRetry(async () => {
-            if (connectionManager.getActiveConnection()?.id !== connection.id
-                || !connectionManager.hasDriver(connection.id, 'user')) {
+            if (!userSessionOpen()) {
                 return undefined;
             }
             const driver = await connectionManager.getDriver(connection.id, 'user');
