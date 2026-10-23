@@ -202,9 +202,36 @@ suite('splitIntoStatements: script and function definitions', () => {
         assert.deepStrictEqual(splitIntoStatements(`${adapter}\n/`), [adapter]);
     });
 
-    test('script without a / line runs to the end of the text', () => {
-        assert.deepStrictEqual(splitIntoStatements(`SELECT 1;\n${luaScript}\nSELECT 2;`), ['SELECT 1;', `${luaScript}\nSELECT 2;`]);
+    test('script without a / line is split at ; like any other text', () => {
+        assert.deepStrictEqual(splitIntoStatements(`SELECT 1;\n${luaScript}\nSELECT 2;`), [
+            'SELECT 1;',
+            'CREATE OR REPLACE LUA SCRIPT s.lua_scr (a) RETURNS TABLE AS\nlocal x = 1; -- trailing; comment',
+            'exit({{x}}, "v int")\nSELECT 2;'
+        ]);
+        const doc = 'CREATE OR REPLACE LUA SCRIPT s AS\n  return 1;\n;\nSELECT 1;\nDROP TABLE t;';
+        assert.deepStrictEqual(splitIntoStatements(doc), ['CREATE OR REPLACE LUA SCRIPT s AS\n  return 1;', 'SELECT 1;', 'DROP TABLE t;']);
+        assert.strictEqual(findStatementAtCursor(doc, 3)?.text, 'SELECT 1;');
     });
+
+    test('unfinished function without a / line is split at ;', () => {
+        const doc = 'CREATE FUNCTION f(x DECIMAL) RETURN DECIMAL IS\nBEGIN\n RETURN x;\n\nSELECT 1;\nDELETE FROM t;';
+        assert.deepStrictEqual(splitIntoStatements(doc), [
+            'CREATE FUNCTION f(x DECIMAL) RETURN DECIMAL IS\nBEGIN\n RETURN x;',
+            'SELECT 1;',
+            'DELETE FROM t;'
+        ]);
+        assert.strictEqual(findStatementAtCursor(doc, 4)?.text, 'SELECT 1;');
+        assert.deepStrictEqual(
+            splitIntoStatements('CREATE FUNCTION f(x DECIMAL) RETURN DECIMAL IS\n r DECIMAL;\nSELECT 1;'),
+            ['CREATE FUNCTION f(x DECIMAL) RETURN DECIMAL IS\n r DECIMAL;', 'SELECT 1;']
+        );
+    });
+
+    test('a / line inside an open function body does not end the function', () => {
+        const fnText = 'CREATE FUNCTION f(a DECIMAL, b DECIMAL) RETURN DECIMAL IS\nBEGIN\n RETURN a\n/\n b;\nEND f;';
+        assert.deepStrictEqual(splitIntoStatements(`${fnText}\nSELECT 1;`), [fnText, 'SELECT 1;']);
+    });
+
 
     test('/ line with surrounding whitespace and CRLF line breaks', () => {
         assert.deepStrictEqual(
@@ -330,9 +357,27 @@ suite('findStatementRanges and findStatementAtCursor: script definitions', () =>
         assert.strictEqual(findStatementAtCursor(text, 5)?.text, 'SELECT 1;');
     });
 
-    test('cursor inside an unterminated script at the end of the text', () => {
-        const result = findStatementAtCursor('SELECT 0;\ncreate python3 scalar script p() returns int as\ndef run(ctx): return 1; # x', 2);
-        assert.strictEqual(result?.text, 'create python3 scalar script p() returns int as\ndef run(ctx): return 1; # x');
+    test('cursor inside a script without a / line at the end of the text', () => {
+        const result = findStatementAtCursor('SELECT 0;\ncreate python3 scalar script p() returns int as\ndef run(ctx): return 1', 2);
+        assert.strictEqual(result?.text, 'create python3 scalar script p() returns int as\ndef run(ctx): return 1');
+    });
+
+    test('a script that starts after a statement on the same line', () => {
+        const doc = 'SELECT 1; CREATE LUA SCRIPT s AS\nreturn 1\n/\nSELECT 2;';
+        for (const line of [1, 2]) {
+            const result = findStatementAtCursor(doc, line);
+            assert.strictEqual(result?.text, 'CREATE LUA SCRIPT s AS\nreturn 1');
+            assert.strictEqual(result?.startOffset, 10);
+            assert.deepStrictEqual(result?.range, { start: 0, end: 1 });
+        }
+        assert.strictEqual(findStatementAtCursor(doc, 0)?.text, 'SELECT 1;');
+    });
+
+    test('statement after a script closed by a ; line', () => {
+        const doc = 'CREATE OR REPLACE LUA SCRIPT s.sc AS\n  -- don\'t\n  exit()\n;\nSELECT  FROM s.t';
+        const result = findStatementAtCursor(doc, 4);
+        assert.strictEqual(result?.text, 'SELECT  FROM s.t');
+        assert.strictEqual(result?.startOffset, doc.indexOf('SELECT'));
     });
 });
 

@@ -137,15 +137,34 @@ export function stripCommentsPreservingStrings(text: string): string {
     return result;
 }
 
-/** Function body progress while scanning a CREATE FUNCTION statement. */
+/** Function definition progress while scanning a CREATE FUNCTION statement. */
 const enum FunctionBody {
     NONE = 0,
-    OPEN = 1,
-    CLOSED = 2
+    /** Before BEGIN: parameters, return type and declarations. */
+    HEADER = 1,
+    /** After BEGIN, before the END that closes the body. */
+    OPEN = 2,
+    CLOSED = 3
 }
 
-function isWordChar(ch: string): boolean {
-    return /[A-Za-z0-9_]/.test(ch);
+const TAB = 9;
+const NEWLINE = 10;
+const CARRIAGE_RETURN = 13;
+const SPACE = 32;
+const DOUBLE_QUOTE = 34;
+const SINGLE_QUOTE = 39;
+const STAR = 42;
+const DASH = 45;
+const SLASH = 47;
+const SEMICOLON = 59;
+
+function isWordCode(c: number): boolean {
+    return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
+}
+
+/** True for a character that `\s` matches. */
+function isSpaceCode(c: number): boolean {
+    return c === SPACE || (c >= TAB && c <= CARRIAGE_RETURN) || (c > 127 && /\s/.test(String.fromCharCode(c)));
 }
 
 /** Index of the `\n` that ends the line containing `from`, or the text length. */
@@ -154,14 +173,77 @@ function lineEndAt(text: string, from: number): number {
     return nl === -1 ? text.length : nl;
 }
 
+/** Index after the string literal or quoted identifier that opens at `from`, or the text length. */
+function quotedEnd(text: string, from: number): number {
+    const quote = text[from];
+    let i = from + 1;
+    for (;;) {
+        const close = text.indexOf(quote, i);
+        if (close === -1) {
+            return text.length;
+        }
+        if (text[close + 1] !== quote) {
+            return close + 1;
+        }
+        i = close + 2;
+    }
+}
+
+/** Index after the block comment that opens at `from`, or the text length. */
+function blockCommentEnd(text: string, from: number): number {
+    const close = text.indexOf('*/', from + 2);
+    return close === -1 ? text.length : close + 2;
+}
+
 /**
  * If the line starting at `lineStart` holds only `/` (with optional
  * whitespace), return the index of the `/`; otherwise -1. This is the
  * terminator the Exasol SQL clients use for script and function definitions.
  */
 function slashLineAt(text: string, lineStart: number): number {
-    const line = text.slice(lineStart, lineEndAt(text, lineStart));
-    return /^\s*\/\s*$/.test(line) ? lineStart + line.indexOf('/') : -1;
+    const len = text.length;
+    let i = lineStart;
+    while (i < len && text.charCodeAt(i) !== NEWLINE && isSpaceCode(text.charCodeAt(i))) {
+        i++;
+    }
+    if (text.charCodeAt(i) !== SLASH) {
+        return -1;
+    }
+    const slash = i++;
+    while (i < len && text.charCodeAt(i) !== NEWLINE) {
+        if (!isSpaceCode(text.charCodeAt(i))) {
+            return -1;
+        }
+        i++;
+    }
+    return slash;
+}
+
+/** Indices of the `/` of every line that holds only `/`, in ascending order. */
+function findSlashLines(text: string): number[] {
+    const slashes: number[] = [];
+    for (let lineStart = 0; lineStart < text.length; lineStart = lineEndAt(text, lineStart) + 1) {
+        const slash = slashLineAt(text, lineStart);
+        if (slash !== -1) {
+            slashes.push(slash);
+        }
+    }
+    return slashes;
+}
+
+/** The first of the ascending `values` that is greater than `after`, or undefined. */
+function firstAfter(values: number[], after: number): number | undefined {
+    let lo = 0;
+    let hi = values.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (values[mid] <= after) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return values[lo];
 }
 
 /**
@@ -177,16 +259,16 @@ function readWords(text: string, from: number, max: number): string[] {
     const words: string[] = [];
     let i = from;
     while (i < text.length && words.length < max) {
-        if (/\s/.test(text[i])) {
+        const c = text.charCodeAt(i);
+        if (isSpaceCode(c)) {
             i++;
-        } else if (text.startsWith('--', i)) {
+        } else if (c === DASH && text.charCodeAt(i + 1) === DASH) {
             i = lineEndAt(text, i);
-        } else if (text.startsWith('/*', i)) {
-            const close = text.indexOf('*/', i + 2);
-            i = close === -1 ? text.length : close + 2;
-        } else if (isWordChar(text[i])) {
+        } else if (c === SLASH && text.charCodeAt(i + 1) === STAR) {
+            i = blockCommentEnd(text, i);
+        } else if (isWordCode(c)) {
             const start = i;
-            while (i < text.length && isWordChar(text[i])) {
+            while (i < text.length && isWordCode(text.charCodeAt(i))) {
                 i++;
             }
             words.push(text.slice(start, i).toUpperCase());
@@ -241,16 +323,20 @@ export function isScriptOrFunctionDefinition(sql: string): boolean {
  * Return the character indices where statements end. An index points either
  * at a terminating `;` (part of the statement) or at the `/` of a line that
  * holds only `/` (not part of the statement; the statement ends before the
- * line break that precedes it). O(n) single pass.
+ * line break that precedes it).
  *
  * Semicolons inside string literals, quoted identifiers and comments are
  * ignored. Exasol script and function definitions follow the convention of
- * the Exasol SQL clients:
- *   - `CREATE ... SCRIPT` runs until a `/` line, or to the end of the text.
- *     The body is code in another language, so it is not tokenized as SQL.
- *   - `CREATE ... FUNCTION` ends at a `/` line, or at the first `;` after the
- *     `END [name]` that closes the body. Semicolons inside the body, and the
- *     `END` of `IF`, `FOR`, `WHILE` and `CASE`, do not end it.
+ * the Exasol SQL clients and end at a line that holds only `/`:
+ *   - `CREATE ... SCRIPT` runs until the next `/` line. The body is code in
+ *     another language, so it is not tokenized as SQL.
+ *   - `CREATE ... FUNCTION` ends at a `/` line after the `END [name]` that
+ *     closes the body, or at the first `;` after that `END`. Semicolons and
+ *     `/` lines inside the body, and the `END` of `IF`, `FOR`, `WHILE` and
+ *     `CASE`, do not end it.
+ * A script without a later `/` line, and a function that does not end before
+ * the end of the text, are split at `;` like any other text, so the
+ * statements after them stay separate.
  * A `/` line between statements ends an empty statement; everywhere else
  * (for example a division inside a SELECT) it is ordinary text.
  *
@@ -258,123 +344,101 @@ export function isScriptOrFunctionDefinition(sql: string): boolean {
  * @returns Array of indices where statements end
  */
 export function findStatementEnds(text: string): number[] {
-    let state: SqlTokenState = SqlTokenState.DEFAULT;
-    let quote = '';
     const ends: number[] = [];
-    let i = 0;
     const len = text.length;
+    let slashLines: number[] | undefined;
+    let i = 0;
     let statementEmpty = true;
     let functionBody: FunctionBody = FunctionBody.NONE;
+    let functionStart = -1;
+    // A definition starting here did not end: it is scanned as ordinary statements.
+    let plainStart = -1;
     let caseDepth = 0;
 
-    while (i < len) {
-        const ch = text[i];
-        const next = i + 1 < len ? text[i + 1] : '';
-
-        switch (state) {
-            case SqlTokenState.DEFAULT: {
-                const slash = (i === 0 || text[i - 1] === '\n') && (statementEmpty || functionBody !== FunctionBody.NONE)
-                    ? slashLineAt(text, i)
-                    : -1;
+    for (;;) {
+        while (i < len) {
+            const c = text.charCodeAt(i);
+            const next = text.charCodeAt(i + 1);
+            if ((i === 0 || text.charCodeAt(i - 1) === NEWLINE)
+                && (statementEmpty || functionBody === FunctionBody.HEADER || functionBody === FunctionBody.CLOSED)) {
+                const slash = slashLineAt(text, i);
                 if (slash !== -1) {
                     ends.push(slash);
                     i = lineEndAt(text, i);
                     statementEmpty = true;
                     functionBody = FunctionBody.NONE;
-                } else if (isQuote(ch)) {
-                    // The content of a string or quoted identifier is never a keyword, so it cannot close a function body.
-                    state = SqlTokenState.IN_QUOTED;
-                    quote = ch;
-                    statementEmpty = false;
-                    i++;
-                } else if (ch === '-' && next === '-') {
-                    state = SqlTokenState.IN_LINE_COMMENT;
-                    i += 2;
-                } else if (ch === '/' && next === '*') {
-                    state = SqlTokenState.IN_BLOCK_COMMENT;
-                    i += 2;
-                } else if (ch === ';') {
-                    if (functionBody !== FunctionBody.OPEN) {
-                        ends.push(i);
-                        statementEmpty = true;
-                        functionBody = FunctionBody.NONE;
-                    }
-                    i++;
-                } else if (isWordChar(ch)) {
-                    const start = i;
-                    while (i < len && isWordChar(text[i])) {
-                        i++;
-                    }
-                    if (statementEmpty) {
-                        statementEmpty = false;
-                        const kind = definitionKind(readWords(text, start, 6));
-                        if (kind === 'script') {
-                            // The body is not SQL: skip it line by line up to the next `/` line.
-                            let lineStart = lineEndAt(text, start) + 1;
-                            let end = -1;
-                            while (lineStart < len && (end = slashLineAt(text, lineStart)) === -1) {
-                                lineStart = lineEndAt(text, lineStart) + 1;
-                            }
-                            if (end === -1) {
-                                i = len;
-                            } else {
-                                ends.push(end);
-                                i = lineEndAt(text, end);
-                                statementEmpty = true;
-                            }
-                        } else if (kind === 'function') {
-                            functionBody = FunctionBody.OPEN;
-                            caseDepth = 0;
-                        }
-                    } else if (functionBody === FunctionBody.OPEN) {
-                        const word = text.slice(start, i).toUpperCase();
-                        if (word === 'CASE') {
-                            caseDepth++;
-                        } else if (word === 'END' && caseDepth > 0) {
-                            caseDepth--;
-                        } else if (word === 'END' && !['IF', 'FOR', 'WHILE'].includes(readWords(text, i, 1)[0])) {
-                            functionBody = FunctionBody.CLOSED;
-                        }
-                    }
-                } else {
-                    if (!/\s/.test(ch)) {
-                        statementEmpty = false;
-                    }
-                    i++;
+                    continue;
                 }
-                break;
             }
-
-            case SqlTokenState.IN_QUOTED:
-                if (ch === quote && next === quote) {
-                    i += 2;
-                } else if (ch === quote) {
-                    state = SqlTokenState.DEFAULT;
-                    i++;
-                } else {
-                    i++;
-                }
-                break;
-
-            case SqlTokenState.IN_LINE_COMMENT:
-                if (ch === '\n') {
-                    state = SqlTokenState.DEFAULT;
+            if (c === SINGLE_QUOTE || c === DOUBLE_QUOTE) {
+                // The content of a string or quoted identifier is never a keyword, so it cannot close a function body.
+                i = quotedEnd(text, i);
+                statementEmpty = false;
+            } else if (c === DASH && next === DASH) {
+                i = lineEndAt(text, i);
+            } else if (c === SLASH && next === STAR) {
+                i = blockCommentEnd(text, i);
+            } else if (c === SEMICOLON) {
+                if (functionBody !== FunctionBody.HEADER && functionBody !== FunctionBody.OPEN) {
+                    ends.push(i);
+                    statementEmpty = true;
+                    functionBody = FunctionBody.NONE;
                 }
                 i++;
-                break;
-
-            case SqlTokenState.IN_BLOCK_COMMENT:
-                if (ch === '*' && next === '/') {
-                    state = SqlTokenState.DEFAULT;
-                    i += 2;
-                } else {
+            } else if (isWordCode(c)) {
+                const start = i;
+                while (i < len && isWordCode(text.charCodeAt(i))) {
                     i++;
                 }
-                break;
+                if (statementEmpty) {
+                    statementEmpty = false;
+                    const kind = start === plainStart || i - start !== 6 || text.slice(start, i).toUpperCase() !== 'CREATE'
+                        ? undefined
+                        : definitionKind(readWords(text, start, 6));
+                    if (kind === 'script') {
+                        // The body is not SQL: skip it up to the next `/` line, if there is one.
+                        slashLines ??= findSlashLines(text);
+                        const end = firstAfter(slashLines, lineEndAt(text, start));
+                        if (end !== undefined) {
+                            ends.push(end);
+                            i = lineEndAt(text, end);
+                            statementEmpty = true;
+                        }
+                    } else if (kind === 'function') {
+                        functionBody = FunctionBody.HEADER;
+                        functionStart = start;
+                        caseDepth = 0;
+                    }
+                } else if (functionBody === FunctionBody.HEADER) {
+                    if (text.slice(start, i).toUpperCase() === 'BEGIN') {
+                        functionBody = FunctionBody.OPEN;
+                    }
+                } else if (functionBody === FunctionBody.OPEN) {
+                    const word = text.slice(start, i).toUpperCase();
+                    if (word === 'CASE') {
+                        caseDepth++;
+                    } else if (word === 'END' && caseDepth > 0) {
+                        caseDepth--;
+                    } else if (word === 'END' && !['IF', 'FOR', 'WHILE'].includes(readWords(text, i, 1)[0])) {
+                        functionBody = FunctionBody.CLOSED;
+                    }
+                }
+            } else {
+                if (!isSpaceCode(c)) {
+                    statementEmpty = false;
+                }
+                i++;
+            }
         }
+        if (functionBody !== FunctionBody.HEADER && functionBody !== FunctionBody.OPEN) {
+            return ends;
+        }
+        // The function did not end: scan it again from its start, split at `;`.
+        plainStart = functionStart;
+        i = functionStart;
+        statementEmpty = true;
+        functionBody = FunctionBody.NONE;
     }
-
-    return ends;
 }
 
 /**
@@ -409,22 +473,8 @@ export function buildLineOffsets(text: string): number[] {
 }
 
 /**
- * Build an array of character offsets at which each line begins.
- * Internal helper used by findStatementAtCursor (takes pre-split lines).
- */
-function buildLineStartOffsets(lines: string[]): number[] {
-    const offsets: number[] = [];
-    let offset = 0;
-    for (const line of lines) {
-        offsets.push(offset);
-        offset += line.length + 1;
-    }
-    return offsets;
-}
-
-/**
  * Binary search: return the 0-based line number for a character offset,
- * given a lineOffsets table produced by buildLineOffsets or buildLineStartOffsets.
+ * given a lineOffsets table produced by buildLineOffsets.
  */
 export function offsetToLine(lineOffsets: number[], offset: number): number {
     let lo = 0;
@@ -451,9 +501,30 @@ function isBlankOrCommentLine(trimmed: string): boolean {
 }
 
 /**
+ * Index of the first character in [from, to) that is not whitespace or part
+ * of a comment, or `to` when there is none.
+ */
+function firstContentAt(text: string, from: number, to: number): number {
+    let i = from;
+    while (i < to) {
+        const c = text.charCodeAt(i);
+        if (c === DASH && text.charCodeAt(i + 1) === DASH) {
+            i = lineEndAt(text, i);
+        } else if (c === SLASH && text.charCodeAt(i + 1) === STAR) {
+            i = blockCommentEnd(text, i);
+        } else if (isSpaceCode(c)) {
+            i++;
+        } else {
+            return i;
+        }
+    }
+    return to;
+}
+
+/**
  * Return the character-index ranges of every SQL statement in text.
- * Uses the same state-machine tokenizer as findStatementEnds, so semicolons
- * inside string literals, quoted identifiers or comments are never treated as boundaries.
+ * Uses the same tokenizer as findStatementEnds, so semicolons inside string
+ * literals, quoted identifiers or comments are never treated as boundaries.
  *
  * Each returned range spans from the first non-whitespace character of the
  * statement to its last character (inclusive): the semicolon, or for a
@@ -478,34 +549,17 @@ export function findStatementRanges(text: string): Array<{ start: number; end: n
 
     for (const endIdx of ends) {
         const last = text[endIdx] === '/' ? textEndBeforeSlash(text, endIdx) - 1 : endIdx;
-        // Position-preserving stripped view of this statement only, so a quote
-        // inside a script body cannot affect the statements after it. Comment
-        // characters are replaced by spaces (newlines preserved verbatim).
-        const stripped = stripCommentsPreservingPositions(text.slice(searchFrom, last + 1));
-        if (stripped.trim() === '') {
+        // Bounded by this statement, so a quote inside a script body cannot
+        // affect the statements after it.
+        const content = firstContentAt(text, searchFrom, last + 1);
+        if (content > last) {
             searchFrom = endIdx + 1;
             continue;
         }
+        // The statement starts on the line of its first content. Lines that
+        // hold only whitespace and comments before it are skipped.
+        const startLine = offsetToLine(lineOffsets, content);
         const endLine = offsetToLine(lineOffsets, last);
-
-        // Find the line that this search window starts on.
-        const searchFromLine = offsetToLine(lineOffsets, searchFrom);
-
-        // Walk forward from searchFromLine, skipping lines that are blank or
-        // consist entirely of comments. The first line considered may share a
-        // line with the previous statement's terminator; only the portion AFTER
-        // searchFrom belongs to the upcoming statement, so clamp the slice to
-        // start at max(lineStart, searchFrom).
-        let startLine = searchFromLine;
-        while (startLine < endLine) {
-            const lineStart = lineOffsets[startLine];
-            const lineEnd = lineOffsets[startLine + 1] - 1;
-            const effectiveStart = Math.max(lineStart, searchFrom);
-            if (effectiveStart < lineEnd && stripped.slice(effectiveStart - searchFrom, lineEnd - searchFrom).trim() !== '') {
-                break;
-            }
-            startLine++;
-        }
 
         // When the start and end lines coincide (e.g. two statements on one line,
         // or all leading content was consumed by the prev semicolon on the same
@@ -534,16 +588,13 @@ export function findStatementRanges(text: string): Array<{ start: number; end: n
 /**
  * Position-preserving variant of stripCommentsPreservingStrings: every comment
  * character is replaced with a space (newlines are kept verbatim) so the result
- * has the same length as the input. Used internally by findStatementRanges so
- * that lineOffsets computed from the original text remain valid indices into
- * the stripped view.
+ * has the same length as the input, and an offset into the input, such as the
+ * cursor, is the same offset in the result.
  *
  * String literal and quoted identifier contents are preserved as-is; only --line and slash-star
- * comments are blanked out. This is intentionally not exported: callers should
- * use stripCommentsPreservingStrings for general comment removal, since that
- * variant is shorter and easier to reason about when offsets do not matter.
+ * comments are blanked out.
  */
-function stripCommentsPreservingPositions(text: string): string {
+export function stripCommentsPreservingPositions(text: string): string {
     let state: SqlTokenState = SqlTokenState.DEFAULT;
     let quote = '';
     const out: string[] = [];
@@ -616,68 +667,127 @@ function stripCommentsPreservingPositions(text: string): string {
 }
 
 /**
+ * Exclusive end of the text that belongs to the statement closed by the `;`
+ * at `semi`. Trailing comments on its line ("; -- note", "; /* note *\/")
+ * stay with it, up to the end of that line; any other text after the `;`
+ * starts the next statement, so the statement ends right after the `;`. A
+ * block comment that does not close on the line counts as such text. Scans
+ * only the gap after the `;`.
+ */
+function semicolonChunkEnd(text: string, semi: number): number {
+    const len = text.length;
+    let i = semi + 1;
+    while (i < len) {
+        const c = text.charCodeAt(i);
+        if (c === NEWLINE) {
+            return i;
+        }
+        if (c === DASH && text.charCodeAt(i + 1) === DASH) {
+            return lineEndAt(text, i);
+        }
+        if (c === SLASH && text.charCodeAt(i + 1) === STAR) {
+            i += 2;
+            while (i < len && text.charCodeAt(i) !== NEWLINE && !(text.charCodeAt(i) === STAR && text.charCodeAt(i + 1) === SLASH)) {
+                i++;
+            }
+            if (i >= len || text.charCodeAt(i) === NEWLINE) {
+                return semi + 1;
+            }
+            i += 2;
+        } else if (isSpaceCode(c)) {
+            i++;
+        } else {
+            return semi + 1;
+        }
+    }
+    return len;
+}
+
+/**
+ * Offset where the statement that begins at or after `from` starts, or -1
+ * when none starts on a line up to `lastLine`. Lines that are blank or hold
+ * a line comment are skipped. The statement starts at the beginning of its
+ * line, or on the line where the previous statement ended, at the first
+ * character after it.
+ */
+function statementStartOffset(text: string, lineOffsets: number[], from: number, lastLine: number): number {
+    for (let line = offsetToLine(lineOffsets, from); line <= lastLine; line++) {
+        const lineStart = lineOffsets[line];
+        const lineEnd = line + 1 < lineOffsets.length ? lineOffsets[line + 1] - 1 : text.length;
+        const start = Math.max(lineStart, from);
+        if (!isBlankOrCommentLine(text.slice(start, lineEnd).trim())) {
+            if (start === lineStart) {
+                return lineStart;
+            }
+            let ws = start;
+            while (text[ws] === ' ' || text[ws] === '\t') {
+                ws++;
+            }
+            return ws;
+        }
+    }
+    return -1;
+}
+
+/**
  * Find the SQL statement at the given cursor position in a document.
- * Uses the state-machine tokenizer to detect statement boundaries so that
+ * Uses the tokenizer of findStatementEnds to detect statement boundaries so that
  * semicolons inside string literals, quoted identifiers or comments are never treated as terminators,
  * and a script or function definition is one statement (see findStatementEnds).
  *
  * Leading comment-only lines are excluded from each statement's range, so a cursor
- * on a pure comment line returns undefined.
+ * on a pure comment line returns undefined. A statement that starts on the line
+ * where the previous one ends starts after it, and the previous one ends at its
+ * `;`; on such a line the cursor selects the statement that ends there.
  *
- * Returns the statement text and its range, or undefined if no statement found.
+ * Returns the statement text, its line range, and the offset of its first character,
+ * or undefined if no statement found.
  */
 export function findStatementAtCursor(
     documentText: string,
     cursorLine: number
 ): { text: string; range: { start: number; end: number }; startOffset: number } | undefined {
-    const lines = documentText.split('\n');
-    const lineStartOffsets = buildLineStartOffsets(lines);
+    const lineOffsets = buildLineOffsets(documentText);
+    const lastLine = lineOffsets.length - 1;
     const ends = findStatementEnds(documentText);
 
     // `last` is the terminator line, so a cursor on a `/` line selects the statement it closes.
-    const statements: Array<{ start: number; end: number; last: number; text: string }> = [];
-    let consumedThroughLine = -1;
+    const statements: Array<{ start: number; end: number; last: number; text: string; startOffset: number }> = [];
+    let from = 0;
+    let previousTerminatorLine = -1;
 
     for (const endIdx of ends) {
-        const terminatorLine = offsetToLine(lineStartOffsets, endIdx);
+        const terminatorLine = offsetToLine(lineOffsets, endIdx);
+        const slash = documentText[endIdx] === '/';
         // A `/` line is not part of the statement it closes.
-        const endLine = documentText[endIdx] === '/' ? terminatorLine - 1 : terminatorLine;
+        const endLine = slash ? terminatorLine - 1 : terminatorLine;
+        const textEnd = slash ? textEndBeforeSlash(documentText, endIdx) : semicolonChunkEnd(documentText, endIdx);
 
-        let startLine = consumedThroughLine + 1;
-        while (startLine <= endLine && isBlankOrCommentLine(lines[startLine].trim())) {
-            startLine++;
-        }
-
-        if (startLine <= endLine) {
-            const chunk = lines.slice(startLine, endLine + 1).join('\n');
-            const trimmed = chunk.trim();
-            if (trimmed && trimmed !== ';') {
-                statements.push({ start: startLine, end: endLine, last: terminatorLine, text: chunk });
-            }
-        } else if (documentText[endIdx] === '/') {
+        const start = statementStartOffset(documentText, lineOffsets, from, endLine);
+        const chunk = start === -1 ? '' : documentText.slice(start, textEnd);
+        const trimmed = chunk.trim();
+        if (trimmed && trimmed !== ';') {
+            statements.push({ start: offsetToLine(lineOffsets, start), end: endLine, last: terminatorLine, text: chunk, startOffset: start });
+        } else if (slash) {
             // An optional `/` line after a definition closed by `;` (`END f;`)
             // selects that definition, so the cursor there never falls through
             // to running the whole file.
             const previous = statements[statements.length - 1];
-            if (previous?.last === consumedThroughLine && isScriptOrFunctionDefinition(previous.text)) {
+            if (previous?.last === previousTerminatorLine && isScriptOrFunctionDefinition(previous.text)) {
                 previous.last = terminatorLine;
             }
         }
 
-        consumedThroughLine = terminatorLine;
+        previousTerminatorLine = terminatorLine;
+        from = slash ? lineEndAt(documentText, endIdx) : textEnd;
     }
 
     // Handle trailing statement without semicolon
-    let tailStart = consumedThroughLine + 1;
-    while (tailStart < lines.length && isBlankOrCommentLine(lines[tailStart].trim())) {
-        tailStart++;
-    }
-    if (tailStart < lines.length) {
-        const endLine = lines.length - 1;
-        const chunk = lines.slice(tailStart, endLine + 1).join('\n');
-        const trimmed = chunk.trim();
-        if (trimmed) {
-            statements.push({ start: tailStart, end: endLine, last: endLine, text: chunk });
+    const tailStart = statementStartOffset(documentText, lineOffsets, from, lastLine);
+    if (tailStart !== -1) {
+        const chunk = documentText.slice(tailStart);
+        if (chunk.trim()) {
+            statements.push({ start: offsetToLine(lineOffsets, tailStart), end: lastLine, last: lastLine, text: chunk, startOffset: tailStart });
         }
     }
 
@@ -686,7 +796,7 @@ export function findStatementAtCursor(
             return {
                 text: statement.text,
                 range: { start: statement.start, end: statement.end },
-                startOffset: lineStartOffsets[statement.start] ?? 0
+                startOffset: statement.startOffset
             };
         }
     }
@@ -710,53 +820,37 @@ function stripLeadingCommentLines(chunk: string): string {
 /**
  * Split text into individual SQL statements at the ends found by findStatementEnds.
  * Returns an array of statement strings, trimmed and filtered for non-empty statements.
- * Uses the state-machine tokenizer so semicolons inside string literals, quoted
+ * Uses the tokenizer of findStatementEnds so semicolons inside string literals, quoted
  * identifiers or comments are never treated as statement boundaries.
  *
  * Each returned statement includes everything up to and including its terminating
- * semicolon. A statement closed by a `/` line ends before that line and keeps its
- * trailing whitespace, so a script body is sent exactly as written. Leading
- * comment-only lines before any SQL keyword are excluded.
+ * semicolon, and trailing comments on the line of the semicolon. A statement closed
+ * by a `/` line ends before that line and keeps its trailing whitespace, so a script
+ * body is sent exactly as written. Leading comment-only lines before any SQL keyword
+ * are excluded.
  *
  * @param text The SQL text to split
  * @returns Array of individual SQL statements
  */
-/**
- * True when `line` holds only whitespace and comments, and every block comment
- * in it closes on the same line. The `x` after a line break survives a line
- * comment but not an unclosed block comment.
- */
-function holdsOnlyClosedComments(line: string): boolean {
-    return stripCommentsPreservingStrings(`${line}\nx`).trim() === 'x';
-}
-
 export function splitIntoStatements(text: string): string[] {
     const ends = findStatementEnds(text);
     const statements: string[] = [];
     let pos = 0;
 
-    for (const semiIdx of ends) {
-
-        if (text[semiIdx] === '/') {
+    for (const endIdx of ends) {
+        if (text[endIdx] === '/') {
             // Closed by a `/` line: send the text before it, the body unchanged.
-            const chunk = stripLeadingCommentLines(text.slice(pos, textEndBeforeSlash(text, semiIdx))).trimStart();
-            pos = lineEndAt(text, semiIdx);
+            const chunk = stripLeadingCommentLines(text.slice(pos, textEndBeforeSlash(text, endIdx))).trimStart();
+            pos = lineEndAt(text, endIdx);
             if (chunk) {
                 statements.push(chunk);
             }
             continue;
         }
 
-        // Keep trailing comments on the line of the semicolon ("; -- note",
-        // "; /* note */") with its statement. Any other text after the
-        // semicolon starts the next statement, which may end on a later line.
-        const lineEnd = lineEndAt(text, semiIdx);
-        const chunkEnd = holdsOnlyClosedComments(text.slice(semiIdx + 1, lineEnd)) ? lineEnd : semiIdx + 1;
-
-        const raw = text.slice(pos, chunkEnd);
+        const chunkEnd = semicolonChunkEnd(text, endIdx);
+        const chunk = stripLeadingCommentLines(text.slice(pos, chunkEnd)).trim();
         pos = chunkEnd;
-
-        const chunk = stripLeadingCommentLines(raw).trim();
         if (chunk && chunk !== ';') {
             statements.push(chunk);
         }
