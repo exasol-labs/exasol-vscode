@@ -732,6 +732,17 @@ suite('qualifyFunctionText', () => {
         );
     });
 
+    test('replaces the whole name when comments surround the dot', () => {
+        // Stored verbatim this way (docker, 2026-10-23).
+        for (const stored of ['S/*c*/.F', 'S --c\n.F', 'S./*c*/F', 'S/*a*/./*b*/F']) {
+            assert.strictEqual(
+                qualifyFunctionText(`FUNCTION ${stored}(x NUMBER) RETURN NUMBER IS BEGIN RETURN x; END F;`, 'S', 'F'),
+                'CREATE OR REPLACE FUNCTION "S"."F"(x NUMBER) RETURN NUMBER IS BEGIN RETURN x; END F;\n/',
+                stored
+            );
+        }
+    });
+
     test('a trailing line comment does not hide the / line', () => {
         const ddl = qualifyFunctionText('FUNCTION S.F (p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END F; -- note', 'S', 'F');
         assert.strictEqual(splitIntoStatements(`${ddl}\nSELECT 2;`).length, 2);
@@ -844,8 +855,25 @@ suite('buildScriptCall', () => {
 
     test('scalar script with parameters also gets the FROM placeholder', () => {
         assert.strictEqual(
-            call('CREATE PYTHON3 SCALAR SCRIPT "F" ("v" VARCHAR(10) UTF8) EMITS (...)'),
+            call('CREATE PYTHON3 SCALAR SCRIPT "F" ("v" VARCHAR(10) UTF8) RETURNS VARCHAR(10) UTF8'),
             'SELECT "VS_SRC"."F"("v")\nFROM <table>;'
+        );
+    });
+
+    test('dynamic output gets an EMITS placeholder', () => {
+        // Without EMITS or default_output_columns() the call fails (docker, 2026-10-23).
+        const emits = 'EMITS (<column> <type>) /* remove when the script defines default_output_columns() */';
+        assert.strictEqual(
+            call('CREATE PYTHON3 SCALAR SCRIPT "F" ("v" VARCHAR(10) UTF8) EMITS (...)'),
+            `SELECT "VS_SRC"."F"("v") ${emits}\nFROM <table>;`
+        );
+        assert.strictEqual(
+            call('CREATE PYTHON3 SET SCRIPT "F" (...) EMITS (...)', 'SET'),
+            `SELECT "VS_SRC"."F"(/* arguments */) ${emits}\nFROM <table>;`
+        );
+        assert.strictEqual(
+            call('CREATE PYTHON3 SCALAR SCRIPT "F" () EMITS (...)'),
+            `SELECT "VS_SRC"."F"() ${emits};`
         );
     });
 
@@ -1266,6 +1294,10 @@ suite('qualifyViewText', () => {
             'CREATE OR REPLACE VIEW "VS_SRC"."V"/*c*/AS SELECT 1 AS A\n;'],
         ['CREATE VIEW VS_SRC.V_CMT--x\nAS SELECT 2 AS B', 'V_CMT',
             'CREATE OR REPLACE VIEW "VS_SRC"."V_CMT"--x\nAS SELECT 2 AS B\n;'],
+        ['CREATE VIEW VS_SRC/*c*/.V_DOT AS SELECT 1 AS X', 'V_DOT',
+            'CREATE OR REPLACE VIEW "VS_SRC"."V_DOT" AS SELECT 1 AS X\n;'],
+        ['CREATE VIEW VS_SRC --c\n. /*d*/ V_DOT AS SELECT 1 AS X', 'V_DOT',
+            'CREATE OR REPLACE VIEW "VS_SRC"."V_DOT" AS SELECT 1 AS X\n;'],
         ["CREATE VIEW VS_SRC.V_STR AS SELECT '--' AS S", 'V_STR',
             `CREATE OR REPLACE VIEW "VS_SRC"."V_STR" AS SELECT '--' AS S\n;`],
         ['CREATE VIEW VS_SRC.V_QID AS SELECT 1 AS "a--b";', 'V_QID',

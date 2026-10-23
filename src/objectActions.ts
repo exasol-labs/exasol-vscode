@@ -492,6 +492,12 @@ const QUOTED_IDENTIFIER = '"(?:[^"]|"")*"';
  */
 const NAME_PART = `(?:${QUOTED_IDENTIFIER}|[^\\s."(/;-]+)`;
 
+/** Whitespace, block comments and line comments, any number of them. */
+const GAP = '(?:\\s+|/\\*[\\s\\S]*?\\*/|--[^\\n]*\\n)*';
+
+/** An object name with an optional schema; comments may surround the dot. */
+const OBJECT_NAME = `${NAME_PART}(?:${GAP}\\.${GAP}${NAME_PART})?`;
+
 /** `CREATE <language> [SCALAR|SET|ADAPTER] SCRIPT "NAME"`, as stored in SCRIPT_TEXT. */
 const SCRIPT_HEADER = new RegExp(`^CREATE\\s+([^"]*?\\bSCRIPT\\s+)${QUOTED_IDENTIFIER}`, 'i');
 const QUOTED_NAME_START = new RegExp(`^${QUOTED_IDENTIFIER}`);
@@ -516,14 +522,14 @@ export function qualifyScriptText(scriptText: string, schemaName: string, script
 /**
  * Turns FUNCTION_TEXT into a statement that recreates the function in its own
  * schema. The database stores the text as written after `CREATE [OR REPLACE]`,
- * so the name may lack the schema, and `SCHEMA . NAME` keeps its spaces; it is
- * replaced by the quoted qualified name. A `/` line closes the statement, as
+ * so the name may lack the schema, and `SCHEMA . NAME` keeps the spaces and
+ * comments around the dot; it is replaced by the quoted qualified name. A `/` line closes the statement, as
  * for scripts.
  */
 export function qualifyFunctionText(functionText: string, schemaName: string, functionName: string): string {
     // A client that sent the `/` line along with the statement leaves it in FUNCTION_TEXT.
     const text = stripFinalSlashLine(functionText);
-    const header = new RegExp(`^(FUNCTION\\s+)${NAME_PART}(?:\\s*\\.\\s*${NAME_PART})?`, 'i').exec(text);
+    const header = new RegExp(`^(FUNCTION\\s+)${OBJECT_NAME}`, 'i').exec(text);
     if (!header) {
         return `CREATE OR REPLACE ${text}\n/`;
     }
@@ -533,7 +539,7 @@ export function qualifyFunctionText(functionText: string, schemaName: string, fu
 
 /** Leading comments, `CREATE [OR REPLACE] [FORCE] VIEW` and the name, which may lack the schema. */
 const VIEW_HEADER = new RegExp(
-    `^((?:\\s+|/\\*[\\s\\S]*?\\*/|--[^\\n]*\\n)*)CREATE\\s+(?:OR\\s+REPLACE\\s+)?((?:FORCE\\s+)?VIEW\\s+)${NAME_PART}(?:\\s*\\.\\s*${NAME_PART})?`,
+    `^(${GAP})CREATE\\s+(?:OR\\s+REPLACE\\s+)?((?:FORCE\\s+)?VIEW\\s+)${OBJECT_NAME}`,
     'i'
 );
 
@@ -560,9 +566,10 @@ export function qualifyViewText(viewText: string, schemaName: string, viewName: 
  * The quoted parameter names of a UDF, read from the parameter list after
  * the name in SCRIPT_TEXT: 'dynamic' for `(...)`, undefined when the list
  * cannot be read. Types such as DECIMAL(18,0) contain commas, so the list is
- * split on commas outside parentheses and quoted names only.
+ * split on commas outside parentheses and quoted names only. `end` is the
+ * index after the closing parenthesis.
  */
-function parseScriptParameters(scriptText: string): string[] | 'dynamic' | undefined {
+function parseScriptParameters(scriptText: string): { names: string[] | 'dynamic'; end: number } | undefined {
     const header = SCRIPT_HEADER.exec(scriptText);
     const open = header ? /^\s*\(/.exec(scriptText.slice(header[0].length)) : null;
     if (!header || !open) {
@@ -587,23 +594,30 @@ function parseScriptParameters(scriptText: string): string[] | 'dynamic' | undef
             depth--;
         } else if (ch === ')') {
             parts.push(scriptText.slice(start, i).trim());
+            const end = i + 1;
             if (parts.length === 1 && parts[0] === '') {
-                return [];
+                return { names: [], end };
             }
             if (parts.length === 1 && parts[0] === '...') {
-                return 'dynamic';
+                return { names: 'dynamic', end };
             }
             const names = parts.map(part => QUOTED_NAME_START.exec(part)?.[0]);
-            return names.every((name): name is string => name !== undefined) ? names : undefined;
+            return names.every((name): name is string => name !== undefined) ? { names, end } : undefined;
         }
     }
     return undefined;
 }
 
+/** `EMITS (...)` right after the parameter list, as SCRIPT_TEXT stores it. */
+const DYNAMIC_OUTPUT = /^\s*EMITS\s*\(\s*\.\.\.\s*\)/i;
+
 /**
  * A SELECT that calls the UDF, with its parameter names as column
  * placeholders and a FROM placeholder when the call takes input rows.
- * Dynamic or unreadable parameter lists get a comment placeholder.
+ * Dynamic or unreadable parameter lists get a comment placeholder. Dynamic
+ * output (`EMITS (...)`) gets an EMITS placeholder: the call fails without it
+ * unless the script defines default_output_columns(), which the stored header
+ * does not show.
  */
 export function buildScriptCall(scriptText: string, schemaName: string, scriptName: string, inputType: string | null): string {
     const name = `"${escapeSqlIdentifier(schemaName)}"."${escapeSqlIdentifier(scriptName)}"`;
@@ -611,9 +625,12 @@ export function buildScriptCall(scriptText: string, schemaName: string, scriptNa
     if (parameters === undefined) {
         return `SELECT ${name}(/* arguments */);`;
     }
-    const args = parameters === 'dynamic' ? '/* arguments */' : parameters.join(', ');
+    const args = parameters.names === 'dynamic' ? '/* arguments */' : parameters.names.join(', ');
+    const emits = DYNAMIC_OUTPUT.test(scriptText.slice(parameters.end))
+        ? ' EMITS (<column> <type>) /* remove when the script defines default_output_columns() */'
+        : '';
     const from = args || inputType === 'SET' ? '\nFROM <table>' : '';
-    return `SELECT ${name}(${args})${from};`;
+    return `SELECT ${name}(${args})${emits}${from};`;
 }
 
 /** What refreshVirtualSchemaAndReload needs from the extension's providers. */
