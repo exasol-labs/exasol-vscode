@@ -1447,7 +1447,7 @@ suite('ObjectActions with no visible columns', () => {
         return new ObjectActions(asConnectionManager(mockCM), {} as unknown as QueryExecutor, { fsPath: '/mock' } as unknown as vscode.Uri);
     }
 
-    test('Describe Table warns and opens no panel', async () => {
+    test('Describe warns and opens no panel', async () => {
         const oa = makeObjectActions(['COLUMN_NAME', 'COLUMN_TYPE', 'COLUMN_IS_NULLABLE', 'COLUMN_DEFAULT', 'COLUMN_COMMENT']);
 
         await oa.describeTable(TEST_CONNECTION, 'VS_PY', 'T');
@@ -1465,7 +1465,7 @@ suite('ObjectActions with no visible columns', () => {
         assert.deepStrictEqual(warnings, ['No columns visible for "VS_PY"."T"']);
     });
 
-    test('Show Table DDL warns and opens no document', async () => {
+    test('Show DDL on a table warns and opens no document', async () => {
         const oa = makeObjectActions(['COLUMN_NAME', 'COLUMN_TYPE', 'COLUMN_DEFAULT', 'COLUMN_IS_NULLABLE', 'COLUMN_COMMENT']);
 
         await oa.showTableDDL(TEST_CONNECTION, 'VS_PY', 'T');
@@ -1474,7 +1474,7 @@ suite('ObjectActions with no visible columns', () => {
         assert.deepStrictEqual(warnings, ['No columns visible for "VS_PY"."T"']);
     });
 
-    test('Show View DDL warns with the quoted name when no view is visible', async () => {
+    test('Show DDL on a view warns with the quoted name when no view is visible', async () => {
         const oa = makeObjectActions(['VIEW_TEXT']);
 
         await oa.showViewDDL(TEST_CONNECTION, 'a"b', 'V');
@@ -1483,7 +1483,7 @@ suite('ObjectActions with no visible columns', () => {
         assert.deepStrictEqual(warnings, ['No view visible for "a""b"."V"']);
     });
 
-    test('Show Table DDL and Show View DDL show the database error text', async () => {
+    test('Show DDL on a table or view shows the database error text', async () => {
         const errors: string[] = [];
         extendedVscodeMock.window = {
             ...extendedVscodeMock.window,
@@ -1501,7 +1501,7 @@ suite('ObjectActions with no visible columns', () => {
         ]);
     });
 
-    test('Show View DDL opens VIEW_TEXT once, as CREATE OR REPLACE with the qualified name', async () => {
+    test('Show DDL on a view opens VIEW_TEXT once, as CREATE OR REPLACE with the qualified name', async () => {
         const mockCM = new MockConnectionManager({ query: async () => createRawResult(['VIEW_TEXT'], [['CREATE VIEW VS_SRC.PERM_V AS SELECT ID FROM VS_SRC.PERM_T']]) });
         const oa = new ObjectActions(asConnectionManager(mockCM), {} as unknown as QueryExecutor, { fsPath: '/mock' } as unknown as vscode.Uri);
 

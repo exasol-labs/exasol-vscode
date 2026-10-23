@@ -27,15 +27,27 @@ function makeScriptItem(scriptType: string, name = 'S1'): InstanceType<typeof Ob
     });
 }
 
-const menus = (JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf8')) as {
-    contributes: { menus: { 'view/item/context': Array<{ command: string; when: string; group?: string }> } };
-}).contributes.menus['view/item/context'];
+const contributes = (JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf8')) as {
+    contributes: {
+        commands: Array<{ command: string; title: string }>;
+        menus: { 'view/item/context': Array<{ command: string; when: string; group?: string }> };
+    };
+}).contributes;
+const menus = contributes.menus['view/item/context'];
+const titles = new Map(contributes.commands.map(entry => [entry.command, entry.title]));
+
+function menuEntriesFor(contextValue: string): Array<{ command: string; when: string; group?: string }> {
+    return menus.filter(entry => entry.when.includes('view == exasol.objects')
+        && new RegExp(`viewItem == ${contextValue}(?![\\w-])`).test(entry.when));
+}
 
 function menuCommandsFor(contextValue: string): string[] {
-    return menus
-        .filter(entry => entry.when.includes('view == exasol.objects')
-            && new RegExp(`viewItem == ${contextValue}(?![\\w-])`).test(entry.when))
+    return menuEntriesFor(contextValue)
         .map(entry => `${entry.command}${entry.group?.startsWith('inline') ? ' (inline)' : ''}`);
+}
+
+function menuTitlesFor(contextValue: string): string[] {
+    return menuEntriesFor(contextValue).map(entry => titles.get(entry.command) ?? entry.command);
 }
 
 suite('ObjectTreeProvider, script, function and system nodes', () => {
@@ -90,7 +102,7 @@ suite('ObjectTreeProvider, script, function and system nodes', () => {
         assert.strictEqual(store.get('text/plain')?.value, '"VS_SRC"."my""udf"');
     });
 
-    test('every script and function node has Open Source in its context menu', () => {
+    test('every script and function node has Show DDL in its context menu', () => {
         assert.deepStrictEqual(menuCommandsFor('script-udf'), [
             'exasol.openScriptSource', 'exasol.generateScriptCall', 'exasol.copyQualifiedName (inline)'
         ]);
@@ -113,6 +125,33 @@ suite('ObjectTreeProvider, script, function and system nodes', () => {
             'exasol.describeTable', 'exasol.showViewDDL', 'exasol.previewTable', 'exasol.generateSelect',
             'exasol.copyQualifiedName (inline)'
         ]);
+    });
+
+    test('context menu items have the same name for the same action on every object type', () => {
+        assert.deepStrictEqual(menuTitlesFor('table'), [
+            'Show DDL', 'Preview Data (100 rows)', 'Describe', 'Generate SELECT', 'Copy Name'
+        ]);
+        assert.deepStrictEqual(menuTitlesFor('view'), [
+            'Describe', 'Show DDL', 'Preview Data (100 rows)', 'Generate SELECT', 'Copy Name'
+        ]);
+        assert.deepStrictEqual(menuTitlesFor('virtual-table'), [
+            'Preview Data (100 rows)', 'Describe', 'Generate SELECT', 'Refresh Metadata', 'Explain Pushdown', 'Copy Name'
+        ]);
+        assert.deepStrictEqual(menuTitlesFor('script-udf'), ['Show DDL', 'Generate Call', 'Copy Name']);
+        assert.deepStrictEqual(menuTitlesFor('function'), ['Show DDL']);
+        assert.deepStrictEqual(menuTitlesFor('db-connection'), [
+            'Show DDL', 'Generate IMPORT', 'Generate EXPORT', 'Copy Name'
+        ]);
+    });
+
+    test('no object type has two context menu items with the same name', () => {
+        const contextValues = new Set(menus
+            .filter(entry => entry.when.includes('view == exasol.objects'))
+            .flatMap(entry => [...entry.when.matchAll(/viewItem == ([\w-]+)/g)].map(match => match[1])));
+        for (const contextValue of contextValues) {
+            const names = menuTitlesFor(contextValue);
+            assert.strictEqual(new Set(names).size, names.length, `${contextValue}: ${names.join(', ')}`);
+        }
     });
 
     test('system tables and system schemas have their context menus', () => {

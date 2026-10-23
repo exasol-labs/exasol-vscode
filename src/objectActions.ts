@@ -66,7 +66,7 @@ export class ObjectActions {
                 }
             );
         } catch (error) {
-            vscode.window.showErrorMessage(`Failed to preview table: ${error}`);
+            vscode.window.showErrorMessage(`Failed to preview data: ${error}`);
         }
     }
 
@@ -279,7 +279,7 @@ export class ObjectActions {
             ResultsPanel.show(queryResult, query);
             vscode.window.showInformationMessage(`Table structure: ${schemaName}.${tableName}`);
         } catch (error) {
-            vscode.window.showErrorMessage(`Failed to describe table: ${error}`);
+            vscode.window.showErrorMessage(`Failed to describe ${schemaName}.${tableName}: ${error}`);
         }
     }
 

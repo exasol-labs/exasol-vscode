@@ -117,23 +117,23 @@
       },
       {
         "command": "exasol.previewTable",
-        "title": "Preview Table (100 rows)"
+        "title": "Preview Data (100 rows)"
       },
       {
         "command": "exasol.showTableDDL",
-        "title": "Show Table DDL"
+        "title": "Show DDL"
       },
       {
         "command": "exasol.showViewDDL",
-        "title": "Show View DDL"
+        "title": "Show DDL"
       },
       {
         "command": "exasol.generateSelect",
-        "title": "Generate SELECT Statement"
+        "title": "Generate SELECT"
       },
       {
         "command": "exasol.describeTable",
-        "title": "Describe Table"
+        "title": "Describe"
       },
       {
         "command": "exasol.refreshVirtualSchema",
@@ -145,7 +145,7 @@
       },
       {
         "command": "exasol.openScriptSource",
-        "title": "Open Source"
+        "title": "Show DDL"
       },
       {
         "command": "exasol.generateScriptCall",
@@ -153,19 +153,19 @@
       },
       {
         "command": "exasol.showConnectionDDL",
-        "title": "Show Connection DDL"
+        "title": "Show DDL"
       },
       {
         "command": "exasol.generateImport",
-        "title": "Generate IMPORT Statement"
+        "title": "Generate IMPORT"
       },
       {
         "command": "exasol.generateExport",
-        "title": "Generate EXPORT Statement"
+        "title": "Generate EXPORT"
       },
       {
         "command": "exasol.openFunctionSource",
-        "title": "Open Source"
+        "title": "Show DDL"
       },
       {
         "command": "exasol.setSchema",
