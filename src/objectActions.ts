@@ -492,8 +492,12 @@ const QUOTED_IDENTIFIER = '"(?:[^"]|"")*"';
  */
 const NAME_PART = `(?:${QUOTED_IDENTIFIER}|[^\\s."(/;-]+)`;
 
-/** Whitespace, block comments and line comments, any number of them. */
-const GAP = '(?:\\s+|/\\*[\\s\\S]*?\\*/|--[^\\n]*\\n)*';
+/**
+ * Whitespace, block comments and line comments, any number of them. Each
+ * alternative starts with a different character and matches one whitespace
+ * character at a time, so a failed match backtracks in linear time.
+ */
+const GAP = '(?:\\s|/\\*(?:[^*]|\\*(?!/))*\\*/|--[^\\n]*\\n)*';
 
 /** An object name with an optional schema; comments may surround the dot. */
 const OBJECT_NAME = `${NAME_PART}(?:${GAP}\\.${GAP}${NAME_PART})?`;
@@ -564,12 +568,13 @@ export function qualifyViewText(viewText: string, schemaName: string, viewName: 
 
 /**
  * The quoted parameter names of a UDF, read from the parameter list after
- * the name in SCRIPT_TEXT: 'dynamic' for `(...)`, undefined when the list
- * cannot be read. Types such as DECIMAL(18,0) contain commas, so the list is
- * split on commas outside parentheses and quoted names only. `end` is the
- * index after the closing parenthesis.
+ * the name in SCRIPT_TEXT: 'dynamic' for `(...)`, undefined names when a
+ * parameter name is not quoted. Types such as DECIMAL(18,0) contain commas, so
+ * the list is split on commas outside parentheses and quoted names only. `end`
+ * is the index after the closing parenthesis. Undefined when there is no
+ * complete parameter list.
  */
-function parseScriptParameters(scriptText: string): { names: string[] | 'dynamic'; end: number } | undefined {
+function parseScriptParameters(scriptText: string): { names: string[] | 'dynamic' | undefined; end: number } | undefined {
     const header = SCRIPT_HEADER.exec(scriptText);
     const open = header ? /^\s*\(/.exec(scriptText.slice(header[0].length)) : null;
     if (!header || !open) {
@@ -602,7 +607,7 @@ function parseScriptParameters(scriptText: string): { names: string[] | 'dynamic
                 return { names: 'dynamic', end };
             }
             const names = parts.map(part => QUOTED_NAME_START.exec(part)?.[0]);
-            return names.every((name): name is string => name !== undefined) ? { names, end } : undefined;
+            return { names: names.every((name): name is string => name !== undefined) ? names : undefined, end };
         }
     }
     return undefined;
@@ -614,8 +619,9 @@ const DYNAMIC_OUTPUT = /^\s*EMITS\s*\(\s*\.\.\.\s*\)/i;
 /**
  * A SELECT that calls the UDF, with its parameter names as column
  * placeholders and a FROM placeholder when the call takes input rows.
- * Dynamic or unreadable parameter lists get a comment placeholder. Dynamic
- * output (`EMITS (...)`) gets an EMITS placeholder: the call fails without it
+ * Dynamic or unreadable parameter lists get a comment placeholder, and an
+ * unreadable list no FROM placeholder. Dynamic output (`EMITS (...)`) gets an
+ * EMITS placeholder, also when the parameters cannot be read: the call fails without it
  * unless the script defines default_output_columns(), which the stored header
  * does not show.
  */
@@ -625,10 +631,13 @@ export function buildScriptCall(scriptText: string, schemaName: string, scriptNa
     if (parameters === undefined) {
         return `SELECT ${name}(/* arguments */);`;
     }
-    const args = parameters.names === 'dynamic' ? '/* arguments */' : parameters.names.join(', ');
     const emits = DYNAMIC_OUTPUT.test(scriptText.slice(parameters.end))
         ? ' EMITS (<column> <type>) /* remove when the script defines default_output_columns() */'
         : '';
+    if (parameters.names === undefined) {
+        return `SELECT ${name}(/* arguments */)${emits};`;
+    }
+    const args = parameters.names === 'dynamic' ? '/* arguments */' : parameters.names.join(', ');
     const from = args || inputType === 'SET' ? '\nFROM <table>' : '';
     return `SELECT ${name}(${args})${emits}${from};`;
 }

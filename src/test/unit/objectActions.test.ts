@@ -743,6 +743,26 @@ suite('qualifyFunctionText', () => {
         }
     });
 
+    test('comments with stars around the dot', () => {
+        for (const stored of ['S/***/.F', 'S/* * */.F', 'S/**a**/.F']) {
+            assert.strictEqual(
+                qualifyFunctionText(`FUNCTION ${stored}(x NUMBER) RETURN NUMBER IS BEGIN RETURN x; END F;`, 'S', 'F'),
+                'CREATE OR REPLACE FUNCTION "S"."F"(x NUMBER) RETURN NUMBER IS BEGIN RETURN x; END F;\n/',
+                stored
+            );
+        }
+    });
+
+    test('an unqualified name followed by many spaces is matched in linear time', () => {
+        const gap = ' '.repeat(40);
+        for (const rest of [`${gap}(x NUMBER)`, `${gap}\n    (x NUMBER)`]) {
+            const started = Date.now();
+            const ddl = qualifyFunctionText(`FUNCTION F${rest} RETURN NUMBER IS BEGIN RETURN x; END F;`, 'S', 'F');
+            assert.ok(Date.now() - started < 50, `took ${Date.now() - started} ms`);
+            assert.strictEqual(ddl, `CREATE OR REPLACE FUNCTION "S"."F"${rest} RETURN NUMBER IS BEGIN RETURN x; END F;\n/`);
+        }
+    });
+
     test('a trailing line comment does not hide the / line', () => {
         const ddl = qualifyFunctionText('FUNCTION S.F (p DECIMAL) RETURN DECIMAL IS BEGIN RETURN p; END F; -- note', 'S', 'F');
         assert.strictEqual(splitIntoStatements(`${ddl}\nSELECT 2;`).length, 2);
@@ -900,6 +920,14 @@ suite('buildScriptCall', () => {
         ]) {
             assert.strictEqual(call(header), 'SELECT "VS_SRC"."F"(/* arguments */);', header);
         }
+    });
+
+    test('dynamic output gets the EMITS placeholder also when the parameters cannot be read', () => {
+        const emits = 'EMITS (<column> <type>) /* remove when the script defines default_output_columns() */';
+        assert.strictEqual(
+            call('CREATE PYTHON3 SET SCRIPT "F" (a INT) EMITS (...)', 'SET'),
+            `SELECT "VS_SRC"."F"(/* arguments */) ${emits};`
+        );
     });
 });
 
@@ -1332,6 +1360,16 @@ suite('qualifyViewText', () => {
             assert.strictEqual(splitIntoStatements(`${qualifyViewText(stored, 'S', 'V')}\nSELECT 2;`).length, 2);
         });
     }
+
+    test('an unqualified name followed by many spaces is matched in linear time', () => {
+        const gap = ' '.repeat(40);
+        for (const rest of [`${gap}AS SELECT 1 X;`, `${gap}\n    AS SELECT 1 X;`]) {
+            const started = Date.now();
+            const ddl = qualifyViewText(`CREATE VIEW V${rest}`, 'S', 'V');
+            assert.ok(Date.now() - started < 50, `took ${Date.now() - started} ms`);
+            assert.strictEqual(ddl, `CREATE OR REPLACE VIEW "S"."V"${rest}`);
+        }
+    });
 
     test('text with an unexpected header only gets the semicolon', () => {
         assert.strictEqual(qualifyViewText('SELECT 1', 'S', 'V'), 'SELECT 1\n;');
