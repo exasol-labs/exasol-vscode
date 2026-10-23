@@ -12,7 +12,16 @@ interface SearchableObject {
     type: ObjectTreeItemType;
     /** The table, view or virtual table of a column. */
     table?: string;
+    /** EXA_ALL_SCRIPTS.SCRIPT_TYPE of a script, which decides its folder. */
+    scriptType?: string;
 }
+
+/** The schema folder for each SCRIPT_TYPE the tree lists. */
+const SCRIPT_FOLDERS: Partial<Record<string, ObjectTreeItemType>> = {
+    UDF: 'udfs-folder',
+    SCRIPTING: 'procedures-folder',
+    ADAPTER: 'adapters-folder'
+};
 
 type ObjectTreeView = vscode.TreeView<ObjectNode>;
 
@@ -97,16 +106,17 @@ export class ObjectSearchProvider {
 
             try {
                 const scriptsResult = await rawQuery(driver, `
-                    SELECT SCRIPT_SCHEMA, SCRIPT_NAME
+                    SELECT SCRIPT_SCHEMA, SCRIPT_NAME, SCRIPT_TYPE
                     FROM SYS.EXA_ALL_SCRIPTS
                     WHERE SCRIPT_SCHEMA NOT IN ('SYS', 'EXA_STATISTICS')
                     ORDER BY SCRIPT_SCHEMA, SCRIPT_NAME
                 `);
-                for (const row of getRowsFromResult<{ SCRIPT_SCHEMA: string; SCRIPT_NAME: string }>(scriptsResult)) {
+                for (const row of getRowsFromResult<{ SCRIPT_SCHEMA: string; SCRIPT_NAME: string; SCRIPT_TYPE: string }>(scriptsResult)) {
                     objects.push({
                         schema: row.SCRIPT_SCHEMA,
                         name: row.SCRIPT_NAME,
-                        type: 'script'
+                        type: 'script',
+                        scriptType: row.SCRIPT_TYPE
                     });
                 }
             } catch (error) {
@@ -321,9 +331,9 @@ export class ObjectSearchProvider {
             ) as ObjectTreeItem | undefined;
         }
 
-        const folderType = this.getFolderType(treeType);
+        const folderType = this.getFolderType(obj);
         if (!folderType) {
-            outputChannel?.appendLine(`Object search: no folder type for ${treeType}`);
+            outputChannel?.appendLine(`Object search: no folder type for ${treeType}${obj.scriptType ? ` (${obj.scriptType})` : ''}`);
             return undefined;
         }
 
@@ -426,11 +436,11 @@ export class ObjectSearchProvider {
         ) as ObjectTreeItem | undefined;
     }
 
-    private getFolderType(objectType: ObjectTreeItemType): ObjectTreeItemType | undefined {
-        switch (objectType) {
+    private getFolderType(obj: SearchableObject): ObjectTreeItemType | undefined {
+        switch (obj.type) {
             case 'table': return 'tables-folder';
             case 'view': return 'views-folder';
-            case 'script': return 'udfs-folder';
+            case 'script': return obj.scriptType ? SCRIPT_FOLDERS[obj.scriptType] : undefined;
             case 'function': return 'functions-folder';
             default: return undefined;
         }

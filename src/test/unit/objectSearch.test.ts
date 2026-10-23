@@ -576,6 +576,43 @@ suite('ObjectSearchProvider', () => {
         });
     });
 
+    // EXA_ALL_SCRIPTS.SCRIPT_TYPE decides the folder, as in the tree (docker, 2026-10-23).
+    for (const [scriptType, folderType] of [
+        ['UDF', 'udfs-folder'],
+        ['SCRIPTING', 'procedures-folder'],
+        ['ADAPTER', 'adapters-folder'],
+    ] as const) {
+        test(`a ${scriptType} script is revealed in the ${folderType}`, async () => {
+            const revealed: ObjectTreeItemInstance[] = [];
+            mockTreeView.reveal = async node => { revealed.push(node); };
+            const baseQuery = mockDriver.query;
+            mockDriver.query = async (sql: string) => sql.includes('EXA_ALL_SCRIPTS')
+                ? createRawResult(['SCRIPT_SCHEMA', 'SCRIPT_NAME', 'SCRIPT_TYPE'], [['MY_SCHEMA', 'MY_SCRIPT', scriptType]])
+                : baseQuery(sql);
+            const item = (type: ObjectTreeItemInstance['type'], label: string) => new ObjectTreeItem({
+                label, id: `${label}:${type}`, collapsibleState: 0 as vscode.TreeItemCollapsibleState, type, schemaName: 'MY_SCHEMA'
+            });
+            const schema = item('schema', 'MY_SCHEMA');
+            const folders = (['udfs-folder', 'procedures-folder', 'adapters-folder'] as const).map(type => item(type, type));
+            const folder = folders.find(f => f.type === folderType);
+            const script = item('script', 'MY_SCRIPT');
+            objectTreeProvider.getChildren = async (element?: ObjectNode) => {
+                if (!element) { return [schema]; }
+                if (element === schema) { return folders; }
+                return element === folder ? [script] : [];
+            };
+
+            await searchProvider.showSearch();
+            const scriptItem = mockQuickPick.items.find(i => i.label.includes('MY_SCRIPT'));
+            assert.ok(scriptItem, 'Should find MY_SCRIPT');
+            mockQuickPick.selectedItems = [scriptItem];
+            assert.ok(mockQuickPick._acceptCallback, 'Accept callback should be registered');
+            await mockQuickPick._acceptCallback();
+
+            assert.deepStrictEqual(revealed, [script]);
+        });
+    }
+
     test('a column hit shows its schema and table as the description', async () => {
         await searchProvider.showSearch();
 

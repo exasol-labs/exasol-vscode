@@ -155,7 +155,8 @@ suite('Object Browser Test Suite', () => {
         });
         assert.strictEqual(systemSchemas.length, 0, 'Should filter out system schemas from user schema list');
 
-        // A "System Schemas" folder should appear at root level (after user and virtual schemas)
+        // A "System Schemas" folder should appear at root level, after the user schemas
+        // and the Virtual Schemas and Connections folders
         const systemSchemasFolder = schemas.find(s => getLabelText(s) === 'System Schemas');
         assert.ok(systemSchemasFolder, 'Should have a "System Schemas" folder at root level');
 
@@ -163,7 +164,7 @@ suite('Object Browser Test Suite', () => {
         const lastItem = schemas[schemas.length - 1];
         assert.strictEqual(
             getLabelText(lastItem), 'System Schemas',
-            'System Schemas folder should appear after user and virtual schemas'
+            'System Schemas folder should be the last root item'
         );
     });
 
