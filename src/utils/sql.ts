@@ -333,6 +333,9 @@ export function isScriptOrFunctionDefinition(sql: string): boolean {
     return definitionKind(readWords(sql, 0, 6)) !== undefined;
 }
 
+/** Words after END that close a block of a function body, not the body itself. */
+const BLOCK_ENDS = new Set(['IF', 'FOR', 'WHILE', 'LOOP', 'REPEAT']);
+
 /**
  * Return the character indices where statements end. An index points either
  * at a terminating `;` (part of the statement) or at the `/` of a line that
@@ -347,8 +350,8 @@ export function isScriptOrFunctionDefinition(sql: string): boolean {
  *     The body is code in another language, so it is not tokenized as SQL.
  *   - `CREATE ... FUNCTION` ends at a `/` line after the `END [name]` that
  *     closes the body, or at the first `;` after that `END`. Semicolons and
- *     `/` lines inside the body, and the `END` of `IF`, `FOR`, `WHILE` and
- *     `CASE`, do not end it.
+ *     `/` lines inside the body, and the `END` of `IF`, `FOR`, `WHILE`,
+ *     `LOOP`, `REPEAT` and `CASE`, including `END CASE`, do not end it.
  * A script without such a `/` line, and a function that does not end before
  * the end of the text, are split at `;` like any other text, so the
  * statements after them stay separate. After a function that does not end,
@@ -373,6 +376,8 @@ export function findStatementEnds(text: string): number[] {
     // A function did not end: from its start on, functions are scanned as ordinary statements.
     let functionsPlain = false;
     let caseDepth = 0;
+    // The next word is the CASE of `END CASE`.
+    let endCase = false;
 
     for (;;) {
         while (i < len) {
@@ -430,6 +435,7 @@ export function findStatementEnds(text: string): number[] {
                         functionBody = FunctionBody.HEADER;
                         functionStart = start;
                         caseDepth = 0;
+                        endCase = false;
                     }
                 } else if (functionBody === FunctionBody.HEADER) {
                     if (text.slice(start, i).toUpperCase() === 'BEGIN') {
@@ -438,11 +444,20 @@ export function findStatementEnds(text: string): number[] {
                 } else if (functionBody === FunctionBody.OPEN) {
                     const word = text.slice(start, i).toUpperCase();
                     if (word === 'CASE') {
-                        caseDepth++;
-                    } else if (word === 'END' && caseDepth > 0) {
-                        caseDepth--;
-                    } else if (word === 'END' && !['IF', 'FOR', 'WHILE'].includes(readWords(text, i, 1)[0])) {
-                        functionBody = FunctionBody.CLOSED;
+                        if (endCase) {
+                            endCase = false;
+                        } else {
+                            caseDepth++;
+                        }
+                    } else if (word === 'END') {
+                        const closes = readWords(text, i, 1)[0];
+                        // `END CASE` closes a CASE statement, so the CASE after END does not open one.
+                        endCase = closes === 'CASE';
+                        if (endCase || (caseDepth > 0 && !BLOCK_ENDS.has(closes))) {
+                            caseDepth = Math.max(0, caseDepth - 1);
+                        } else if (!BLOCK_ENDS.has(closes)) {
+                            functionBody = FunctionBody.CLOSED;
+                        }
                     }
                 }
             } else {

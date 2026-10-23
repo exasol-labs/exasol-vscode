@@ -299,6 +299,13 @@ suite('splitIntoStatements: script and function definitions', () => {
         assert.deepStrictEqual(splitIntoStatements(`${fn}\nSELECT s.f(1);`), [fn, 'SELECT s.f(1);']);
     });
 
+    test('function with END CASE, END LOOP and END REPEAT ends at the ; after END name', () => {
+        const text = 'CREATE FUNCTION s.g (p DECIMAL) RETURN DECIMAL IS r DECIMAL;\nBEGIN\n'
+            + '  CASE WHEN p > 0 THEN r := CASE WHEN p > 1 THEN 2 ELSE 1 END; ELSE r := 0; END CASE;\n'
+            + '  LOOP r := r + 1; END LOOP;\n  REPEAT r := r + 1; UNTIL r > 5 END REPEAT;\n  RETURN r;\nEND g;';
+        assert.deepStrictEqual(splitIntoStatements(`${text}\nSELECT 1;\n${fn}\nSELECT 2;`), [text, 'SELECT 1;', fn, 'SELECT 2;']);
+    });
+
     test('function followed by a / line', () => {
         assert.deepStrictEqual(splitIntoStatements(`${fn}\n/\nSELECT s.f(1);`), [fn, 'SELECT s.f(1);']);
     });

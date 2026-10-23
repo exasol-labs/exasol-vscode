@@ -56,6 +56,7 @@ All notable changes to the "Exasol" extension will be documented in this file.
 - SQL completion now suggests the columns of every table in a comma-separated `FROM` list, such as `y` in `FROM s.a x, s.b y` or `"y"` in `FROM s.a AS x, "s"."b c" AS "y"`. Before, only the first table counted. The alias of a table after `JOIN` is now also found when the table before `JOIN` has no alias, as in `FROM a JOIN b y`
 - SQL completion took several seconds when the statement held a long run of spaces, for example about 4 seconds for 100,000 spaces after `SELECT DISTINCT(`. It now takes a few milliseconds
 - SQL completion no longer takes text that only looks like a `FROM` clause as a table with an alias. This applies to the `FROM` of `IS [NOT] DISTINCT FROM`, of a function such as `SUBSTRING(x FROM 1 FOR 2)`, `TRIM(... FROM ...)` or `EXTRACT(YEAR FROM d)`, and of `IMPORT`, to text in strings, quoted identifiers and comments, and to words that end in `FROM`, such as `xfrom`. `VALUES` in `FROM VALUES (1, 2) AS v(a, b)` is not taken as a table. `LOCAL.` completion no longer ends the `SELECT` list at the `FROM` of `IS [NOT] DISTINCT FROM`
+- Running a file now sends a `CREATE FUNCTION` with `END CASE`, `END LOOP` or `END REPEAT` in its body as one statement, so Exasol reports that the statement is not supported. Before, the function was cut at a semicolon in its body, and after `END CASE` the functions later in the file were cut at their semicolons too
 
 ### Security
 - Updated `brace-expansion` to 2.1.7 and 5.0.12, and `source-map-js` to 1.2.2
