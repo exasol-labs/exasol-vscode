@@ -284,7 +284,13 @@ const FROM_LIST_END = new Set(['WHERE', 'GROUP', 'ORDER', 'HAVING', 'QUALIFY', '
  * at the `)` that closes its parentheses. Strings and quoted identifiers are
  * skipped. The FROM of a statement that starts with IMPORT starts no FROM
  * list; inside parentheses, as in `FROM (IMPORT ...)`, no SELECT is at the
- * depth of its FROM.
+ * depth of its FROM. An IMPORT statement has no SELECT outside parentheses,
+ * so such a SELECT starts a new statement even after an IMPORT without `;`.
+ * A line with only `/` ends a statement too, as it ends a script or function
+ * definition. A `;` in the body of a CREATE SCRIPT or CREATE FUNCTION belongs
+ * to that body, so the word after it does not start a statement: the
+ * `import(...)` of a Lua script or the `import json` of a Python script is
+ * not an IMPORT statement.
  */
 function findTableStarts(text: string): number[] {
     const len = text.length;
@@ -298,6 +304,9 @@ function findTableStarts(text: string): number[] {
     // The first word of the current statement is still to come.
     let statementStart = true;
     let importStatement = false;
+    let createStatement = false;
+    // The text is in the body of a CREATE SCRIPT or CREATE FUNCTION, which ends at a `/` line.
+    let definitionBody = false;
     let i = 0;
     while (i < len) {
         const ch = text[i];
@@ -308,8 +317,13 @@ function findTableStarts(text: string): number[] {
             const word = text.slice(start, i).toUpperCase();
             if (statementStart) {
                 importStatement = word === 'IMPORT';
+                createStatement = word === 'CREATE';
                 statementStart = false;
+            } else if (createStatement && top === 0 && (word === 'SCRIPT' || word === 'FUNCTION')) {
+                definitionBody = true;
+                createStatement = false;
             }
+            if (word === 'SELECT' && top === 0) { importStatement = false; }
             if (word === 'FROM') {
                 if (query[top] && previousWord !== 'DISTINCT' && !(top === 0 && importStatement)) {
                     inFrom[top] = true;
@@ -334,11 +348,14 @@ function findTableStarts(text: string): number[] {
                 inFrom.push(false);
             } else if (ch === ')') {
                 if (inFrom.length > 1) { query.pop(); inFrom.pop(); }
-            } else if (ch === ';') {
+            } else if ((ch === ';' && !definitionBody) || (ch === '/' && isSlashLine(text, i))) {
                 query.length = 1;
                 inFrom.length = 1;
                 inFrom[0] = false;
                 statementStart = true;
+                importStatement = false;
+                createStatement = false;
+                definitionBody = false;
             } else if (ch === ',' && inFrom[top]) {
                 starts.push(i + 1);
             }
@@ -347,6 +364,19 @@ function findTableStarts(text: string): number[] {
         if (!/\s/.test(ch)) { previousWord = ''; }
     }
     return starts;
+}
+
+/** The `/` at `i` is the only character on its line, apart from whitespace. */
+function isSlashLine(text: string, i: number): boolean {
+    let j = i - 1;
+    while (j >= 0 && text[j] !== '\n') {
+        if (!/\s/.test(text[j])) { return false; }
+        j--;
+    }
+    for (j = i + 1; j < text.length && text[j] !== '\n'; j++) {
+        if (!/\s/.test(text[j])) { return false; }
+    }
+    return true;
 }
 
 function dedupe(refs: FromTableRef[]): FromTableRef[] {

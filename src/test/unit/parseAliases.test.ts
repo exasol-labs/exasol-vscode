@@ -243,6 +243,20 @@ limit 100;`;
             assert.deepStrictEqual([...sub.entries()], [['Z', { table: 'B' }], ['X', { table: 'A' }]]);
         });
 
+        test('IMPORT detection ends at the next statement', () => {
+            const lua = parseAliases("CREATE LUA SCRIPT s AS\nlocal x = 1;\nimport('lib','L')\n/\nSELECT * FROM a y");
+            assert.deepStrictEqual([...lua.entries()], [['Y', { table: 'A' }]]);
+            const python = parseAliases(
+                'CREATE OR REPLACE PYTHON3 SCALAR SCRIPT s (i INT) RETURNS INT AS\nx = 1;\nimport json\n'
+                + 'def run(ctx):\n  return 1\n/\nSELECT * FROM a y'
+            );
+            assert.deepStrictEqual([...python.entries()], [['Y', { table: 'A' }]]);
+            const noSemicolon = parseAliases("IMPORT INTO t FROM CSV AT c FILE 'a'\n\nSELECT * FROM a y");
+            assert.deepStrictEqual([...noSemicolon.entries()], [['Y', { table: 'A' }]]);
+            const slash = parseAliases("IMPORT INTO t FROM CSV AT c FILE 'a'\n/\nDELETE FROM a y");
+            assert.deepStrictEqual([...slash.entries()], [['Y', { table: 'A' }]]);
+        });
+
         test('join keywords are not aliases', () => {
             for (const join of ['NATURAL JOIN', 'NATURAL LEFT OUTER JOIN', 'LEFT JOIN', 'RIGHT OUTER JOIN',
                 'FULL JOIN', 'INNER JOIN', 'CROSS JOIN', 'JOIN']) {
