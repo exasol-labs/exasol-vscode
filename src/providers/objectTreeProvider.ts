@@ -22,6 +22,7 @@ import {
     fetchSystemTables,
     fetchSystemTableColumns,
     fetchDbConnections,
+    fetchRootFolderCounts,
     fetchPreprocessorParameter
 } from './objectTreeFetchers';
 import { escapeSqlIdentifier, normalizeIdentifier } from '../utils';
@@ -134,7 +135,10 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
             // Directly show schemas without the connection node
             try {
                 outputChannel?.appendLine(`📂 Objects view: Fetching schemas for active connection '${activeConnection.name}'`);
-                const schemas = await fetchSchemas(this.connectionManager, activeConnection);
+                const [schemas, folderCounts] = await Promise.all([
+                    fetchSchemas(this.connectionManager, activeConnection),
+                    fetchRootFolderCounts(this.connectionManager, activeConnection)
+                ]);
                 outputChannel?.appendLine(`📂 Objects view: Found ${schemas.length} schemas`);
 
                 const cfg = vscode.workspace.getConfiguration('exasol');
@@ -220,21 +224,26 @@ export class ObjectTreeProvider implements vscode.TreeDataProvider<ObjectNode>, 
                     }
                 }
 
-                allNodes.push(new ObjectTreeItem({
-                    label: 'Virtual Schemas',
-                    id: `${activeConnection.id}:virtual-schemas-folder`,
-                    collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
-                    type: 'virtual-schemas-folder',
-                    connection: activeConnection
-                }));
+                // Hidden only when the count is 0; an unknown count shows the folder.
+                if (folderCounts.virtualSchemas !== 0) {
+                    allNodes.push(new ObjectTreeItem({
+                        label: 'Virtual Schemas',
+                        id: `${activeConnection.id}:virtual-schemas-folder`,
+                        collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                        type: 'virtual-schemas-folder',
+                        connection: activeConnection
+                    }));
+                }
 
-                allNodes.push(new ObjectTreeItem({
-                    label: 'Connections',
-                    id: `${activeConnection.id}:db-connections-folder`,
-                    collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
-                    type: 'db-connections-folder',
-                    connection: activeConnection
-                }));
+                if (folderCounts.connections !== 0) {
+                    allNodes.push(new ObjectTreeItem({
+                        label: 'Connections',
+                        id: `${activeConnection.id}:db-connections-folder`,
+                        collapsibleState: vscode.TreeItemCollapsibleState.Collapsed,
+                        type: 'db-connections-folder',
+                        connection: activeConnection
+                    }));
+                }
 
                 allNodes.push(new ObjectTreeItem({
                     label: 'System Schemas',

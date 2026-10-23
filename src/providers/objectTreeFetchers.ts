@@ -788,6 +788,31 @@ export async function fetchDbConnections(
 }
 
 /**
+ * Entry counts for the Virtual Schemas and Connections root folders; a count
+ * is undefined when the query fails or returns no number.
+ */
+export async function fetchRootFolderCounts(
+    connectionManager: ConnectionManager,
+    connection: StoredConnection
+): Promise<{ virtualSchemas?: number; connections?: number }> {
+    return safeFetch<{ virtualSchemas?: number; connections?: number }>('Failed to fetch virtual schema and connection counts', () =>
+        connectionManager.executeWithRetry(async () => {
+            const driver = await connectionManager.getDriver(connection.id, 'background');
+            const result = await rawQuery(driver, `
+                SELECT
+                    (SELECT COUNT(*) FROM SYS.EXA_ALL_VIRTUAL_SCHEMAS) AS VIRTUAL_SCHEMA_COUNT,
+                    (SELECT COUNT(*) FROM SYS.EXA_ALL_CONNECTIONS) AS CONNECTION_COUNT
+            `);
+            const [row] = getRowsFromResult<{ VIRTUAL_SCHEMA_COUNT?: unknown; CONNECTION_COUNT?: unknown }>(result);
+            return {
+                virtualSchemas: parseRowCount(row?.VIRTUAL_SCHEMA_COUNT),
+                connections: parseRowCount(row?.CONNECTION_COUNT)
+            };
+        }, connection.id, { role: 'background' }),
+    {}, getOutputChannel());
+}
+
+/**
  * SQL_PREPROCESSOR_SCRIPT as Exasol returns it, e.g. `MY_SCHEMA.MY_PP` or
  * `"my_schema"."my_pp"`. A session parameter is visible only in its own
  * session, so this reads the user session, where queries run and where

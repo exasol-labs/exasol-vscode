@@ -74,7 +74,7 @@ suite('ObjectTreeProvider, Virtual Schemas folder', () => {
         const roots = await provider.getChildren();
 
         assert.deepStrictEqual(roots.map(labelOf), ['VS_REAL', 'Virtual Schemas', 'Connections', 'System Schemas']);
-        assert.ok(!queries.some(q => q.includes('EXA_ALL_VIRTUAL_SCHEMAS')), 'the root must not list virtual schemas');
+        assert.ok(!queries.some(q => q.includes('ADAPTER_SCRIPT_NAME')), 'the root must not list virtual schemas');
         const folder = roots[1] as InstanceType<typeof ObjectTreeItem>;
         assert.strictEqual(folder.id, 'conn-1:virtual-schemas-folder');
         assert.strictEqual(folder.contextValue, 'virtual-schemas-folder');

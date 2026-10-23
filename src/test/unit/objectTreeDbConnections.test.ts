@@ -56,10 +56,10 @@ suite('ObjectTreeProvider, Connections', () => {
         const folder = root[root.length - 2] as ObjectTreeItem;
         assert.strictEqual(folder.description, undefined);
         assert.strictEqual(folder.contextValue, 'db-connections-folder');
-        assert.ok(!queries.some(q => q.includes('EXA_ALL_CONNECTIONS')), 'root refresh must not list connections');
+        assert.ok(!queries.some(q => q.includes('CONNECTION_NAME')), 'root refresh must not list connections');
 
         assert.strictEqual((await provider.getChildren(folder)).length, 2);
-        const listing = queries.filter(q => q.includes('EXA_ALL_CONNECTIONS'));
+        const listing = queries.filter(q => q.includes('CONNECTION_NAME'));
         assert.strictEqual(listing.length, 1);
         assert.ok(listing[0].includes('CONNECTION_NAME, CREATED, CONNECTION_COMMENT'));
     });
