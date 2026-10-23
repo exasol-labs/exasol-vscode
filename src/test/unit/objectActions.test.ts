@@ -1068,10 +1068,12 @@ suite('buildConnectionDDL', () => {
         );
     });
 
-    test('no user and no comment', () => {
+    // A connection may have a password without a user; EXA_DBA_CONNECTIONS then shows
+    // USER_NAME NULL and nothing about the password (docker, 2026-10-23).
+    test('no user keeps the password slot', () => {
         assert.strictEqual(
-            buildConnectionDDL('C', null, { ...full, CONNECTION_STRING: 'jdbc:mysql://h/db', USER_NAME: null }),
-            "CREATE OR REPLACE CONNECTION \"C\"\n    TO 'jdbc:mysql://h/db';"
+            buildConnectionDDL('C', null, { ...full, CONNECTION_STRING: 'http://y', USER_NAME: null }),
+            "CREATE OR REPLACE CONNECTION \"C\"\n    TO 'http://y'\n    IDENTIFIED BY '<password>';"
         );
     });
 

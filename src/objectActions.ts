@@ -408,7 +408,9 @@ interface ConnectionDefinition {
 /**
  * CREATE OR REPLACE CONNECTION plus COMMENT ON CONNECTION. Without a
  * definition (EXA_DBA_CONNECTIONS not readable) address and user become
- * placeholders. The password is never readable, so it is always one.
+ * placeholders. The password is never readable, and a connection may have
+ * one without a user, so IDENTIFIED BY is always there with a placeholder;
+ * without it the statement would remove the password.
  */
 export function buildConnectionDDL(
     connectionName: string,
@@ -434,9 +436,9 @@ export function buildConnectionDDL(
         }
         lines.push(`CREATE OR REPLACE CONNECTION ${name}`, `    TO '${escapeSqlString(definition.CONNECTION_STRING)}'`);
         if (definition.USER_NAME !== null) {
-            lines.push(`    USER '${escapeSqlString(definition.USER_NAME)}'`, "    IDENTIFIED BY '<password>'");
+            lines.push(`    USER '${escapeSqlString(definition.USER_NAME)}'`);
         }
-        lines[lines.length - 1] += ';';
+        lines.push("    IDENTIFIED BY '<password>';");
     }
     if (comment !== null) {
         lines.push(`COMMENT ON CONNECTION ${name} IS '${escapeSqlString(comment)}';`);
