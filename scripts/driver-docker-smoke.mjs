@@ -2,18 +2,22 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { parquetWriteFile } from 'hyparquet-writer';
 import { WebSocket } from 'ws';
 
-// The VS Code extension is bundled for Node and resolves the driver's CommonJS
-// entry point. Use the same entry point here; the 0.8.0 ESM bundle currently
-// exposes an uninitialised node-forge namespace under native Node ESM imports.
-const { ExasolDriver } = createRequire(import.meta.url)('@exasol/exasol-driver-ts');
+// Native ESM import: resolves dist/index.esm.js, the entry point that esbuild bundles into the extension.
+import { ExasolDriver } from '@exasol/exasol-driver-ts';
 
-const schema = 'COMPAT_DRIVER_080';
+const driverEntry = fileURLToPath(import.meta.resolve('@exasol/exasol-driver-ts'));
+const driverPackageJson = path.join(path.dirname(driverEntry), '..', 'package.json');
+const { version: driverVersion } = JSON.parse(await fs.readFile(driverPackageJson, 'utf8'));
+const repoPackageJson = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
+assert.equal(driverVersion, repoPackageJson.dependencies['@exasol/exasol-driver-ts']);
+
+const schema = 'COMPAT_DRIVER_SMOKE';
 const table = `${schema}.T`;
-const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'exasol-driver-080-'));
+const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'exasol-driver-smoke-'));
 const parquetPath = path.join(tempDir, 'input.parquet');
 const csvPath = path.join(tempDir, 'output.csv');
 const driver = new ExasolDriver(
@@ -28,11 +32,11 @@ const driver = new ExasolDriver(
     }
 );
 
-try {
+async function run() {
     await driver.connect();
     const session = await driver.query('SELECT CLIENT, DRIVER, ENCRYPTED FROM SYS.EXA_ALL_SESSIONS WHERE SESSION_ID = CURRENT_SESSION');
     assert.equal(session.resultSet.data[0][0], 'exasol-vscode-driver-test 0.0.0');
-    assert.match(session.resultSet.data[1][0], /^exasol-driver-ts v0\.8\.0/);
+    assert.equal(session.resultSet.data[1][0].trim(), `exasol-driver-ts v${driverVersion}`);
     assert.equal(session.resultSet.data[2][0], true);
     await driver.execute(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
     await driver.execute(`DROP TABLE IF EXISTS ${table}`);
@@ -70,15 +74,23 @@ try {
         driver.exportToCsvFile(table, path.join(tempDir, 'aborted.csv'), undefined, { signal: abortedExport.signal }),
         /aborted/i
     );
-
-    console.log('Driver 0.8.0 Docker smoke test: PASS (Parquet import + CSV export)');
-} finally {
-    try {
-        await driver.execute(`DROP TABLE IF EXISTS ${table}`);
-        await driver.execute(`DROP SCHEMA ${schema} CASCADE`);
-    } catch {
-        // Preserve the original test failure if cleanup cannot connect.
-    }
-    await driver.close();
-    await fs.rm(tempDir, { recursive: true, force: true });
 }
+
+async function cleanup() {
+    try {
+        await driver.execute(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    } finally {
+        try {
+            await driver.close();
+        } finally {
+            await fs.rm(tempDir, { recursive: true, force: true });
+        }
+    }
+}
+
+await run().then(cleanup, async error => {
+    // Report the original failure, not a follow-up error from cleanup.
+    await cleanup().catch(() => {});
+    throw error;
+});
+console.log(`Driver ${driverVersion} Docker smoke test: PASS (Parquet import + CSV export)`);

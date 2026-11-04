@@ -2,6 +2,16 @@
 
 All notable changes to the "Exasol" extension will be documented in this file.
 
+## [1.9.1] - 2026-11-04
+
+### Changed
+- Updated the Exasol driver `@exasol/exasol-driver-ts` to 0.8.1. It loads `node-forge` with a default import, so its ES module build works under native Node.js imports. It also closes the connections of a pool in parallel. The extension does not use connection pools, so its behaviour does not change
+
+### Security
+- Updated `node-forge` to 1.4.3. The Exasol driver uses it to encrypt the password at login, and to create the self-signed TLS certificate for local file import and export (`IMPORT` and `EXPORT` with a local CSV or Parquet file)
+- Updated `undici` to 7.30.1, `@azure/identity` to 4.14.1 with `@azure/msal-node` 7.1.2, and `qs` to 6.17.1. These are only used by test and packaging tools
+- Updated the development tools `mocha` to 12.0.3, `glob` to 14.0.3, `@vscode/vsce` to 4.1.0, `eslint` to 10.14.0 and `typescript-eslint` to 8.72.1. `minimatch` is now 11.0.4 for all tools that use it, and `serialize-javascript` is 7.1.4 (`npm audit`: 0 vulnerabilities)
+
 ## [1.9.0] - 2026-10-23
 
 ### Added
