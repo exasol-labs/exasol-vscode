@@ -88,7 +88,7 @@ npm run test:driver-docker # Driver import/export tests against local Exasol Doc
 npm run test:e2e           # VS Code integration tests
 ```
 
-The extension uses the official `@exasol/exasol-driver-ts` 0.8.0 package. `npm ci` may print transitive deprecation warnings from `@vscode/vsce` dependencies; these do not affect runtime use.
+The extension uses the official `@exasol/exasol-driver-ts` 0.8.1 package. `npm ci` prints deprecation warnings for `@babel/plugin-proposal-export-namespace-from` and `babel-merge`. Both come from `@glideapps/glide-data-grid` through `@linaria/react` and `@linaria/utils`, which use them only at build time; they do not affect runtime use.
 
 ## Support
 
